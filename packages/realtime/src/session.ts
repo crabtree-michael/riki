@@ -17,7 +17,6 @@
  */
 
 import type {
-  CallId,
   Clock,
   ItemId,
   MonoMs,
@@ -54,12 +53,6 @@ export interface RealtimeSessionHandle {
   onEvent(listener: (event: VoiceEvent) => void): Unsubscribe;
   interrupt(at: MonoMs): void;
   abort(): void;
-  /**
-   * Resolves a `read_screen` consent prompt. It arrives here because the overlay's only route
-   * back to the rest of Riki is `VoiceCommandSink`; this forwards to the tool pipeline, which is
-   * what is actually waiting (architecture §8.3).
-   */
-  resolveConsent(promptId: string, granted: boolean): void;
 }
 
 export interface RealtimeSession extends RealtimeSessionHandle {
@@ -71,9 +64,9 @@ export interface RealtimeSession extends RealtimeSessionHandle {
 }
 
 /**
- * ⚠ Structural mirrors of `@riki/audio`'s `CaptureGraph` and `PlaybackTracker`, and of the tool
- * pipeline's call port, for the same reason as the media handles in transport.ts: real imports
- * need project references that do not exist while everything is contracts. Step 7 replaces them.
+ * ⚠ Structural mirrors of `@riki/audio`'s `CaptureGraph` and `PlaybackTracker`, for the same reason
+ * as the media handles in transport.ts: real imports need project references that do not exist
+ * while everything is contracts. Step 7 replaces them.
  */
 export interface CapturePort {
   open(): void;
@@ -85,35 +78,24 @@ export interface PlaybackPort {
   audibleMs(): number;
 }
 
-/**
- * The seam with `agent-command-execution-architecture.md`. That document's rule holds on this
- * side too: every call produces exactly one result within its deadline, so this never rejects and
- * never resolves to nothing. A dropped call here is a hung session, which is the hardest bug class
- * in this component to reproduce and why `no-floating-promises` is an error repo-wide.
- */
-export interface ToolCallPort {
-  dispatch(call: {
-    readonly callId: string;
-    readonly name: string;
-    readonly argumentsJson: string;
-  }): Promise<{ readonly callId: string; readonly outputJson: string }>;
-  resolveConsent(promptId: string, granted: boolean): void;
-}
-
 export interface RealtimeSessionDeps {
   readonly transport: RealtimeTransport;
   readonly credentials: CredentialPort;
   readonly capture: CapturePort;
   readonly playback: PlaybackPort;
-  readonly tools: ToolCallPort;
   readonly clock: Clock;
   readonly telemetry: VoiceTelemetry;
 }
 
-/** The preamble and frozen manifest, from `packages/context`. ⚠ Structural mirror, as above. */
+/**
+ * The preamble, from `packages/context`. ⚠ Structural mirror, as above.
+ *
+ * One field, where there were two. The other was a frozen tool manifest, and ADR-0023 deleted the
+ * pull model it belonged to: what a turn needs is assembled and injected before the model is asked
+ * to speak, so there is nothing for the session to advertise.
+ */
 export interface SessionContext {
   readonly preambleText: string;
-  readonly manifestJson: string;
 }
 
 export type SupervisorState =
@@ -305,11 +287,14 @@ export async function createRealtimeSession(
         transcripts.completeAgent(currentTurn, event.item_id, event.transcript, deps.clock.now());
         return;
 
-      case 'response.function_call_arguments.done': {
-        emit({ kind: 'tool', event: 'started', name: event.name, callId: event.call_id });
-        void dispatchTool(event.call_id, event.name, event.arguments);
+      case 'response.function_call_arguments.done':
+        // Counted and ignored, and never answered (coaching-architecture.md §2.4). The session is
+        // configured with `tools: []`, so this is the model inventing a call — realtime §11.6
+        // documents it narrating calls it did not make. Answering would be worse than silence: it
+        // would create a `function_call_output` item for a call the conversation does not contain.
+        // A non-zero counter here is a bug in the model or in our config, not a condition.
+        deps.telemetry.strayToolCall(event.name);
         return;
-      }
 
       case 'response.done':
         if (event.usage !== null) {
@@ -332,34 +317,6 @@ export async function createRealtimeSession(
       }
     }
   };
-
-  /**
-   * Every call produces exactly one result within its deadline, so this never rejects and never
-   * resolves to nothing (agent-command-execution §7.4). A dropped call here is a hung session.
-   */
-  async function dispatchTool(callId: CallId, name: string, argumentsJson: string): Promise<void> {
-    try {
-      const result = await deps.tools.dispatch({ callId, name, argumentsJson });
-      deps.transport.send({
-        type: 'conversation.item.create',
-        item: { type: 'function_call_output', call_id: result.callId, output: result.outputJson },
-      });
-    } catch {
-      // A failure still has to be answered, or the model waits forever for a result that is
-      // never coming — which is the stall C3 warns about.
-      deps.transport.send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: callId,
-          output: JSON.stringify({ error: 'unavailable' }),
-        },
-      });
-    }
-    emit({ kind: 'tool', event: 'ended', name, callId });
-    // The tool result is an item, not a turn: without this the model never speaks again.
-    deps.transport.send({ type: 'response.create' });
-  }
 
   const unsubscribeTransport = deps.transport.onEvent(onServerEvent);
 
@@ -408,11 +365,6 @@ export async function createRealtimeSession(
 
     abort() {
       void turns.abort();
-    },
-
-    resolveConsent(promptId, granted) {
-      deps.tools.resolveConsent(promptId, granted);
-      emit({ kind: 'consent', event: 'resolved', promptId });
     },
 
     async close(reason) {

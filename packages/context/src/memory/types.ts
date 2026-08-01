@@ -8,17 +8,9 @@
  * See docs/design/context-and-memory-architecture.md §6 and §7. Declarations only.
  */
 
-import type {
-  CallId,
-  EventId,
-  GameClock,
-  HeroId,
-  ItemId,
-  MonoMs,
-  Role,
-  TurnId,
-} from '../common/types.js';
+import type { EventId, GameClock, HeroId, ItemId, MonoMs, Role, TurnId } from '../common/types.js';
 import type { RenderedText, SectionId } from '../render/types.js';
+import type { BriefSectionId } from '../coaching/types.js';
 
 // -----------------------------------------------------------------------------------------------
 // The ledger (§3.3, §6.2)
@@ -71,12 +63,18 @@ export type LedgerEntry =
       readonly at: MonoMs;
     }
   | {
-      readonly kind: 'command';
+      /**
+       * The coaching brief this turn was given (coaching-architecture.md §5.2).
+       *
+       * Deliberately the same shape as `snapshot`, and for the same reason: it is context *we*
+       * injected, it is superseded by the next one, and retention has to be able to find it and
+       * drop it. That is the whole difference from the `command` arm it replaces, which
+       * accumulated — and it is why the drop ladder lost a rung and its one ordering dependency.
+       */
+      readonly kind: 'brief';
       readonly turnId: TurnId;
-      readonly callId: CallId;
-      readonly name: string;
-      readonly result: RenderedText;
-      readonly status: string;
+      readonly rendered: RenderedText;
+      readonly sections: readonly BriefSectionId[];
       readonly at: MonoMs;
     }
   | {
@@ -97,7 +95,7 @@ export type TurnOutcome = 'spoke' | 'silent' | 'cancelled';
 /**
  * `api_truncation` is a bug, not a condition: it means the low-water mark or the token counter is
  * wrong and the API reached the budget before we did. A non-zero count should alert, exactly like
- * the `internal` row of the command failure taxonomy.
+ * `VoiceTelemetry.strayToolCall` — the other counter in this system whose correct value is zero.
  */
 export type DropReason = 'planned' | 'api_truncation' | 'session_lost';
 

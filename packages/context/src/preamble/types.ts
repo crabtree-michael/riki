@@ -2,8 +2,8 @@
  * Tier 1 — the session preamble (dota2-state-capture-design.md §6.1).
  *
  * Assembled once at match start and then immutable, so it sits in the prompt cache prefix and costs
- * almost nothing per turn. That is the same property ADR-0011 gives the tool manifest, and for the
- * same reason: a change rewrites the prefix and busts the cache for the rest of the session.
+ * almost nothing per turn. Immutability is the whole property: a change rewrites the prefix and
+ * busts the cache for the rest of the session.
  *
  * See docs/design/context-and-memory-architecture.md §4. Declarations only.
  */
@@ -77,14 +77,16 @@ export type EnrichmentRequest =
 // -----------------------------------------------------------------------------------------------
 
 /**
- * Session instructions and tool definitions share a **16,384-token cap** and sit in the cached
- * prefix (realtime §1, §5; ADR-0011). Three growing things compete for it — the persona, this
- * preamble, and the manifest — and until this object existed, no single place added them up.
+ * Session instructions sit in the cached prefix under a **16,384-token cap** (realtime §1, §5). Two
+ * growing things compete for it — the persona and this preamble — and until this object existed, no
+ * single place added them up. The third claimant, the 2,000-token tool manifest, was deleted by
+ * ADR-0023 (coaching-architecture.md §8.1).
  *
- * The headroom is currently comfortable (~4,700 committed). The reason to have the object anyway is
- * that the preamble is the part that grows without anyone deciding to grow it: matchup notes, patch
- * notes and benchmarks are all "one more line per hero", and ten heroes times a few lines is how
- * 1,500 becomes 4,000 in a commit that does not look like it did anything.
+ * The headroom is currently very comfortable (~3,000 committed). The reason to have the object
+ * anyway is that the preamble is the part that grows without anyone deciding to grow it: matchup
+ * notes, patch notes and benchmarks are all "one more line per hero", they are now the only place
+ * reference data is fetched at all, and ten heroes times a few lines is how 1,800 becomes 4,000 in
+ * a commit that does not look like it did anything.
  */
 export interface PrefixBudget {
   readonly capTokens: number;

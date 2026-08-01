@@ -8,7 +8,7 @@
  * See docs/design/state-capture-architecture.md §3.1 and §5.5.
  *
  * ⚠ Transitional. These belong to @riki/protocol, which is REPO_SKELETON.md §10 step 2 and still
- * empty. `packages/context/src/tools/types.ts` and `apps/desktop/src/shared/overlay.ts` declare
+ * empty. `packages/context/src/common/types.ts` and `apps/desktop/src/shared/overlay.ts` declare
  * their own copies for the same reason. When protocol lands, all three import from it instead.
  */
 

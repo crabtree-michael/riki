@@ -25,9 +25,12 @@ import type {
 export type FieldPath = string & { readonly __brand: 'FieldPath' };
 
 /**
- * The draft, as this package needs it. Tier 3 resolves a spoken hero name against it so that
- * `get_enemy_detail("pudge")` in a game with no Pudge answers "Pudge isn't in this game" rather
- * than describing a hero nobody is playing (command architecture §4.3).
+ * The draft, as this package needs it.
+ *
+ * Read by the preamble's enrichment planner (which heroes to fetch matchups for) and by the
+ * snapshot's `enemies` and `seen` sections. Nothing resolves a *spoken* hero name against it any
+ * more: with no tool arguments there is nothing to resolve — the model speaks hero names, it does
+ * not send them (coaching-architecture.md §2.1).
  */
 export interface Roster {
   readonly self: HeroId | undefined;

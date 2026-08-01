@@ -55,19 +55,11 @@ export interface TruncationConfig {
   readonly retentionRatio: number;
 }
 
-export interface ToolManifestEntry {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: Readonly<Record<string, unknown>>;
-}
-
 export interface RealtimeSessionConfig {
   readonly model: ModelId;
   readonly voice: VoiceName;
-  /** The preamble, from `packages/context`. Shares a 16,384-token cap with `tools`. */
+  /** The preamble, from `packages/context`. The whole of the 16,384-token cached prefix. */
   readonly instructions: string;
-  /** Frozen for the session (ADR-0011): changing the set mid-session rewrites the cached prefix. */
-  readonly tools: readonly ToolManifestEntry[];
   readonly turnDetection: TurnDetectionConfig;
   /** `far_field` for a desk mic, `near_field` for a headset — architecture §3.4. */
   readonly noiseReduction: 'near_field' | 'far_field' | null;
@@ -135,13 +127,12 @@ export function buildSessionUpdate(config: RealtimeSessionConfig): SessionUpdate
           voice: config.voice,
         },
       },
-      tools: config.tools.map((tool) => ({
-        type: 'function',
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      })),
-      tool_choice: 'auto',
+      // Explicitly empty rather than omitted, and that is a decision (ADR-0023,
+      // coaching-architecture.md §2.4). Riki has no tools: the facts a turn needs are assembled
+      // before the model is asked to speak. Sending the field says so, where omitting it leaves
+      // the question to a default we do not control. `tool_choice` is gone with it — there is
+      // nothing to choose between.
+      tools: [],
       truncation:
         config.truncation.mode === 'disabled'
           ? 'disabled'

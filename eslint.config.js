@@ -24,13 +24,6 @@ const IGNORES = [
  * path so the `apps/desktop/src/*` entries can be distinguished from the app as a whole.
  */
 const BOUNDARY_ELEMENTS = [
-  // Command handlers are leaves (agent-command-execution-architecture.md §2.3). Listed before
-  // `package` so the more specific pattern wins — elements match most-specific-first.
-  {
-    type: 'context-handler',
-    mode: 'full',
-    pattern: 'packages/context/src/tools/handlers/*.ts',
-  },
   // More specific than `desktop-main`, and listed first so it wins: the interaction machine is
   // pure and vendor-free, and the presenter renders state rather than talking to the model
   // (docs/design/overlay-architecture.md §11.2).
@@ -166,17 +159,16 @@ export default tseslint.config(
                 'main/session/** is the pure interaction machine — take collaborators by injection instead.',
             },
             {
-              // The load-bearing rule for Tier 3 (agent-command-execution-architecture.md §2.3).
-              // `@riki/context` importing `@riki/realtime` would be the natural way to submit a
-              // tool result, and it would pull the GA-schema trap, the session lifecycle and the
-              // openai SDK into the package that is meant to be a pure function of a snapshot.
-              // Game facts arrive only through `WorldModelReader`.
+              // The load-bearing rule for this package (coaching-architecture.md §11).
+              // `@riki/context` importing `@riki/realtime` would pull the GA-schema trap, the
+              // session lifecycle and the openai SDK into the package that is meant to be a pure
+              // function of a snapshot. Game facts arrive only through `WorldModelReader`.
               //
               // This is an `element-types` rule and not a `boundaries/external` one: a workspace
               // import written by name resolves — `eslint-import-resolver-typescript` is
               // configured below — so boundaries sees `packages/realtime/**` and matches it as an
               // element. `external` only covers real node_modules packages such as `electron`.
-              from: [['package', { name: 'context' }], 'context-handler'],
+              from: [['package', { name: 'context' }]],
               disallow: [
                 ['package', { name: 'realtime' }],
                 ['package', { name: 'gsi' }],
@@ -185,15 +177,6 @@ export default tseslint.config(
               message:
                 'packages/context reads the world model through a port and speaks no vendor ' +
                 'vocabulary — the Realtime translation lives in the composition root adapter.',
-            },
-            {
-              // A command handler that called another would be a command whose failure paths are
-              // somebody else's and whose deadline is spent twice
-              // (agent-command-execution-architecture.md §2.3). The aggregator lives one directory
-              // up, in tools/all-handlers.ts, so this rule needs no exception.
-              from: ['context-handler'],
-              disallow: ['context-handler'],
-              message: 'A command handler may not import another command handler.',
             },
           ],
         },
@@ -261,9 +244,9 @@ export default tseslint.config(
             },
             {
               // `packages/context` must run in a bare vitest process, which is what makes almost
-              // all of Tier 3 testable with no game and no session (§2.3, §13). The cross-package
-              // half of this rule is in `element-types` above — see the note there for why.
-              from: [['package', { name: 'context' }], 'context-handler'],
+              // all of it testable with no game and no session (§2.3, §13). The cross-package half
+              // of this rule is in `element-types` above — see the note there for why.
+              from: [['package', { name: 'context' }]],
               disallow: ['electron'],
               message:
                 'packages/context may not import electron — it must run in a bare vitest process.',

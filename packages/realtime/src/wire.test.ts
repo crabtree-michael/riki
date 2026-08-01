@@ -100,9 +100,12 @@ describe('GA events', () => {
     });
   });
 
-  it('reads a function call, leaving its arguments unparsed', () => {
-    // Parsing here would turn a malformed-argument failure — which has a defined home in
-    // agent-command-execution's taxonomy — into a wire fault that kills the session.
+  it('reads a function call down to its name, and keeps nothing else', () => {
+    // The branch survives the deletion of command execution on purpose (coaching-architecture.md
+    // §2.4): a session told `tools: []` should never produce one, and we want a counter rather
+    // than an unhandled event if it does. It keeps the name because that is what gets counted, and
+    // drops `call_id` and `arguments` because nothing joins on the first and the second is a
+    // model's arguments to a tool that does not exist.
     expect(
       parseServerEvent(
         {
@@ -113,20 +116,15 @@ describe('GA events', () => {
         },
         AT,
       ),
-    ).toEqual({
-      type: 'response.function_call_arguments.done',
-      call_id: 'c1',
-      name: 'get_timings',
-      arguments: '{"which":"roshan"}',
-    });
+    ).toEqual({ type: 'response.function_call_arguments.done', name: 'get_timings' });
   });
 
-  it('does not throw on malformed arguments', () => {
+  it('does not throw on malformed arguments, because it never looks at them', () => {
     const event = parseServerEvent(
       { type: 'response.function_call_arguments.done', call_id: 'c1', name: 'x', arguments: '{{{' },
       AT,
     );
-    expect(event).toMatchObject({ arguments: '{{{' });
+    expect(event).toEqual({ type: 'response.function_call_arguments.done', name: 'x' });
   });
 
   it('reads errors from either shape', () => {

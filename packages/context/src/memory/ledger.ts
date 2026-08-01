@@ -34,7 +34,7 @@ export const WINDOW_BEARING: ReadonlySet<LedgerEntry['kind']> = new Set([
   'snapshot',
   'agent_said',
   'player_said',
-  'command',
+  'brief',
   'summary',
 ] as const);
 

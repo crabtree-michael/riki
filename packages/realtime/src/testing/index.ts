@@ -141,7 +141,7 @@ export function createFakeRealtimeTransport(): FakeRealtimeTransport {
 export const REQUIRED_FIXTURES: readonly string[] = [
   'ptt-turn.jsonl',
   'barge-in.jsonl',
-  'tool-call-with-consent.jsonl',
+  'stray-function-call.jsonl',
   'mid-response-disconnect.jsonl',
   'context-exhaustion.jsonl',
   'long-session-25min.jsonl',

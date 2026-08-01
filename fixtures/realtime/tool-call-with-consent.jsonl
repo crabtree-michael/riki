@@ -1,9 +1,0 @@
-{"type":"session.created"}
-{"type":"conversation.item.input_audio_transcription.completed","item_id":"user_1","transcript":"what does their build look like"}
-{"type":"response.created","response_id":"resp_1"}
-{"type":"response.function_call_arguments.done","call_id":"call_1","name":"read_screen","arguments":"{\"region\":\"scoreboard\"}"}
-{"type":"response.done","response_id":"resp_1","response":{"id":"resp_1","usage":{"input_token_details":{"audio_tokens":1400,"cached_tokens":960,"text_tokens":300},"output_token_details":{"audio_tokens":0,"text_tokens":20}}}}
-{"type":"response.created","response_id":"resp_2"}
-{"type":"response.output_item.added","item_id":"item_2"}
-{"type":"response.output_audio_transcript.done","item_id":"item_2","transcript":"They have a Black King Bar and a Blink Dagger."}
-{"type":"response.done","response_id":"resp_2","response":{"id":"resp_2","usage":{"input_token_details":{"audio_tokens":1400,"cached_tokens":1380,"text_tokens":300},"output_token_details":{"audio_tokens":210,"text_tokens":20}}}}

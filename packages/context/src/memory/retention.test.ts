@@ -1,14 +1,15 @@
 /**
  * The retention ladder, the compactor, the summary and the rehydration brief. Tier 1.
  *
- * §13 names four properties here, and one of them is called out as the rule an implementation is
- * most likely to get wrong: **a dropped result always drops its call**. In this ledger that is
- * structural — one `command` entry holds both — so the test asserts the property in the form that
- * would catch someone splitting the entry in two later, which is the only way it can regress.
+ * The ladder is four rungs now, not five, and coaching-architecture.md §13's row for it asks for
+ * one property in particular: **no pairing rule survives**. The old rungs 1 and 2 obliged dropping
+ * a tool call whenever its result went, and §7.2 called that the rule an implementation is most
+ * likely to get wrong. `drops every entry independently` below is what would catch someone
+ * reintroducing an ordering dependency.
  */
 
 import { describe, expect, it } from 'vitest';
-import type { CallId, GameClock, ItemId, MatchId, MonoMs, TurnId } from '../common/types.js';
+import type { GameClock, ItemId, MatchId, MonoMs, TurnId } from '../common/types.js';
 import type { AdviceTopic, WindowBudget } from './types.js';
 import { FakeWorldModel, observed } from '../testing/index.js';
 import { createTokenCounter } from '../render/tokens.js';
@@ -52,12 +53,10 @@ function match(turns: number) {
       at,
     });
     ledger.append({
-      kind: 'command',
+      kind: 'brief',
       turnId,
-      callId: `c${String(i)}` as CallId,
-      name: 'get_enemy_detail',
-      result: { text: 'sf bot 4s ago', tokens: 120 },
-      status: 'ok',
+      rendered: { text: 'threat: sf bot 4s ago(0.91)', tokens: 120 },
+      sections: ['threat'],
       at,
     });
     ledger.append({
@@ -75,45 +74,39 @@ function match(turns: number) {
 const retention = createRetentionPolicy({ counter });
 
 describe('RetentionPolicy', () => {
-  it('drops command results before anything else', () => {
+  it('drops superseded briefs before anything else', () => {
     const ledger = match(4);
     const plan = retention.plan(ledger, BUDGET, 0 as MonoMs);
     const kinds = plan.drop.map((ref) => ledger.entry(ref)?.kind);
-    expect(kinds[0]).toBe('command');
+    expect(kinds[0]).toBe('brief');
     // Riki's own injection goes before anything anybody said (§7.1).
     expect(kinds).not.toContain('agent_said');
   });
 
-  it('never drops a command result without its call — they are one entry', () => {
-    // The vacuum the command architecture's one-result invariant prevents, reintroduced by
-    // retention. Here it cannot happen because a `command` entry *is* the pair; if that ever
-    // becomes two entries, this assertion is what fails.
+  it('drops every entry independently — no rung obliges another', () => {
+    // The property that replaced the pairing rule. A brief and a snapshot supersede *themselves*,
+    // so a plan is a set rather than a set with a closure over it; if a `dropsWith` ever appears
+    // here, the ladder has re-acquired the one thing coaching-architecture.md §2.5 removed.
     const ledger = match(6);
     const plan = retention.plan(ledger, BUDGET, 0 as MonoMs);
+    expect(new Set(plan.drop).size).toBe(plan.drop.length);
     for (const ref of plan.drop) {
-      const entry = ledger.entry(ref);
-      if (entry?.kind !== 'command') continue;
-      expect(entry.name).not.toBe('');
-      expect(entry.result).toBeDefined();
+      const kept = plan.drop.filter((other) => other !== ref);
+      // Dropping one fewer entry is always a legal plan: nothing in the set depends on anything
+      // else in it.
+      expect(kept.every((other) => ledger.entry(other) !== undefined)).toBe(true);
     }
   });
 
-  it('keeps the most recent snapshot and the current turn’s commands', () => {
+  it('keeps the most recent brief and the most recent snapshot', () => {
     const ledger = match(6);
     const inWindow = ledger.inWindow();
-    const newestSnapshot = [...inWindow]
-      .reverse()
-      .find((r) => ledger.entry(r)?.kind === 'snapshot');
-    const currentTurn = ledger.entry(inWindow[inWindow.length - 1]!);
+    const newestOf = (kind: string) =>
+      [...inWindow].reverse().find((r) => ledger.entry(r)?.kind === kind);
 
-    const plan = retention.plan(ledger, BUDGET, 0 as MonoMs);
-    expect(plan.drop).not.toContain(newestSnapshot);
-    for (const ref of plan.drop) {
-      const entry = ledger.entry(ref);
-      if (entry?.kind === 'command' && currentTurn?.kind !== 'summary') {
-        expect(entry.turnId).not.toBe(currentTurn?.turnId);
-      }
-    }
+    const plan = retention.plan(ledger, { ...BUDGET, capTokens: 300 }, 0 as MonoMs);
+    expect(plan.drop).not.toContain(newestOf('snapshot'));
+    expect(plan.drop).not.toContain(newestOf('brief'));
   });
 
   it('never drops the last keepLastTurns turns of conversation', () => {

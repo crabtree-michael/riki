@@ -12,8 +12,8 @@
  *
  * ⚠ Transitional. The branded scalars belong to @riki/protocol per REPO_SKELETON.md §4 (step 2,
  * still empty), as does `VoiceEvent` itself — it crosses the voice window's preload bridge.
- * `TurnId` and `CallId` are `packages/context`'s; declared structurally here rather than imported
- * so this package states its seam without reaching into another package's directory.
+ * `TurnId` is `packages/context`'s; declared structurally here rather than imported so this package
+ * states its seam without reaching into another package's directory.
  */
 
 /** Local monotonic milliseconds. Never wall-clock. */
@@ -36,7 +36,6 @@ export interface Clock {
 
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type TurnId = string & { readonly __brand: 'TurnId' };
-export type CallId = string & { readonly __brand: 'CallId' };
 export type ResponseId = string & { readonly __brand: 'ResponseId' };
 /** A conversation item id, as the API assigns it. The join key for truncation and deletion. */
 export type ItemId = string & { readonly __brand: 'ItemId' };
@@ -98,17 +97,6 @@ export type VoiceEvent =
       readonly event: 'submitted' | 'responseStarted' | 'responseEnded';
     }
   | {
-      readonly kind: 'tool';
-      readonly event: 'started' | 'ended';
-      readonly name: string;
-      readonly callId: CallId;
-    }
-  | {
-      readonly kind: 'consent';
-      readonly event: 'requested' | 'resolved';
-      readonly promptId: string;
-    }
-  | {
       readonly kind: 'transcript';
       readonly role: 'player' | 'agent';
       readonly turnId: TurnId;
@@ -133,9 +121,7 @@ export type VoiceEvent =
  * were heard.
  */
 export type VoiceCommand =
-  | { readonly kind: 'interrupt'; readonly at: MonoMs }
-  | { readonly kind: 'abort' }
-  | { readonly kind: 'consent'; readonly promptId: string; readonly granted: boolean };
+  { readonly kind: 'interrupt'; readonly at: MonoMs } | { readonly kind: 'abort' };
 
 /**
  * `console.*` is confined to `packages/telemetry` (REPO_SKELETON.md §6.2), so this is a port.
@@ -150,4 +136,13 @@ export interface VoiceTelemetry {
   cost(usd: number, cachedFraction: number): void;
   /** `speech_started` while our gate is shut: the model is hearing itself (architecture §9). */
   selfInterruption(): void;
+  /**
+   * A `response.function_call_arguments.done` from a session configured with `tools: []`.
+   *
+   * Should be zero, forever. It exists because realtime §11.6 records the model narrating tool
+   * calls it did not make and leaking call arguments into speech — so a model told it has no tools
+   * emitting one anyway is a thing we want a counter for rather than an unhandled event. Nothing
+   * dispatches it and nothing answers it (coaching-architecture.md §2.4).
+   */
+  strayToolCall(name: string): void;
 }

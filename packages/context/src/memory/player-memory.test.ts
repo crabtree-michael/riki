@@ -134,12 +134,10 @@ describe('durable memory privacy — the egress test', () => {
       at: 0 as MonoMs,
     });
     ledger.append({
-      kind: 'command',
+      kind: 'brief',
       turnId,
-      callId: 'c0' as never,
-      name: 'get_recent_events',
-      result: { text: SECRETS[0]!, tokens: 10 },
-      status: 'ok',
+      rendered: { text: SECRETS[0]!, tokens: 10 },
+      sections: ['history'],
       at: 0 as MonoMs,
     });
     return ledger;

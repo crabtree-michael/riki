@@ -1,11 +1,12 @@
 /**
  * The three primitives every tier renders through.
  *
- * These exist because there are two renderers in this package — the Tier 2 snapshot and the Tier 3
- * result renderer — and the rules they must both obey are the same rules. Two implementations
- * written months apart would agree until the day one of them learned to say "probably".
- * `agent-command-execution-architecture.md` §16 step 3 asks for this explicitly and warns that
- * doing it afterwards means the two never re-converge.
+ * These exist because there are two renderers in this package — the Tier 2 snapshot and the
+ * coaching brief — and the rules they must both obey are the same rules. Two implementations
+ * written months apart would agree until the day one of them learned to say "probably", and doing
+ * this afterwards means the two never re-converge. It is also why coaching-architecture.md §2.1
+ * insists the brief's composer be written fresh against these rather than renamed out of the
+ * deleted result renderer.
  *
  * See docs/design/context-and-memory-architecture.md §5.1. Declarations only.
  */

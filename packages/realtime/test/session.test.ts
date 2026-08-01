@@ -16,7 +16,6 @@ import { resetTurnIds } from '../src/turn.js';
 import type { RealtimeSessionConfig } from '../src/session-config.js';
 import type { ClientSecret } from '../src/credentials.js';
 import type {
-  CallId,
   ItemId,
   MonoMs,
   SessionId,
@@ -30,7 +29,6 @@ const CONFIG: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
   voice: 'marin',
   instructions: '',
-  tools: [],
   turnDetection: {
     kind: 'server_vad',
     createResponse: false,
@@ -63,6 +61,7 @@ function telemetrySpies() {
     fault: vi.fn(),
     cost: vi.fn(),
     selfInterruption: vi.fn(),
+    strayToolCall: vi.fn(),
   };
   const sink: VoiceTelemetry = {
     turnLatency: spies.turnLatency,
@@ -71,6 +70,7 @@ function telemetrySpies() {
     fault: spies.fault,
     cost: spies.cost,
     selfInterruption: spies.selfInterruption,
+    strayToolCall: spies.strayToolCall,
   };
   return { spies, sink };
 }
@@ -86,13 +86,6 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
 
   let audibleMs = 0;
   let captureOpen = false;
-
-  const tools = {
-    dispatch: vi.fn((call: { callId: string; name: string; argumentsJson: string }) =>
-      Promise.resolve({ callId: call.callId, outputJson: '{"roshan":"up"}' }),
-    ),
-    resolveConsent: vi.fn(),
-  };
 
   const events: VoiceEvent[] = [];
   const active = await createRealtimeSession(
@@ -111,7 +104,6 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
         },
       },
       playback: { audibleMs: () => audibleMs },
-      tools,
       clock: {
         now: clock.now,
         // Collect rather than fire, so a test decides whether the commit grace expires.
@@ -124,7 +116,7 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
       },
       telemetry: telemetrySink,
     },
-    { preambleText: 'You are Riki.', manifestJson: '[]' },
+    { preambleText: 'You are Riki.' },
     CONFIG,
   );
 
@@ -134,7 +126,6 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
     transport,
     clock,
     telemetry: spies,
-    tools,
     events,
     session: active,
     isCaptureOpen: () => captureOpen,
@@ -350,47 +341,37 @@ describe('transcription and local command parsing', () => {
   });
 });
 
-describe('tool calls', () => {
-  it('dispatches, answers, and asks the model to continue', async () => {
+describe('a function call from a session that has no tools', () => {
+  it('counts it and answers nothing at all', async () => {
+    // ADR-0023 deleted command execution, so this event has no correct handling other than a
+    // counter. Answering it would create a `function_call_output` for a call the conversation does
+    // not contain; dispatching it would need a pipeline that no longer exists.
     const harness = await session();
     harness.transport.emit({
       type: 'response.function_call_arguments.done',
-      call_id: 'call_1' as CallId,
       name: 'get_timings',
-      arguments: '{"which":"roshan"}',
-    });
-    await vi.waitFor(() => {
-      expect(harness.sentOf('response.create')).toHaveLength(1);
     });
 
-    expect(harness.tools.dispatch).toHaveBeenCalledWith({
-      callId: 'call_1',
-      name: 'get_timings',
-      argumentsJson: '{"which":"roshan"}',
-    });
-    expect(harness.sentOf('conversation.item.create')[0]?.item).toMatchObject({
-      type: 'function_call_output',
-      call_id: 'call_1',
-    });
+    expect(harness.telemetry.strayToolCall).toHaveBeenCalledWith('get_timings');
+    expect(harness.sentOf('conversation.item.create')).toEqual([]);
+    expect(harness.sentOf('response.create')).toEqual([]);
   });
 
-  it('answers even when the tool pipeline fails — an unanswered call stalls the turn', async () => {
+  it('does not stall the turn, because nothing is waiting on it', async () => {
+    // The whole class of machinery §3.1 removed — the watchdog, the one-result invariant, the
+    // breaker — existed because an unanswered call stalls a voice conversation. With no dispatch
+    // there is nothing to answer and nothing to stall.
     const harness = await session();
-    harness.tools.dispatch.mockRejectedValueOnce(new Error('boom'));
+    harness.transport.emit({ type: 'response.function_call_arguments.done', name: 'read_screen' });
     harness.transport.emit({
-      type: 'response.function_call_arguments.done',
-      call_id: 'call_2' as CallId,
-      name: 'get_timings',
-      arguments: '{}',
+      type: 'response.done',
+      response_id: 'resp_1' as never,
+      usage: null,
     });
 
-    await vi.waitFor(() => {
-      expect(harness.sentOf('conversation.item.create')).toHaveLength(1);
-    });
-    expect(harness.sentOf('conversation.item.create')[0]?.item).toMatchObject({
-      call_id: 'call_2',
-      output: '{"error":"unavailable"}',
-    });
+    expect(
+      harness.events.filter((event) => event.kind === 'turn' && event.event === 'responseEnded'),
+    ).toHaveLength(1);
   });
 });
 

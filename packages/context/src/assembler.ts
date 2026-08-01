@@ -1,17 +1,17 @@
 /**
  * The one thing this package exports at runtime.
  *
- * Three tiers of context and four spans of memory meet here, and the reason they meet in one object
- * is that they share two budgets: the 16,384-token cached prefix (Tier 1 + the Tier 3 manifest,
- * §4.2) and the ~28,672-token conversation window (Tier 2 + Tier 3 results + the conversation,
- * §7.1). Nobody can enforce a ceiling on a resource they can only see a third of.
+ * Three renderings of context and four spans of memory meet here, and the reason they meet in one
+ * object is that they share two budgets: the 16,384-token cached prefix (Tier 1, §4.2) and the
+ * ~28,672-token conversation window (the snapshot, the coaching brief and the conversation, §7.1).
+ * Nobody can enforce a ceiling on a resource they can only see a third of.
  *
- * One turn, end to end (§9.2):
+ * One turn, end to end (§9.2, coaching-architecture.md §9.2):
  *
  * ```
  *   events decides to speak ──► openTurn(brief)
  *          snapshot rendered ──► ledger.append({kind:'snapshot'}) ──► handed to the session
- *          agent speaks, may issue commands ──► ledger.append()
+ *          agent speaks ──► ledger.append({kind:'agent_said', topics})
  *                                  closeTurn() ──► Compactor.consider() ──► WindowPlan | null
  * ```
  *
@@ -39,7 +39,6 @@ import type {
   PlayerMemoryStore,
 } from './memory/contracts.js';
 import type { EventTapeReader } from './memory/ports.js';
-import type { ToolManifest } from './tools/contracts.js';
 import type { MatchLedger } from './memory/ledger.js';
 import type { MutableWorkingMemory } from './memory/working.js';
 import type { PreambleAssembler } from './preamble/contracts.js';
@@ -56,18 +55,23 @@ import { createRehydrator } from './memory/rehydrate.js';
 import { createSnapshotRenderer } from './snapshot/renderer.js';
 import { createPrefixBudget } from './preamble/budget.js';
 
-/** What the session is opened with. Frozen for the match (§4.4, ADR-0011). */
+/** What the session is opened with. Frozen for the match (§4.4). */
 export interface SessionContext {
   readonly preamble: Preamble;
-  readonly manifest: ToolManifest;
-  /** The sum nobody was computing: persona + preamble + manifest against the 16,384 cap (§4.2). */
+  /** The sum nobody was computing: persona + preamble against the 16,384 cap (§4.2). */
   readonly prefix: PrefixBudget;
 }
 
 export interface TurnContext {
   readonly turnId: TurnId;
   readonly snapshot: RenderedSnapshot;
-  /** What is left for command results this turn, after the snapshot (§7.1). */
+  /**
+   * What is left for the coaching brief this turn, after the snapshot (§7.1).
+   *
+   * It used to be what was left for command *results*, which accumulated. A brief supersedes
+   * itself the way a snapshot does, which is why coaching-architecture.md §8.2's drop order has
+   * four rungs where this one had five.
+   */
   readonly remaining: Budget;
 }
 
@@ -87,7 +91,7 @@ export interface ContextAssembler {
   /** For `packages/events`. Read-only, and the only edge between the two packages (§9.3). */
   readonly coaching: CoachingMemoryReader;
 
-  /** For the session adapter in the composition root: transcripts and command results in. */
+  /** For the session adapter in the composition root: transcripts in. */
   readonly ledger: ConversationLedgerWriter;
 
   /** After a lost session (§7.5). The preamble is re-assembled separately, byte-identically. */
@@ -102,8 +106,6 @@ export interface ContextAssemblerDeps {
   readonly matchId: MatchId;
   readonly world: WorldModelReader;
   readonly preamble: PreambleAssembler;
-  /** From `tools/`'s `buildToolSurface()`, assembled by the same composition root (§9.4). */
-  readonly manifest: ToolManifest;
   /** `packages/events` implements this; the composition root wires it (§8.2). */
   readonly tape?: EventTapeReader;
   readonly durable?: PlayerMemoryStore;
@@ -117,8 +119,8 @@ export interface ContextAssemblerDeps {
   readonly personaTokens?: number;
   /** Snapshot ceiling per turn *(tunable: 400, dota2 §6.2's upper bound)*. */
   readonly snapshotTokens?: number;
-  /** What is left for command results after the snapshot *(tunable: 600, tools §8.2)*. */
-  readonly turnResultTokens?: number;
+  /** The coaching brief's ceiling, after the snapshot *(tunable: 200, coaching §8.2)*. */
+  readonly briefTokens?: number;
   /** Elision is off; §5.3 is the argument. Present so the switch has one place to live. */
   readonly elision?: boolean;
   /** Where a plan goes when the compactor produces one. `packages/realtime` executes it (§8.4). */
@@ -126,7 +128,15 @@ export interface ContextAssemblerDeps {
 }
 
 const DEFAULT_SNAPSHOT_TOKENS = 400;
-const DEFAULT_TURN_RESULT_TOKENS = 600;
+
+/**
+ * coaching-architecture.md §8.2's *(tunable)* ceiling.
+ *
+ * A third of what command results were given, and that is the bet §12 row 1 asks to be measured:
+ * a focused brief assembled for one moment should carry as much useful signal as a call the model
+ * had to think to make.
+ */
+const DEFAULT_BRIEF_TOKENS = 200;
 const DEFAULT_TAPE_EVENTS = 5;
 
 /** What the assembler exposes beyond the declared contract, for the composition root's own wiring. */
@@ -144,7 +154,7 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
   const counter = deps.counter ?? createTokenCounter();
   const privacy = deps.privacy ?? DEFAULT_PRIVACY;
   const snapshotTokens = deps.snapshotTokens ?? DEFAULT_SNAPSHOT_TOKENS;
-  const turnResultTokens = deps.turnResultTokens ?? DEFAULT_TURN_RESULT_TOKENS;
+  const briefTokens = deps.briefTokens ?? DEFAULT_BRIEF_TOKENS;
   const windowBudget = deps.windowBudget ?? DEFAULT_WINDOW_BUDGET;
 
   const ledger = createConversationLedger(deps.matchId);
@@ -175,17 +185,17 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
     async openSession(input: PreambleInput, deadline: MonoMs) {
       const preamble = await deps.preamble.assemble(input, deadline);
 
-      // §4.2's sum, in the one place that can see all three claimants. `check()` fails a test, not
-      // a match: every number here is knowable before a session exists.
+      // §4.2's sum, in the one place that can see both claimants. `check()` fails a test, not a
+      // match: every number here is knowable before a session exists. The third claimant, the tool
+      // manifest, was 2,000 tokens and no longer exists (coaching-architecture.md §8.1).
       const parts = new Map<string, number>([
         ['persona', deps.personaTokens ?? 0],
         ...preamble.sections.map((s): [string, number] => [`preamble.${s.id}`, s.tokens]),
-        ['manifest', deps.manifest.estimatedTokens],
       ]);
       const prefix = createPrefixBudget(parts);
       deps.telemetry?.noteRender('preamble', 0, preamble.tokens);
 
-      return { preamble, manifest: deps.manifest, prefix };
+      return { preamble, prefix };
     },
 
     openTurn(brief: TurnBrief, now: MonoMs) {
@@ -228,7 +238,7 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
       return {
         turnId: brief.turnId,
         snapshot,
-        remaining: { maxTokens: turnResultTokens, spentTokens: 0 },
+        remaining: { maxTokens: briefTokens, spentTokens: 0 },
       };
     },
 

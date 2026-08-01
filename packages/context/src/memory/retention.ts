@@ -8,26 +8,25 @@
  *
  * The drop order, least-valuable first:
  *
- * 1. **Command results older than the current turn.** A stale answer about a fight that ended ten
- *    minutes ago has no residual value, while the conversation around it does. This is also the
- *    fastest-growing thing in the window (§7.1): our own injection, not the conversation.
- * 2. **The tool calls whose results were dropped, in the same plan.** See below — this is the rule
- *    an implementation is most likely to get wrong.
- * 3. **Superseded snapshots**, every one but the most recent. A ten-minute-old snapshot describes a
+ * 1. **Superseded briefs**, every one but the most recent. A brief is assembled for one moment and
+ *    is worthless once that moment has passed — more so than a snapshot, which at least described
+ *    the whole game.
+ * 2. **Superseded snapshots**, every one but the most recent. A ten-minute-old snapshot describes a
  *    game that no longer exists; it is self-labelling, because the format leads with `T 14:32`, but
  *    it is still ~300 tokens saying nothing.
- * 4. **Old conversation turns, replaced by a rolled summary** (§7.4).
- * 5. **Never dropped:** the most recent snapshot, and the last `keepLastTurns` turns of
- *    conversation. The preamble and manifest are not in the ledger at all — they are the cached
- *    prefix, and removing them costs everything and saves nothing.
+ * 3. **Old conversation turns, replaced by a rolled summary** (§7.4).
+ * 4. **Never dropped:** the most recent brief, the most recent snapshot, and the last
+ *    `keepLastTurns` turns of conversation. The preamble is not in the ledger at all — it is the
+ *    cached prefix, and removing it costs everything and saves nothing.
  *
- * > **Dropping a result and keeping its call leaves the model looking at a question it asked and
- * > never got an answer to** — the exact vacuum the command architecture's one-result invariant
- * > exists to prevent, reintroduced from the other end. Here that cannot happen structurally: a
- * > `command` ledger entry *is* the pair, holding both the call's name and its result, so one ref
- * > drops both items or neither. `packages/realtime` maps the ref back to its two conversation
- * > items. An implementation that split the entry in two would have to re-earn this rule, and
- * > `retention.test.ts` asserts it in the form that would catch that.
+ * > **The ladder has no order-dependent rule left, and that is the point of the change that removed
+ * > one.** It used to have five rungs, and rungs 1 and 2 were a pair: dropping a command result
+ * > obliged dropping the call that asked for it, or the model would be left looking at a question
+ * > it asked and never got an answer to. §7.2 called that "the rule most likely to be got wrong by
+ * > an implementation that treats entries as independent". With command execution deleted
+ * > (ADR-0023) both rungs go, and every remaining rung drops entries independently: two
+ * > self-superseding claimants and one accumulating one, instead of two accumulating claimants with
+ * > an ordering dependency between them.
  */
 
 import type { TurnId } from '../common/types.js';
@@ -87,32 +86,30 @@ export function createRetentionPolicy(options: RetentionOptions): RetentionPolic
         estimated -= candidate.tokens;
       };
 
-      // Rung 1 and 2: command entries outside the current turn. One entry is the call *and* the
-      // result, so this rung cannot half-drop a pair.
+      // Rung 1: superseded briefs. The most recent one is never dropped — it is the only thing in
+      // the window that says what the advice on the table is *about*.
       //
       // `keepLastTurns` does **not** protect these. §7.2's never-dropped set is the last N turns of
       // *conversation*, and the whole point of the ladder's order is that Riki's own injected
-      // artifacts go before anything anybody said — they are ~500 of the ~750 tokens a minute
+      // artifacts go before anything anybody said — they are the larger half of the tokens a minute
       // (§7.1), and they are the half we can economise.
-      const currentTurn = latestTurn(visible);
+      const newestBrief = newest(visible, 'brief');
       for (const candidate of visible) {
         if (estimated <= target) break;
-        if (candidate.entry.kind !== 'command') continue;
-        if (candidate.entry.turnId === currentTurn) continue;
+        if (candidate.entry.kind !== 'brief' || candidate.ref === newestBrief) continue;
         take(candidate);
       }
 
-      // Rung 3: superseded snapshots. The most recent one is never dropped — it is the only line
+      // Rung 2: superseded snapshots. The most recent one is never dropped — it is the only line
       // in the window that says what the game currently looks like.
-      const newestSnapshot = [...visible].reverse().find((c) => c.entry.kind === 'snapshot')?.ref;
+      const newestSnapshot = newest(visible, 'snapshot');
       for (const candidate of visible) {
         if (estimated <= target) break;
         if (candidate.entry.kind !== 'snapshot' || candidate.ref === newestSnapshot) continue;
-        if (drop.includes(candidate.ref)) continue;
         take(candidate);
       }
 
-      // Rung 4: old conversation, replaced by a rendered summary rather than deleted. A summary
+      // Rung 3: old conversation, replaced by a rendered summary rather than deleted. A summary
       // that costs more than what it replaces is not a summary, so the replacement only stands if
       // it is actually cheaper.
       if (estimated > target && options.summarise !== undefined) {
@@ -171,12 +168,9 @@ function protect(visible: readonly Candidate[], keepLastTurns: number): Readonly
   );
 }
 
-function latestTurn(visible: readonly Candidate[]): TurnId | null {
-  for (let index = visible.length - 1; index >= 0; index -= 1) {
-    const turnId = turnOf(visible[index]?.entry);
-    if (turnId !== null) return turnId;
-  }
-  return null;
+/** The one entry of a self-superseding kind that is never dropped: the last one. */
+function newest(visible: readonly Candidate[], kind: LedgerEntry['kind']): LedgerRef | undefined {
+  return [...visible].reverse().find((c) => c.entry.kind === kind)?.ref;
 }
 
 function turnOf(entry: LedgerEntry | undefined): TurnId | null {

@@ -34,9 +34,4 @@ export {
 export type { PlayerMemoryStoreOptions } from './player-memory.js';
 export { observationsFrom } from './observations.js';
 export type { MatchOutcome } from './observations.js';
-export {
-  entryTokens,
-  speechTokens,
-  CALL_OVERHEAD_TOKENS,
-  TOKENS_PER_SPOKEN_WORD,
-} from './occupancy.js';
+export { entryTokens, speechTokens, TOKENS_PER_SPOKEN_WORD } from './occupancy.js';

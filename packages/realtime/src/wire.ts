@@ -13,7 +13,7 @@
  * See docs/design/voice-input-architecture.md §5.2.
  */
 
-import type { CallId, ItemId, MonoMs, ResponseId, TokenUsage } from './types.js';
+import type { ItemId, MonoMs, ResponseId, TokenUsage } from './types.js';
 import type { SessionUpdate } from './session-config.js';
 
 export type ClientEvent =
@@ -52,12 +52,8 @@ export type ServerEvent =
       readonly item_id: ItemId;
       readonly transcript: string;
     }
-  | {
-      readonly type: 'response.function_call_arguments.done';
-      readonly call_id: CallId;
-      readonly name: string;
-      readonly arguments: string;
-    }
+  /** Should never arrive: the session is configured with `tools: []`. Counted, never answered. */
+  | { readonly type: 'response.function_call_arguments.done'; readonly name: string }
   | {
       readonly type: 'response.done';
       readonly response_id: ResponseId;
@@ -190,15 +186,12 @@ export function parseServerEvent(raw: unknown, at: MonoMs): ServerEvent {
       };
 
     case 'response.function_call_arguments.done':
-      return {
-        type,
-        call_id: (str(event.call_id) ?? '') as CallId,
-        name: str(event.name) ?? '',
-        // A JSON *string*, deliberately unparsed: validation is `packages/context`'s, and parsing
-        // here would turn a malformed-argument failure into a wire fault that kills the session
-        // (agent-command-execution-architecture.md §1.1).
-        arguments: str(event.arguments) ?? '',
-      };
+      // Kept, and kept deliberately thin. Riki sends `tools: []`, so this event should never
+      // arrive; it is parsed to a name and nothing else because the only thing done with it is
+      // counting it (coaching-architecture.md §2.4). No `call_id`, because nothing joins on it —
+      // there is no result to submit — and no `arguments`, because the model's arguments to a tool
+      // that does not exist are not information.
+      return { type, name: str(event.name) ?? '' };
 
     case 'response.done': {
       const response = record(event.response);

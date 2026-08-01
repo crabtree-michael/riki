@@ -6,19 +6,18 @@
  *
  * - `packages/events` opens a turn and reads `coaching` (§9.3) — and reads *only* that: three
  *   methods about advice, and nothing about tokens, the window, or a `LedgerEntry`.
- * - The composition root's session adapter appends transcripts and command results through
- *   `ledger` (§9.4) and hands back what `packages/realtime` actually dropped (§7.6).
+ * - The composition root's session adapter appends transcripts through `ledger` (§9.4) and hands
+ *   back what `packages/realtime` actually dropped (§7.6).
  * - `packages/realtime` receives a `WindowPlan` as a value, never a series of calls (§1.2).
  *
- * The end-to-end property worth stating: **a turn's snapshot, its transcripts and its commands all
- * land in one ledger, and the projections over that ledger survive a compaction.** That is the
- * whole of ADR-0012 in one test.
+ * The end-to-end property worth stating: **a turn's cause, its snapshot, its brief and what was
+ * said all land in one ledger, and the projections over that ledger survive a compaction.** That is
+ * the whole of ADR-0012 in one test.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, ItemId, MatchId, MonoMs, TurnId } from './common/types.js';
 import type { AdviceTopic, WindowPlan } from './memory/types.js';
-import type { ToolManifest } from './tools/contracts.js';
 import { FakeWorldModel, observed } from './testing/index.js';
 import { FakeEventTape, RecordingContextTelemetry } from './testing/index.js';
 import { EMPTY_PLAYER_MEMORY } from './memory/player-memory.js';
@@ -28,8 +27,6 @@ import { createContextAssembler } from './assembler.js';
 
 const RIKI = 'riki' as HeroId;
 const BKB: AdviceTopic = { of: 'item', item: 'black_king_bar' as ItemId };
-
-const MANIFEST: ToolManifest = { tools: [], estimatedTokens: 1_800, frozenAt: 0 as MonoMs };
 
 function world(): FakeWorldModel {
   return new FakeWorldModel({
@@ -56,13 +53,12 @@ function assembler(overrides: Partial<Parameters<typeof createContextAssembler>[
       reference: new FakeReferenceData(),
       persona: 'You are Riki.',
     }),
-    manifest: MANIFEST,
     ...overrides,
   });
 }
 
 describe('openSession', () => {
-  it('sums persona, preamble and manifest against the prefix cap', async () => {
+  it('sums persona and preamble against the prefix cap, with no manifest part', async () => {
     const context = assembler();
     const session = await context.openSession(
       {
@@ -76,13 +72,18 @@ describe('openSession', () => {
     );
 
     expect(session.prefix.check().ok).toBe(true);
-    expect(session.prefix.parts.get('manifest')).toBe(1_800);
+    // coaching-architecture.md §8.1: the 2,000-token manifest part is gone, and a part that
+    // reappears here is a tool surface that has grown back.
+    expect(session.prefix.parts.has('manifest')).toBe(false);
+    expect(
+      [...session.prefix.parts.keys()].every((k) => k === 'persona' || k.startsWith('preamble.')),
+    ).toBe(true);
     expect(session.preamble.text).toContain('You are Riki.');
   });
 });
 
 describe('one turn, end to end', () => {
-  it('records the cause, the snapshot, what was said and what ran, in one ledger', () => {
+  it('records the cause, the snapshot and what was said, in one ledger', () => {
     const tape = new FakeEventTape();
     tape.push({ id: 'enemy_missing' as never, at: 860 as GameClock, text: 'sf missing 12s' });
     const context = assembler({ tape });
@@ -141,7 +142,7 @@ describe('one turn, end to end', () => {
 describe('the events seam', () => {
   it('exposes advice and nothing else', () => {
     // §9.3: three methods, no mutation, no ledger, no tokens. Giving the salience path a reason to
-    // know about tokens is the inversion the command architecture refused for commands.
+    // know about tokens is the inversion this edge exists to refuse (coaching §4.4).
     const context = assembler();
     expect(Object.keys(context.coaching).sort()).toStrictEqual([
       'all',
@@ -188,12 +189,10 @@ describe('the realtime seam', () => {
       const at = (i * 1_000) as MonoMs;
       context.openTurn({ turnId, cause: { by: 'player', gesture: 'push_to_talk' } }, at);
       context.ledger.append({
-        kind: 'command',
+        kind: 'brief',
         turnId,
-        callId: `c${String(i)}` as never,
-        name: 'get_enemy_detail',
-        result: { text: 'sf bot 4s ago(0.91)', tokens: 120 },
-        status: 'ok',
+        rendered: { text: 'threat: sf bot 4s ago(0.91)', tokens: 120 },
+        sections: ['threat'],
         at,
       });
       context.closeTurn(turnId, 'spoke', at);
@@ -207,9 +206,9 @@ describe('the realtime seam', () => {
 
     const plan = plans.at(-1)!;
     const kinds = plan.drop.map((ref) => context.ledgerRecord.entry(ref)?.kind);
-    // Command results first, and the conversation not at all — Riki's own injection is ~500 of the
-    // ~750 tokens a minute (§7.1), and it is the half we can economise.
-    expect(kinds[0]).toBe('command');
+    // Superseded briefs first, and the conversation not at all — Riki's own injection is the
+    // larger half of the tokens a minute (§7.1), and it is the half we can economise.
+    expect(kinds[0]).toBe('brief');
     expect(kinds).not.toContain('agent_said');
     expect(kinds).not.toContain('player_said');
     expect(plan.estimatedTokensAfter).toBeLessThan(1_200);

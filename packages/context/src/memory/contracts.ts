@@ -88,8 +88,9 @@ export interface CoachingMemory extends CoachingMemoryReader {
  * window, or a `LedgerEntry`.
  *
  * This is the one edge between the two packages and it is a plain type import in the direction
- * events → context (§9.3). Giving the salience path a reason to know about tokens would be the same
- * inversion `agent-command-execution-architecture.md` §9.1 refused for commands.
+ * events → context (§9.3). Giving the salience path a reason to know about tokens is the inversion
+ * this edge exists to prevent, and it is the same argument that keeps `BRIEF_PLAN` on this side of
+ * it (coaching-architecture.md §4.4).
  */
 export interface CoachingMemoryReader {
   /** dota2 §6.4's novelty gate: don't repeat advice already acted on, or ignored twice. */
@@ -119,15 +120,13 @@ export interface PlayerMemoryStore {
 /**
  * Pure: given what we believe is in the window and a budget, what should leave.
  *
- * The ladder (§7.2), least-valuable first — command results, then **the calls whose results were
- * dropped, always in the same plan**, then superseded snapshots, then old turns replaced by a
- * summary. The preamble, the manifest, the newest snapshot and the last `keepLastTurns` turns are
- * never dropped.
+ * The ladder (§7.2 as coaching-architecture.md §2.5 revises it), least-valuable first — superseded
+ * briefs, then superseded snapshots, then old turns replaced by a summary. The preamble, the newest
+ * brief, the newest snapshot and the last `keepLastTurns` turns are never dropped.
  *
- * The pairing rule is the one an implementation is most likely to get wrong by treating entries as
- * independent: dropping a result and keeping its call leaves the model looking at a question it
- * asked and never got an answer to, which is the vacuum the command architecture's §7.4 exists to
- * prevent, reintroduced by the retention policy.
+ * Four rungs where there were five, and **no rung obliges dropping another entry**. The one that
+ * did was the command pair, which §7.2 called the rule an implementation is most likely to get
+ * wrong by treating entries as independent; deleting command execution deleted the rule with it.
  */
 export interface RetentionPolicy {
   plan(ledger: ConversationLedger, budget: WindowBudget, now: MonoMs): WindowPlan;

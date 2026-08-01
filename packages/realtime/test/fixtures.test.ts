@@ -24,7 +24,6 @@ const CONFIG: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
   voice: 'marin',
   instructions: '',
-  tools: [],
   turnDetection: {
     kind: 'server_vad',
     createResponse: false,
@@ -70,6 +69,7 @@ function telemetrySpies() {
     fault: vi.fn(),
     cost: vi.fn(),
     selfInterruption: vi.fn(),
+    strayToolCall: vi.fn(),
   };
   const sink: VoiceTelemetry = {
     turnLatency: spies.turnLatency,
@@ -78,6 +78,7 @@ function telemetrySpies() {
     fault: spies.fault,
     cost: spies.cost,
     selfInterruption: spies.selfInterruption,
+    strayToolCall: spies.strayToolCall,
   };
   return { spies, sink };
 }
@@ -113,14 +114,10 @@ async function replay(name: string) {
         },
       },
       playback: { audibleMs: () => 1200 },
-      tools: {
-        dispatch: (call) => Promise.resolve({ callId: call.callId, outputJson: '{"ok":true}' }),
-        resolveConsent: vi.fn(),
-      },
       clock: { now: clock.now, schedule: (_ms, fire) => (fire(), () => undefined) },
       telemetry: sink,
     },
-    { preambleText: 'You are Riki.', manifestJson: '[]' },
+    { preambleText: 'You are Riki.' },
     CONFIG,
   );
 
@@ -181,20 +178,22 @@ describe('barge-in.jsonl', () => {
   });
 });
 
-describe('tool-call-with-consent.jsonl', () => {
-  it('surfaces the call, answers it, and the model speaks the result', async () => {
-    const { events, transport } = await replay('tool-call-with-consent.jsonl');
+describe('stray-function-call.jsonl', () => {
+  it('counts the call, answers nothing, and lets the turn finish', async () => {
+    // The session is configured with `tools: []`, so this event should never arrive. When it does
+    // — realtime §11.6 records the model narrating calls it did not make — the only correct
+    // response is a counter. Answering would put a `function_call_output` item into a conversation
+    // that contains no call (coaching-architecture.md §2.4).
+    const { events, transport, telemetry: tel } = await replay('stray-function-call.jsonl');
 
-    expect(
-      events.filter((event) => event.kind === 'tool' && event.event === 'started'),
-    ).toMatchObject([{ name: 'read_screen', callId: 'call_1' }]);
-    await vi.waitFor(() => {
-      expect(
-        transport.sent().filter((event) => event.type === 'conversation.item.create'),
-      ).not.toHaveLength(0);
-    });
-    expect(finalTranscripts(events).at(-1)?.text).toBe(
-      'They have a Black King Bar and a Blink Dagger.',
+    expect(tel.strayToolCall).toHaveBeenCalledWith('read_screen');
+    expect(transport.sent().filter((event) => event.type === 'conversation.item.create')).toEqual(
+      [],
+    );
+    // And the turn still ends, which is the property that makes ignoring safe: with nothing
+    // awaited, there is nothing to stall.
+    expect(events.some((event) => event.kind === 'turn' && event.event === 'responseEnded')).toBe(
+      true,
     );
   });
 });

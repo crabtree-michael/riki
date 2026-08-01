@@ -22,7 +22,6 @@
 
 import type { TokenCounter } from '../render/types.js';
 import type { LedgerEntry } from './types.js';
-import { estimateTokens } from '../render/tokens.js';
 
 /**
  * ~1,200 tokens/min of assistant audio (realtime §5) at ~150 spoken words/min is 8 tokens a word.
@@ -31,12 +30,6 @@ import { estimateTokens } from '../render/tokens.js';
  * thing to keep calibrated for no decision it would change.
  */
 export const TOKENS_PER_SPOKEN_WORD = 8;
-
-/**
- * A function call as the model sees it: name, arguments, and the item scaffolding around them.
- * The *result* is counted from its own `RenderedText`, which is exact.
- */
-export const CALL_OVERHEAD_TOKENS = 12;
 
 function words(text: string): number {
   const matched = text.trim().match(/\S+/gu);
@@ -60,8 +53,8 @@ export function entryTokens(entry: LedgerEntry, counter: TokenCounter): number {
       return entry.rendered.tokens;
     case 'summary':
       return entry.rendered.tokens;
-    case 'command':
-      return entry.result.tokens + CALL_OVERHEAD_TOKENS + estimateTokens(entry.name);
+    case 'brief':
+      return entry.rendered.tokens;
     case 'agent_said':
     case 'player_said':
       return speechTokens(entry.transcript, counter);

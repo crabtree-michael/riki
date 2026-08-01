@@ -28,7 +28,6 @@ const CONFIG: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
   voice: 'marin',
   instructions: '',
-  tools: [],
   turnDetection: {
     kind: 'server_vad',
     createResponse: false,

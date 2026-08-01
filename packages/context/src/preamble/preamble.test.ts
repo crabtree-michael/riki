@@ -138,19 +138,19 @@ describe('EnrichmentPlanner', () => {
 });
 
 describe('PrefixBudget', () => {
-  it('sums the three claimants against the 16,384 cap', () => {
-    // The sum nobody was computing. Persona, preamble and manifest are sized in three different
-    // documents, and this is the only place they meet.
+  it('sums persona and preamble against the 16,384 cap, with no manifest part', () => {
+    // The sum nobody was computing. There were three claimants; the 2,000-token tool manifest was
+    // deleted with command execution (coaching-architecture.md §8.1), which is why this is 3,000.
     const budget = createPrefixBudget(
       new Map([
         ['persona', PREFIX_ALLOCATION.persona],
         ['preamble', PREFIX_ALLOCATION.preamble],
-        ['manifest', PREFIX_ALLOCATION.manifest],
       ]),
     );
     expect(budget.capTokens).toBe(PREFIX_CAP_TOKENS);
-    expect(budget.total()).toBe(4_700);
+    expect(budget.total()).toBe(3_000);
     expect(budget.check()).toStrictEqual({ ok: true, overBy: 0 });
+    expect(PREFIX_CAP_TOKENS - budget.total()).toBe(13_384);
   });
 
   it('fails a test rather than a match when the sum crosses the cap', () => {

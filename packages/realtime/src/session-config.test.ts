@@ -17,7 +17,6 @@ const BASE: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
   voice: 'marin',
   instructions: 'You are Riki.',
-  tools: [],
   turnDetection: {
     kind: 'server_vad',
     createResponse: false,
@@ -88,7 +87,6 @@ describe('the beta → GA trap', () => {
           },
           "instructions": "You are Riki.",
           "model": "gpt-realtime-2.1-mini",
-          "tool_choice": "auto",
           "tools": [],
           "truncation": {
             "retention_ratio": 0.8,
@@ -146,19 +144,14 @@ describe('truncation and tools', () => {
     expect(payload.truncation).toBe('disabled');
   });
 
-  it('renders the manifest as GA function tools', () => {
-    const payload = session({
-      ...BASE,
-      tools: [{ name: 'get_timings', description: 'Rune and Roshan windows', parameters: {} }],
-    });
-    expect(payload.tools).toEqual([
-      {
-        type: 'function',
-        name: 'get_timings',
-        description: 'Rune and Roshan windows',
-        parameters: {},
-      },
-    ]);
+  it('sends an explicitly empty tool list, and no tool_choice', () => {
+    // ADR-0023: Riki has no tools. Empty rather than absent is the decision
+    // (coaching-architecture.md §2.4) — the field says so, where omitting it leaves the question
+    // to a default we do not control. `tool_choice` goes because there is nothing to choose.
+    expect(session().tools).toEqual([]);
+    expect(session()).not.toHaveProperty('tool_choice');
+    // And the config cannot express anything else: a caller has no `tools` field to fill in.
+    expect(BASE).not.toHaveProperty('tools');
   });
 
   it('omits transcription when it is off', () => {
