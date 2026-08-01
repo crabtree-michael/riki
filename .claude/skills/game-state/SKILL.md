@@ -55,4 +55,4 @@ something the player has no way to know, it is wrong regardless of how the data 
 ## See also
 
 `docs/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),
-§10 (failure modes); `REPO_SKELETON.md` §5.3 (tiers), §6.2 (module boundaries).
+§9 (failure modes); `REPO_SKELETON.md` §5.3 (tiers), §6.2 (module boundaries).

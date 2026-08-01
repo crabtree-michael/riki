@@ -48,6 +48,6 @@ expensive belongs in the world model's derived state, computed once, not in the 
 
 ## See also
 
-`docs/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy),
-§6.5 (latency budget); `REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
+`docs/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy);
+`REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
 persona lives — open).

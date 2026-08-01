@@ -21,7 +21,7 @@ everywhere, so detect it and prompt once.
 
 ## 2. The performance budget is the feature
 
-≤3% of one CPU core average, ≤200 MB RSS, ≤50 MB GPU memory, **no measurable FPS delta**. A
+≤3% of one CPU core average, ≤50 MB GPU memory, **no measurable FPS delta**. A
 coach that costs frames is a coach that gets uninstalled.
 
 - **Crop first, on the GPU, then read back.** Reading back N small crops instead of a 4K
@@ -64,4 +64,4 @@ CI. It is a release gate, and its numbers get committed.
 ## See also
 
 `docs/dota2-state-capture-design.md` §2.2 (capture and CV), §8 (anti-cheat and
-fairness), §9 (performance), §10 (failure modes); `REPO_SKELETON.md` §5.6.
+fairness), §9 (failure modes); `REPO_SKELETON.md` §5.6.

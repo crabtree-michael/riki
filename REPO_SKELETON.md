@@ -51,17 +51,8 @@ No backend** — per A4 the API key comes from the developer's environment.
 |---|---|---|
 | Shell / overlay / tray / hotkeys | **Electron + TypeScript** | The overlay is a click-through layered window with per-pixel alpha (`ui-design.md` §6.5) — a normal desktop window concern. Electron bundles Chromium, which is the only route that gives us WebRTC *and* known-good acoustic echo cancellation. AEC is not optional: `openai-realtime-research.md` §11.5 documents self-interruption loops as a reliable failure without it. Tauri's webview-per-OS AEC variance (§9 of the same doc) is exactly the risk we cannot absorb. |
 | GSI server, world model, context, events | **TypeScript, in the Electron main process** | `dota2-state-capture-design.md` §3: "the GSI server and world model are lightweight enough to share the main process." Inputs arrive at 2–8 Hz. This is not hot code. |
-| Capture + CV | **Rust, separate process** | Budget is ≤3% of one core, ≤200 MB RSS, ≤50 MB GPU memory, no measurable FPS delta (§9). That rules out Node and Python for the shipping path. Rust also gives clean bindings to WGC / PipeWire / ScreenCaptureKit. |
+| Capture + CV | **Rust, separate process** | Budget is ≤3% of one core with no measurable FPS delta (`dota2-state-capture-design.md` §1). That rules out Node and Python for the shipping path. Rust also gives clean bindings to WGC / PipeWire / ScreenCaptureKit. |
 | API credentials | **`RIKI_OPENAI_API_KEY` from the environment** | Alpha/beta only (A4). Resolved by `packages/config` in the Electron **main** process and injected into `packages/realtime`; it never crosses the preload bridge into the renderer. No service to run, deploy, or authenticate against. |
-
-### Known tension, recorded rather than hidden
-
-Electron's baseline RSS (~150–250 MB) sits uncomfortably next to the ≤200 MB budget in
-`dota2-state-capture-design.md` §9. That budget is written against the *capture subsystem*, and
-the sidecar is where it must be enforced — but total process-tree memory is a real product
-concern and belongs in the frame-time harness (§5.6), not in a footnote. If it fails on a
-median machine, the fallback is a Rust/Tauri shell with a native WebRTC stack, which costs
-several weeks and reintroduces the AEC problem. **Measure before believing either way.**
 
 Alternatives and why not: pure Python (cannot meet the CV budget, no good overlay story); pure
 Rust/Tauri (AEC variance, more work, per A2); a web app (no overlay, no global hotkeys).
@@ -309,7 +300,7 @@ scoring, audio RMS and envelope math.
 - Snapshot renderer → `fixtures/golden/`. Format changes should show up as a readable diff,
   because the format *is* the interface to the LLM.
 - CV detections → `insta` snapshots against `fixtures/frames/`, with an **F1 floor** rather than
-  exact equality. `dota2-state-capture-design.md` §11.3 names minimap accuracy as the
+  exact equality. `dota2-state-capture-design.md` §10.3 names minimap accuracy as the
   load-bearing assumption of the entire vision layer; it needs a number in CI, not a vibe.
 
 **Tier 3 — contract.** Both languages parse the same `fixtures/protocol/` corpus and must agree.
@@ -318,8 +309,8 @@ cheapest insurance against the most likely cross-language bug.
 
 **Tier 4 — integration.** Replay a full recorded match through
 GSI → fusion → world model → derived → snapshot, with a fake sidecar injecting CV facts.
-Assert the §6.5 latency budgets (GSI POST → model < 10 ms; model → snapshot < 5 ms) and the
-failure-mode table in §10 (heartbeat miss → CV-only + user notice; sidecar crash → restart with
+Assert the latency budgets (GSI POST → model < 10 ms; model → snapshot < 5 ms) and the
+failure-mode table in dota2 §9 (heartbeat miss → CV-only + user notice; sidecar crash → restart with
 backoff; pause → freeze and mark stale).
 
 **Tier 5 — end-to-end.** Playwright on a real Electron build. State machine transitions from
@@ -374,9 +365,8 @@ Two separate things, often conflated:
 1. **Micro-benchmarks (CI-gated).** criterion over `crates/riki-cv`: region hash, template match,
    minimap pass, calibration solve. A regression threshold fails the build. Cheap, catches the
    obvious.
-2. **Frame-time harness (manual, release gate).** `dota2-state-capture-design.md` §9 is explicit
-   that the metric that matters is **Dota's 1% low frame time with Riki running versus not**, on
-   a low-end machine, at 1080p/1440p/4K. This cannot run in CI. It runs on real hardware before a
+2. **Frame-time harness (manual, release gate).** The metric that matters is **Dota's 1% low
+   frame time with Riki running versus not**, on a low-end machine, at 1080p/1440p/4K. This cannot run in CI. It runs on real hardware before a
    release and the numbers get committed to `docs/runbooks/perf-results/`. A release that has not
    run it is not a release.
 
@@ -504,7 +494,7 @@ RIKI_GSI_TOKEN=                 # generated per-install by tools/setup-gsi-cfg; 
 RIKI_DOTA_PATH=                 # auto-detected; override for non-standard Steam installs
 
 # --- Feature flags / degradation ---
-RIKI_VISION=on                  # on | off — off runs GSI-only (dota2 §10 fallback path)
+RIKI_VISION=on                  # on | off — off runs GSI-only (dota2 §9 fallback path)
 RIKI_UNPROMPTED=off             # on | off — "only when I ask" mode, dota2 §6.4
 RIKI_CAPTIONS=off               # must default off, ui-design §9.3
 RIKI_LOG_LEVEL=info
@@ -613,7 +603,7 @@ is written down where they will hit it — `docs/` for reasoning, the area's ski
 
 ## 10. Suggested scaffolding order
 
-`dota2-state-capture-design.md` §12 gives a build order for the product. This is the
+`dota2-state-capture-design.md` §11 gives a build order for the product. This is the
 infrastructure order that unblocks it, front-loaded so agents are productive immediately.
 
 | # | Step | Unblocks |
@@ -621,11 +611,11 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 | 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
-| 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The §12.1 milestone, and `pnpm dev:replay` |
+| 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay` |
 | 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration |
 | 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work |
 | 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice |
-| 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in §12.3 |
+| 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in dota2 §11.3 |
 | 9 | `bench/` + `docs/adr/` seeded + runbooks | Release gating |
 
 Steps 1–3 are strictly sequential. 4–8 can run in parallel across agents, which is the point of
@@ -663,7 +653,7 @@ Flagged rather than assumed. Each needs a human call or a spike.
 3. **git-lfs for `fixtures/frames/`.** Correct technically; adds a setup step and a bandwidth
    cost. The alternative is a scripted download from object storage.
 4. **Rust vs. C++ for the sidecar.** Proposed Rust. Worth confirming against whatever WGC and
-   ScreenCaptureKit binding maturity actually looks like when someone builds the §12.3 spike.
+   ScreenCaptureKit binding maturity actually looks like when someone builds the dota2 §11.3 spike.
 5. **Where does the agent's prompt/persona live?** It is neither code nor doc exactly. Proposal:
    versioned prompt files in `packages/context/prompts/` with golden tests, so a persona change
    shows up as a reviewable diff.
@@ -681,7 +671,7 @@ Recorded so they are not re-proposed.
 |---|---|
 | Single flat `src/` | Three subsystems in two languages with parallel agents; flat layout guarantees merge conflicts and hides the seams the design docs are explicit about |
 | Separate repos per component | The protocol contract has to be versioned in lockstep; polyrepo makes the most fragile boundary the hardest to change |
-| Python for the CV layer | Cannot meet the ≤3% core / ≤200 MB budget in `dota2-state-capture-design.md` §9; fine for a labelling tool, not for the shipping path |
+| Python for the CV layer | Cannot meet the ≤3% core budget in `dota2-state-capture-design.md` §1; fine for a labelling tool, not for the shipping path |
 | CV in-process with the app | §3 requires the CV worker to crash without taking the agent down |
 | Jest | Vitest is faster, ESM-native, and shares config with Vite in the renderer |
 | Biome instead of ESLint + Prettier | The boundary rules in §6.2 are the point, and they need ESLint's plugin ecosystem |
@@ -772,7 +762,7 @@ fires* have the same answer.
 | `agent-context` | The snapshot the LLM sees, agent tools, whether Riki speaks | `packages/context`, `packages/events` | dota2 §6 |
 | `voice-realtime` | Realtime session, transport, barge-in, mic and speaker path | `packages/realtime`, `packages/audio` | realtime §3–§5 |
 | `overlay-ui` | The chip, tray, global hotkey, settings, any visible surface | `apps/desktop` | ui-design §3–§10 |
-| `vision-sidecar` | Screen capture, CV, the perf budget, the sidecar process | `crates/riki-*` | dota2 §2.2, §9 |
+| `vision-sidecar` | Screen capture, CV, the perf budget, the sidecar process | `crates/riki-*` | dota2 §2.2 |
 | `config-secrets` | A new setting, an env var, the API key, anything that logs | `packages/config`, `packages/telemetry` | §7 |
 
 **Nine, not twenty-five.** A skill scoped to too narrow a slice never fires, and one scoped to
