@@ -14,6 +14,7 @@
  * See docs/design/agent-command-execution-architecture.md §3.4 and §7.1.
  */
 
+import type { Fetched } from '../common/ports.js';
 import type { ToolErrorCode, ToolFailure, ToolName, ToolOutcome } from './types.js';
 
 /** Every code, its voice, and whether asking again could ever help. §7.1, in one table. */
@@ -69,6 +70,18 @@ export function failure<R>(
 
 export function ok<R>(value: R): ToolOutcome<R> {
   return { ok: true, value };
+}
+
+/**
+ * A `ReferenceDataPort` answer as a command outcome.
+ *
+ * The port's own result type is `Fetched<T>` — two arms and no taxonomy — because its surviving
+ * consumer is preamble enrichment, which only ever asks whether the data arrived
+ * (coaching-architecture.md §2.2, `common/ports.ts`). The ten-code taxonomy is a command's, so the
+ * widening happens here rather than on the port.
+ */
+export function fromFetched<R>(fetched: Fetched<R>): ToolOutcome<R> {
+  return fetched.ok ? ok(fetched.value) : failure(fetched.reason, { detail: 'reference data' });
 }
 
 /** The default sentence for a code, for tests and for anything that needs it without a failure. */

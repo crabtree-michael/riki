@@ -18,9 +18,9 @@ import type { CapturePort, FreshCaptureRequest } from './ports.js';
 import type { WorldModelReader, WorldSnapshot } from '../common/ports.js';
 import type { CancelSignal, RegionId, ToolOutcome } from './types.js';
 import type { Clock } from '../common/types.js';
-import type { Timers } from './timers.js';
+import type { Timers } from '../common/timers.js';
 import { failure, ok } from './failures.js';
-import { systemTimers } from './timers.js';
+import { systemTimers } from '../common/timers.js';
 
 export interface FreshCaptureDeps {
   readonly capture: CapturePort;

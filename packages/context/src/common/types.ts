@@ -48,6 +48,9 @@ export type MatchId = string & { readonly __brand: 'MatchId' };
 export type HeroId = string & { readonly __brand: 'HeroId' };
 export type ItemId = string & { readonly __brand: 'ItemId' };
 
+/** A named capture region. `CapturePort`'s vocabulary, owned by state-capture §4.3. */
+export type RegionId = string & { readonly __brand: 'RegionId' };
+
 /** An event type from `packages/events` (dota2 §6.4), named here without importing that package. */
 export type EventId = string & { readonly __brand: 'EventId' };
 

@@ -11,6 +11,7 @@ import type { ItemInfo } from '../ports.js';
 import { compose } from '../render.js';
 import { defineArgs } from '../codec.js';
 import { defineTool } from '../registry.js';
+import { fromFetched } from '../failures.js';
 
 const args = defineArgs({
   item: {
@@ -26,7 +27,7 @@ export const getItemInfo = defineTool({
   args,
   needs: ['reference'],
 
-  handler: async (a, ctx) => ctx.ports.reference.item(a.item as ItemId),
+  handler: async (a, ctx) => fromFetched(await ctx.ports.reference.item(a.item as ItemId)),
 
   renderer: {
     render(value: ItemInfo, ctx) {

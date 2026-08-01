@@ -27,6 +27,7 @@ export type {
   MonoMs,
   Observed,
   PrivacyPolicy,
+  RegionId,
   Staleness,
   TurnId,
   Unsubscribe,
@@ -37,6 +38,7 @@ import type {
   GameClock,
   MonoMs,
   PrivacyPolicy,
+  RegionId,
   TurnId,
   Unsubscribe,
 } from '../common/types.js';
@@ -258,6 +260,5 @@ export interface ActivityHandle {
 // -----------------------------------------------------------------------------------------------
 // Domain ids — ⚠ placeholder for @riki/protocol (§11)
 // -----------------------------------------------------------------------------------------------
-
-/** A named capture region. Tier 3's alone: no other tier names one. */
-export type RegionId = string & { readonly __brand: 'RegionId' };
+//
+// `RegionId` moved to `../common/types.ts` with `CapturePort`, which owns it.

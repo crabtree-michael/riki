@@ -13,7 +13,7 @@ import type { MatchupNote } from '../ports.js';
 import { compose } from '../render.js';
 import { defineArgs } from '../codec.js';
 import { defineTool } from '../registry.js';
-import { failure } from '../failures.js';
+import { failure, fromFetched } from '../failures.js';
 
 const args = defineArgs({
   enemy: { kind: 'hero', description: 'The enemy hero to compare against.' },
@@ -34,7 +34,7 @@ export const getMatchupAdvice = defineTool({
       // to describe, and saying so beats asking an external API about `undefined`.
       return failure('unavailable', { detail: 'self.hero not observed yet' });
     }
-    return ctx.ports.reference.matchup(self.value, a.enemy as HeroId);
+    return fromFetched(await ctx.ports.reference.matchup(self.value, a.enemy as HeroId));
   },
 
   renderer: {

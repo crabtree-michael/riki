@@ -19,7 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, ItemId, MatchId, MonoMs, TurnId } from '../common/types.js';
 import type { AdviceTopic, PlayerObservation } from './types.js';
-import { FakeWorldModel, observed } from '../tools/testing/index.js';
+import { FakeWorldModel, observed } from '../testing/index.js';
 import { FakeMemoryStore } from '../testing/index.js';
 import { createConversationLedger } from './ledger.js';
 import { createCoachingMemory } from './coaching.js';

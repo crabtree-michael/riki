@@ -46,7 +46,7 @@ export const getBuildBenchmark = defineTool({
     }
 
     const fetched = await ctx.ports.reference.benchmark(hero.value, snapshot.clock);
-    if (!fetched.ok) return fetched;
+    if (!fetched.ok) return failure(fetched.reason, { detail: 'reference data' });
 
     const netWorth = snapshot.get<number>('self.netWorth' as FieldPath);
     const level = snapshot.get<number>('self.level' as FieldPath);

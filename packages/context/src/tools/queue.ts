@@ -17,11 +17,11 @@
 import type { QueueEntry, QueueOutcome, ToolQueue } from './contracts.js';
 import type { CancelReason, MonoMs, ToolEffect, TurnId } from './types.js';
 import type { Clock } from '../common/types.js';
-import type { Timers } from './timers.js';
+import type { Timers } from '../common/timers.js';
 import { MutableCancelSignal } from './turn.js';
 import { fail } from './failures.js';
 import { EFFECT_DEFAULTS } from './tunables.js';
-import { systemTimers } from './timers.js';
+import { systemTimers } from '../common/timers.js';
 
 interface Waiting {
   readonly turnId: TurnId;

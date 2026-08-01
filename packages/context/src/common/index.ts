@@ -10,3 +10,4 @@
 
 export type * from './types.js';
 export type * from './ports.js';
+export type { Timers } from './timers.js';

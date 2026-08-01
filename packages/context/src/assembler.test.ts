@@ -19,11 +19,11 @@ import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, ItemId, MatchId, MonoMs, TurnId } from './common/types.js';
 import type { AdviceTopic, WindowPlan } from './memory/types.js';
 import type { ToolManifest } from './tools/contracts.js';
-import { FakeWorldModel, observed } from './tools/testing/index.js';
+import { FakeWorldModel, observed } from './testing/index.js';
 import { FakeEventTape, RecordingContextTelemetry } from './testing/index.js';
 import { EMPTY_PLAYER_MEMORY } from './memory/player-memory.js';
 import { createPreambleAssembler } from './preamble/assemble.js';
-import { FakeReferenceData } from './tools/testing/index.js';
+import { FakeReferenceData } from './testing/index.js';
 import { createContextAssembler } from './assembler.js';
 
 const RIKI = 'riki' as HeroId;

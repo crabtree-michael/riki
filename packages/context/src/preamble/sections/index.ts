@@ -14,7 +14,7 @@
  */
 
 import type { PreambleInput, PreambleSection, PreambleSectionId } from '../types.js';
-import type { BuildBenchmark, MatchupNote } from '../../tools/ports.js';
+import type { BuildBenchmark, MatchupNote } from '../../common/ports.js';
 import type { HeroId } from '../../common/types.js';
 import { estimateTokens } from '../../render/tokens.js';
 import { clockText, short } from '../../snapshot/sections/util.js';

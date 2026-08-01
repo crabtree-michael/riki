@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, MonoMs, TurnId } from '../common/types.js';
 import type { SnapshotContext, TapeEvent, TurnCause } from './types.js';
-import { FakeWorldModel, observed } from '../tools/testing/index.js';
+import { FakeWorldModel, observed } from '../testing/index.js';
 import { DEFAULT_PRIVACY } from '../render/privacy.js';
 import { createSnapshotRenderer } from './renderer.js';
 import { createPriorityLadder, promoted, SNAPSHOT_LADDER } from './ladder.js';

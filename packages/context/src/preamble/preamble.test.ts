@@ -16,7 +16,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HeroId, MatchId, MonoMs } from '../common/types.js';
 import type { PreambleInput } from './types.js';
-import { FakeReferenceData, ManualTimers } from '../tools/testing/index.js';
+import { FakeReferenceData, ManualTimers } from '../testing/index.js';
 import { EMPTY_PLAYER_MEMORY } from '../memory/player-memory.js';
 import { createPreambleAssembler } from './assemble.js';
 import { createEnrichmentPlanner } from './enrichment.js';

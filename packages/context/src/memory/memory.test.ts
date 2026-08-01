@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameClock, ItemId, MatchId, MonoMs, TurnId } from '../common/types.js';
 import type { AdviceTopic, LedgerRef } from './types.js';
-import { FakeWorldModel, observed } from '../tools/testing/index.js';
+import { FakeWorldModel, observed } from '../testing/index.js';
 import { createTokenCounter } from '../render/tokens.js';
 import { createConversationLedger } from './ledger.js';
 import { createCoachingMemory } from './coaching.js';

@@ -15,7 +15,7 @@ import type { RegisteredTool, ToolManifest, ToolSurface } from './contracts.js';
 import type { ManifestEnvironment } from './contracts.js';
 import type { MonoMs, PrivacyPolicy, TurnId } from './types.js';
 import type { ToolPorts } from './ports.js';
-import type { Timers } from './timers.js';
+import type { Timers } from '../common/timers.js';
 import type { ToolTunables } from './tunables.js';
 import { ALL_HANDLERS } from './all-handlers.js';
 import { DEFAULT_TUNABLES } from './tunables.js';
