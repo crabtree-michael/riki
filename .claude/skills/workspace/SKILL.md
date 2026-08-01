@@ -33,8 +33,10 @@ Two rules follow from that:
 
 ## Before you commit
 
-- `pnpm check` is green. It is lint + typecheck + test + codegen-clean, and it is exactly
-  what CI runs, so a green local check means no surprise after pushing.
+- `pnpm check` is green. It is lint + format:check + typecheck + test + codegen:check. CI
+  would run the same gate, but **CI is not switched on yet** (the workflows sit in
+  `.github/workflows-pending/`), so your local run is the only thing standing between a
+  mistake and `main`.
 - New behaviour has a test at the lowest tier that can catch it (`testing` skill).
 - A decision you made is an ADR in `docs/adr/`, not a code comment.
 - Something you learned is in the area's skill (below).

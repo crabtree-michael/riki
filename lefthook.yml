@@ -1,7 +1,8 @@
 # Local git hooks (REPO_SKELETON.md §6.1). Installed by `pnpm setup`.
 #
-# Pre-commit stays fast: format and lint only what changed. The full gate is `pnpm check`,
-# which is also what CI runs — see §8.1.
+# Pre-commit stays fast: format and lint only what changed. The full gate is `pnpm check`
+# — see §8.1. CI would run the same gate, but it is not switched on yet (§8.2), so these
+# hooks and a local `pnpm check` are the only enforcement there is.
 
 pre-commit:
   parallel: true

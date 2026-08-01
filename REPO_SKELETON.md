@@ -89,7 +89,7 @@ riki/
 │       └── <area>/SKILL.md
 │
 ├── .github/
-│   └── workflows/
+│   └── workflows-pending/           ⚠ written but NOT running — see §8.2 and the README there
 │       ├── ci.yml                   lint · typecheck · test · build (ubuntu + windows)
 │       ├── bench.yml                CV micro-benchmarks, regression gate
 │       └── docs.yml                 markdownlint + link check
@@ -390,7 +390,7 @@ report-only elsewhere.
 | Concern | Tool | Gate |
 |---|---|---|
 | TS lint | **ESLint** flat config + `typescript-eslint` `strict-type-checked` | error |
-| TS types | `tsc --noEmit` per package | error |
+| TS types | `tsc --build` over the project references | error |
 | Formatting (TS/JSON/MD/YAML) | **Prettier** | error (`--check` in CI) |
 | Rust format | **rustfmt** | error |
 | Rust lint | **clippy** with `-D warnings` | error |
@@ -540,19 +540,38 @@ One name per action, from the repo root. If a command is not here, it should be.
 | `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota and no API key required.** |
 | `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU, no API key. |
 | `pnpm test:e2e` | Playwright against a built Electron app |
-| `pnpm lint` | ESLint + clippy + markdownlint + gitleaks |
+| `pnpm lint` | ESLint + markdownlint + clippy. **Not gitleaks** — that runs pre-push (§6.1) and in `ci.yml`. |
 | `pnpm format` / `pnpm format:check` | Prettier + rustfmt |
-| `pnpm typecheck` | `tsc --noEmit` across the workspace |
-| `pnpm codegen` | Regenerate JSON Schema + Rust types from `packages/protocol` |
-| `pnpm check:skills` | Validate `.claude/skills/**`: frontmatter, size cap, links, §2.2 coverage (§13.7) |
+| `pnpm typecheck` | `tsc --build --force` over the project references. Not `--noEmit`: the packages are `composite`, which requires emit. |
+| `pnpm codegen` / `pnpm codegen:check` | Regenerate JSON Schema + Rust types from `packages/protocol`; `:check` fails on a diff |
+| `pnpm check:skills` | ⚠ **Not implemented.** Designed in §13.7; no script exists and `pnpm check` does not call it. |
 | `pnpm bench` | criterion micro-benchmarks |
-| `pnpm check` | **lint + typecheck + test + codegen-clean + check:skills.** What CI runs; run before committing. |
+| `pnpm check` | **lint + format:check + typecheck + test + codegen:check.** Run before committing. |
 | `pnpm build` | Production build of app + sidecar |
 
-`pnpm check` matters most: it is one thing to remember, and it is the same thing CI runs, so an
-agent never discovers a failure only after pushing to `main`.
+`pnpm check` matters most: it is one thing to remember, and `ci.yml` is written to run the same
+gate, so an agent should not discover a failure only after pushing to `main`.
+
+Two caveats on that sentence, both of which cost an agent time if discovered late:
+
+- **CI is not actually running yet** (§8.2), so today `pnpm check` is the *only* thing enforcing
+  any of this.
+- **`pnpm check` is green on a machine with no Rust toolchain**, because the cargo steps skip
+  with a `[cargo] skipped …` notice rather than failing (`scripts/cargo.mjs`). That is deliberate
+  — TypeScript-only work should not require rustup — but it means a green check does not by
+  itself mean the Rust side compiled. Read the output.
+
+**Four of these are stubs.** `dev`, `dev:replay`, `test:e2e` and `build` currently run
+`scripts/not-scaffolded.mjs`, which exits with a pointer to the §10 step that will implement
+them. The rows above describe what they will do, not what they do today.
 
 ### 8.2 CI
+
+> ⚠ **Written, not running.** All three workflows live in `.github/workflows-pending/`, because
+> GitHub rejects a push touching `.github/workflows/` unless the token carries the `workflow`
+> scope, and the tokens available so far have had only `repo`. Activating them is three
+> `git mv`s and no file edits — see the README in that directory. Until someone with the scope
+> does that, **nothing enforces this gate on push**; `pnpm check` run locally is all there is.
 
 GitHub Actions, on push to `main` and on PRs (there are no PRs today per `AGENTS.md`, but the
 workflow should not assume that forever):
@@ -621,7 +640,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 
 | # | Step | Unblocks |
 |---|---|---|
-| 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. |
+| 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. **Landed except `check:skills` (§13.7) and activating CI (§8.2)** — both still open. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay` |
@@ -884,7 +903,11 @@ A skill that only grows becomes a changelog, and nobody reads a changelog before
 
 ### 13.7 Validation
 
-`pnpm check:skills`, wired into `pnpm check` and the `docs.yml` workflow:
+⚠ **Not built yet** — no `check:skills` script exists, and neither `pnpm check` nor `docs.yml`
+calls one. This section is the specification for it, not a description of something running.
+When it lands, wire it into both and drop this notice.
+
+`pnpm check:skills` should validate:
 
 - Frontmatter parses; `name` matches the directory; `description` is non-empty and under the
   length limit.
@@ -895,8 +918,8 @@ A skill that only grows becomes a changelog, and nobody reads a changelog before
   skill fails the check, which is how the roster stays complete as the codebase grows rather
   than by anyone remembering.
 
-markdownlint and the lychee link check already run over `docs/`; extend both to
-`.claude/skills/**`.
+`docs.yml` is written to run markdownlint and the lychee link check over `docs/` (it is parked
+with the rest of CI, §8.2); extend both to `.claude/skills/**`.
 
 ### 13.8 Parallel agents
 

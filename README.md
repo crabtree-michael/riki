@@ -14,7 +14,7 @@ console log, and screen capture.
 
 ```shell
 pnpm setup     # deps, fixtures, hooks, and a .env from the template
-pnpm check     # lint + format + typecheck + test — what CI runs
+pnpm check     # lint + format + typecheck + test + codegen — the whole gate
 ```
 
 No Dota 2, microphone, GPU, or OpenAI API key required. That is enforced, not aspirational: no
