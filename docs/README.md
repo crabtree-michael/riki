@@ -41,6 +41,10 @@ Docs are split by kind, because "design doc" was covering four different things:
 
 ## Research
 
+- [**audio-ducking-platform-support.md**](research/audio-ducking-platform-support.md) — whether one
+  application can lower another's volume, per platform. The answer on macOS is no, which is why
+  [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) exists and why `Ducker.available` is false
+  on the primary target.
 - [**openai-realtime-research.md**](research/openai-realtime-research.md) — the Realtime API:
   transports, session configuration, barge-in, context growth, cost, and the failure modes that
   bite.
@@ -70,6 +74,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0017](adr/0017-server-vad-on-with-response-creation-ours.md) | Server VAD on, response creation ours | Accepted, on one unverified claim              |
 | [0018](adr/0018-argument-schemas-from-a-local-declaration.md) | Argument schemas from a local declaration, not zod yet | Accepted, migrate when protocol lands |
 | [0019](adr/0019-get-build-benchmark-is-reference-class.md) | `get_build_benchmark` is a `reference` command | Accepted, corrects the design doc          |
+| [0020](adr/0020-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API             |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -119,3 +124,4 @@ bottom of three separate documents where nobody found them. Full statements in
 | 14  | Does Chromium's echo cancellation survive a `getUserMedia` stream routed through Web Audio? A tone and an analyser answer it ([voice-input §3.4](design/voice-input-architecture.md)) | **Blocking** — before the capture graph or its pre-roll is built |
 | 15  | Is `input_audio_buffer.commit` honoured on WebRTC with VAD on? If yes, every turn gets up to 400 ms faster ([voice-input §5.4](design/voice-input-architecture.md)) | Before the release→speaking budget is tuned                |
 | 16  | Does `turn_detection: 'none'` really disable server-side barge-in truncation? [ADR-0017](adr/0017-server-vad-on-with-response-creation-ours.md) assumes yes from the shape of the API, not from a documented statement | Before that ADR is treated as settled                      |
+| 17  | Is Riki's TTS intelligible over **un-ducked** Dota audio, and does output-side compression fix it? [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) removes ducking on the primary platform, which makes ui-design §7.2's "the player will just stop using the feature" unmitigated. A listening test, not a spike | Before voice ships to anyone outside the team |

@@ -28,9 +28,13 @@ this repo.
 
 ## Audio
 
-Duck game audio rather than pausing it. Earcons carry state for players who are not looking
-at the overlay — they are part of the state model, not decoration. Mic level drives the
-chip's bars, so the envelope math is on the UI hot path; keep it cheap and unit-test it.
+**Ducking is a no-op on macOS, which is the primary target** — there is no public API for it
+(ADR-0020). `createNoopDucker()` is the default path, not a fallback, and it stays silent. Never
+pause game audio as a substitute; that needs the same absent API and is worse.
+
+Earcons carry state for players who are not looking at the overlay — they are part of the state
+model, not decoration. Mic level drives the chip's bars, so the envelope math is on the UI hot
+path; keep it cheap and unit-test it.
 
 ## Keys and cost
 
@@ -67,6 +71,15 @@ the user interrupt. A cancel with no speech behind it (Esc, a local "stop") neve
 the truncate yourself in that case, and only that case — sending both on a real barge-in truncates
 twice at two different offsets.
 
+**2026-08-01 — ducking does not exist on macOS, and macOS is primary.** Settled, with sources, in
+`docs/research/audio-ducking-platform-support.md`; the decision is ADR-0020. `duckOthers` is
+`API_UNAVAILABLE(macos)`, Core Audio reaches only the default device and our own stream, and every
+tool that manages per-app volume installs an audio HAL plug-in. So `createNoopDucker()` is the
+**default** path, not a fallback, and it must be *silent* — no fault, no log, no retry, because
+speaking over un-ducked game audio is the normal case. *Why:* the instinct on seeing a no-op ducker
+is to treat it as unfinished and "fix" it; the fix is a system extension, and it is not worth it.
+The live consequence is ui-design §7.2's own rationale, now open question 17.
+
 **2026-08-01 — the credential puzzle has an answer, and it is not "pass the key to the
 renderer".** ADR-0002 puts the peer connection in a renderer; §7.1 forbids the key leaving main.
 Main mints an ephemeral client secret (`POST /v1/realtime/client_secrets`) and passes only that
@@ -79,4 +92,5 @@ this is the thing you are missing.
 turn-taking, transcription and command parsing, and the class structure of both packages;
 `docs/research/openai-realtime-research.md` §3 (formats and the schema trap), §4 (turn-taking
 and barge-in), §5 (context), §10 (costs), §11 (gotchas for games);
+`docs/research/audio-ducking-platform-support.md` (why `Ducker.available` is false on macOS);
 `REPO_SKELETON.md` §5.4, §7.1 (the key).

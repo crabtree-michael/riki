@@ -320,13 +320,15 @@ itself as unavailable rather than silently pretending. −12 dB with a 120 ms ra
 (ui-design §7.2), disableable, and the disable check lives in the sink rather than in the machine
 (overlay §8).
 
-> **Verify before building:** ducking another application's audio is a Windows-shaped capability,
-> and macOS is the primary target (ui-design A3). Core Audio lets a process control its own output
-> but exposes no public API for attenuating another app's, so the likely honest answer on the
-> primary platform is `available === false` and a settings control that explains itself. That
-> would make ducking a Windows-only feature rather than a cross-platform one — worth establishing
-> before §7.2's ramp figures are implemented, because if it holds, the no-op path is the *default*
-> path and deserves the better error copy.
+> **Verified, and it holds** ([ADR-0020](../adr/0020-ducking-is-a-no-op-by-default.md),
+> [audio-ducking-platform-support.md](../research/audio-ducking-platform-support.md)). macOS has
+> **no public API** for attenuating another application's audio — `duckOthers` is
+> `API_UNAVAILABLE(macos)`, and every third-party tool that does it installs an audio HAL plug-in.
+> So `createNoopDucker()` is the **default** path on the primary platform, and it must be silent:
+> no fault, no log, no retry. Windows ducks only through a communications-role stream whose depth
+> and ramp the OS picks, so §7.2's figures are honoured on Linux alone. The consequence this
+> leaves open is §7.2's own rationale — "TTS is unintelligible over combat audio" is now an
+> unmitigated risk for most users (docs/README.md open question 17).
 
 ---
 
