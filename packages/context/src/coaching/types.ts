@@ -22,6 +22,7 @@ import type { MonoMs, PrivacyPolicy, TurnId } from '../common/types.js';
 import type { Budget, RenderedText, Section } from '../render/types.js';
 import type { TurnCause } from '../snapshot/types.js';
 import type { AdviceTopic } from '../memory/types.js';
+import type { CoachingMemoryReader } from '../memory/contracts.js';
 
 // -----------------------------------------------------------------------------------------------
 // The section vocabulary (§4.4, §5.4)
@@ -109,14 +110,14 @@ export interface CoachingBrief extends RenderedText {
 }
 
 /**
- * Declared data, not the order of statements in a function.
+ * What a section source is given, beyond the world snapshot.
  *
- * A section with no entry here is a section that truncates in whatever order an array happened to
- * be in — the same argument as the snapshot's ladder (context-and-memory §5.2), for the same
- * reason: what survives a tight budget should be reviewable as a diff.
+ * The request, plus the one thing a section may read that is not a game fact: what Riki has
+ * already said. `history` is the only section that uses it, and it is the section with no
+ * equivalent in the deleted design — the one that makes a second mention read as *"still worth
+ * getting that BKB"* rather than as an alarm clock repeating itself (§5.4).
  */
-export interface BriefLadderEntry {
-  readonly id: BriefSectionId;
-  readonly priority: number;
-  readonly droppable: boolean;
+export interface BriefContext extends BriefRequest {
+  /** Null when the composition root wired no memory. `history` renders nothing rather than lying. */
+  readonly history: CoachingMemoryReader | null;
 }

@@ -24,6 +24,13 @@ const IGNORES = [
  * path so the `apps/desktop/src/*` entries can be distinguished from the app as a whole.
  */
 const BOUNDARY_ELEMENTS = [
+  // Brief sections are leaves (coaching-architecture.md §11). Listed before `package` so the more
+  // specific pattern wins — elements match most-specific-first.
+  {
+    type: 'coaching-section',
+    mode: 'full',
+    pattern: 'packages/context/src/coaching/sections/!(index|util).ts',
+  },
   // More specific than `desktop-main`, and listed first so it wins: the interaction machine is
   // pure and vendor-free, and the presenter renders state rather than talking to the model
   // (docs/design/overlay-architecture.md §11.2).
@@ -168,7 +175,7 @@ export default tseslint.config(
               // import written by name resolves — `eslint-import-resolver-typescript` is
               // configured below — so boundaries sees `packages/realtime/**` and matches it as an
               // element. `external` only covers real node_modules packages such as `electron`.
-              from: [['package', { name: 'context' }]],
+              from: [['package', { name: 'context' }], 'coaching-section'],
               disallow: [
                 ['package', { name: 'realtime' }],
                 ['package', { name: 'gsi' }],
@@ -177,6 +184,18 @@ export default tseslint.config(
               message:
                 'packages/context reads the world model through a port and speaks no vendor ' +
                 'vocabulary — the Realtime translation lives in the composition root adapter.',
+            },
+            {
+              // A brief section that read another section's output would have a rendering order
+              // `BRIEF_PLAN` does not describe — and priority in a brief is per-cause, so there is
+              // no fixed ladder for it to be consistent with (coaching-architecture.md §11). The
+              // aggregator lives one directory up, in `sections/index.ts`, and `util.ts` is the
+              // shared binding of `render/`'s primitives; the element pattern excludes both, so
+              // this rule needs no exception.
+              from: ['coaching-section'],
+              disallow: ['coaching-section'],
+              message:
+                'A brief section may not import another brief section — sections are leaves.',
             },
           ],
         },
@@ -246,7 +265,7 @@ export default tseslint.config(
               // `packages/context` must run in a bare vitest process, which is what makes almost
               // all of it testable with no game and no session (§2.3, §13). The cross-package half
               // of this rule is in `element-types` above — see the note there for why.
-              from: [['package', { name: 'context' }]],
+              from: [['package', { name: 'context' }], 'coaching-section'],
               disallow: ['electron'],
               message:
                 'packages/context may not import electron — it must run in a bare vitest process.',

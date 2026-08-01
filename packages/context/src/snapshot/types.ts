@@ -10,6 +10,7 @@
 
 import type { EventId, GameClock, MonoMs, PrivacyPolicy, TurnId } from '../common/types.js';
 import type { Budget, RenderedText, Section, SectionId } from '../render/types.js';
+import type { AdviceTopic } from '../memory/types.js';
 
 // -----------------------------------------------------------------------------------------------
 // Why this turn exists (§3.3, §5.2)
@@ -24,10 +25,24 @@ export type TurnCause =
   | { readonly by: 'trigger'; readonly event: EventId; readonly salience: number }
   | { readonly by: 'system'; readonly reason: 'match_started' | 'rehydrate' };
 
-/** What `packages/events` hands over when it decides a turn should happen. */
+/**
+ * What `packages/events` hands over when it decides a turn should happen.
+ *
+ * `topic` closes coaching-architecture.md §6.6 row 4, which was the one open seam between the two
+ * halves of coaching. `CoachEvent` carries an `AdviceTopic`; `TurnCause` does not, because it
+ * predates coaching. The composition root holds the whole `CoachEvent`, so the fix is a field here
+ * rather than a change to `TurnCause` — and the alternative, deriving a topic from an `EventId`
+ * through a second lookup table, is two tables that must agree about what "the same advice" means,
+ * which is precisely what `AdviceTopic` being a closed union exists to prevent (ADR-0013).
+ *
+ * **One value, one origin, three consumers**: the brief planner, the novelty gate, and
+ * `agent_said.topics`.
+ */
 export interface TurnBrief {
   readonly turnId: TurnId;
   readonly cause: TurnCause;
+  /** From the `CoachEvent`. Absent for a player or system turn. */
+  readonly topic?: AdviceTopic;
 }
 
 // -----------------------------------------------------------------------------------------------

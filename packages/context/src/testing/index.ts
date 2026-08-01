@@ -357,7 +357,11 @@ export class RecordingContextTelemetry implements ContextTelemetry {
   readonly compactions: { reason: string; droppedTokens: number; estimatedAfter: number }[] = [];
   readonly drifts: { estimated: number; reported: number }[] = [];
 
-  noteRender(tier: 'preamble' | 'snapshot' | 'summary', elapsedMs: number, tokens: number): void {
+  noteRender(
+    tier: 'preamble' | 'snapshot' | 'brief' | 'summary',
+    elapsedMs: number,
+    tokens: number,
+  ): void {
     this.renders.push({ tier, elapsedMs, tokens });
   }
 

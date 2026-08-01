@@ -99,6 +99,15 @@ describe('one turn, end to end', () => {
     expect(turn.snapshot.text).toContain('sf missing 12s');
     expect(turn.remaining.maxTokens).toBeGreaterThan(0);
 
+    // The brief is the focused half, and it is rendered in the same synchronous call as the
+    // snapshot — one turn, one <5 ms budget, nothing awaited (coaching-architecture.md §5.5).
+    expect(turn.brief.turnId).toBe('t0');
+    expect(turn.brief.empty).toBe(false);
+    expect(turn.brief.text).toContain('threat: hp 84%');
+    // `enemy_missing` asks for `positions` first, and this world model holds no positions — so the
+    // lead section is *absent* rather than empty, and `omitted` says which of the two happened.
+    expect(turn.brief.omitted).toContain('positions');
+
     context.ledger.append({
       kind: 'agent_said',
       turnId: 't0' as TurnId,
@@ -109,7 +118,61 @@ describe('one turn, end to end', () => {
     context.closeTurn('t0' as TurnId, 'spoke', 2_000 as MonoMs);
 
     const kinds = context.ledgerRecord.all().map((e) => e.kind);
-    expect(kinds).toStrictEqual(['turn_opened', 'snapshot', 'agent_said', 'turn_closed']);
+    expect(kinds).toStrictEqual(['turn_opened', 'snapshot', 'brief', 'agent_said', 'turn_closed']);
+  });
+
+  it('renders an empty brief rather than refusing, and says so', () => {
+    // §6.5: a brief that renders nothing is a turn that should not happen — but this object cannot
+    // refuse to open one, because `packages/events` already admitted it. It reports `empty` and
+    // leaves the composition root to close the turn silent. Nothing is appended for an empty
+    // brief: a zero-token entry would make "had nothing to say" and "said nothing about it" look
+    // the same in the ledger.
+    const context = assembler({
+      world: new FakeWorldModel({ facts: {}, roster: { enemies: [] } }),
+    });
+    const turn = context.openTurn(
+      { turnId: 't0' as TurnId, cause: { by: 'system', reason: 'match_started' } },
+      0 as MonoMs,
+    );
+
+    expect(turn.brief.empty).toBe(true);
+    expect(turn.brief.omitted.length).toBeGreaterThan(0);
+    expect(context.ledgerRecord.all().map((e) => e.kind)).not.toContain('brief');
+  });
+
+  it('passes the trigger topic through to the brief — coaching §6.6 row 4', () => {
+    // One value, one origin, three consumers. The composition root holds the whole `CoachEvent`,
+    // so the topic arrives on `openTurn` rather than being re-derived from the event id through a
+    // second table that can disagree with the novelty gate's.
+    const context = assembler();
+    const turn = context.openTurn(
+      {
+        turnId: 't0' as TurnId,
+        cause: { by: 'trigger', event: 'can_afford_key_item' as never, salience: 0.6 },
+        topic: BKB,
+      },
+      0 as MonoMs,
+    );
+    // Nothing has been said yet, so there is no history line — which is the observable proof the
+    // topic reached the planner rather than being dropped on the way.
+    expect(turn.brief.text).not.toContain('history:');
+
+    context.ledger.append({
+      kind: 'agent_said',
+      turnId: 't0' as TurnId,
+      transcript: 'you can afford a bkb',
+      topics: [BKB],
+      at: 0 as MonoMs,
+    });
+    const second = context.openTurn(
+      {
+        turnId: 't1' as TurnId,
+        cause: { by: 'trigger', event: 'can_afford_key_item' as never, salience: 0.6 },
+        topic: BKB,
+      },
+      1_000 as MonoMs,
+    );
+    expect(second.brief.text).toContain('raised 1× on this');
   });
 
   it('records a suppressed turn, which is what makes silence something anyone can notice', () => {
@@ -134,7 +197,7 @@ describe('one turn, end to end', () => {
       0 as MonoMs,
     );
 
-    expect(telemetry.renders.map((r) => r.tier)).toStrictEqual(['snapshot']);
+    expect(telemetry.renders.map((r) => r.tier)).toStrictEqual(['snapshot', 'brief']);
     expect(telemetry.truncations[0]?.tier).toBe('snapshot');
   });
 });

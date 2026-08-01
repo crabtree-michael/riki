@@ -32,4 +32,5 @@ export * from './render/index.js';
 export * from './preamble/index.js';
 export * from './snapshot/index.js';
 export * from './memory/index.js';
+export * from './coaching/index.js';
 export * from './assembler.js';

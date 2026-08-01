@@ -10,10 +10,15 @@
  *
  * ```
  *   events decides to speak ──► openTurn(brief)
- *          snapshot rendered ──► ledger.append({kind:'snapshot'}) ──► handed to the session
+ *          snapshot + coaching brief rendered ──► ledger.append() ×2 ──► handed to the session
  *          agent speaks ──► ledger.append({kind:'agent_said', topics})
  *                                  closeTurn() ──► Compactor.consider() ──► WindowPlan | null
  * ```
+ *
+ * **An empty brief is a turn that should not happen** (coaching-architecture.md §6.5). This object
+ * cannot refuse to open one — `packages/events` already admitted it — so it renders, reports
+ * `TurnContext.brief.empty`, and leaves the composition root to close the turn `'silent'` rather
+ * than opening a session turn with nothing behind it and a model left to improvise.
  *
  * The compaction check is at turn **close**, never at turn open. At open it would add latency to
  * the path the 5 ms and 100 ms budgets protect; at close there is nobody waiting.
@@ -31,6 +36,8 @@ import type { ContextTelemetry, WorldModelReader } from './common/ports.js';
 import type { Budget, RenderedText, TokenCounter } from './render/types.js';
 import type { Preamble, PreambleInput, PrefixBudget } from './preamble/types.js';
 import type { RenderedSnapshot, TurnBrief } from './snapshot/types.js';
+import type { CoachingBrief } from './coaching/types.js';
+import type { BriefRenderer } from './coaching/contracts.js';
 import type { LedgerRef, TurnOutcome, WindowBudget, WindowPlan } from './memory/types.js';
 import type {
   CoachingMemory,
@@ -53,6 +60,7 @@ import { createSummaryRenderer } from './memory/summary.js';
 import { createCompactor } from './memory/compactor.js';
 import { createRehydrator } from './memory/rehydrate.js';
 import { createSnapshotRenderer } from './snapshot/renderer.js';
+import { createBriefRenderer, sectionIdsOf } from './coaching/render.js';
 import { createPrefixBudget } from './preamble/budget.js';
 
 /** What the session is opened with. Frozen for the match (§4.4). */
@@ -65,8 +73,10 @@ export interface SessionContext {
 export interface TurnContext {
   readonly turnId: TurnId;
   readonly snapshot: RenderedSnapshot;
+  /** The focused half: what *this* moment's advice needs (coaching-architecture.md §4–§5). */
+  readonly brief: CoachingBrief;
   /**
-   * What is left for the coaching brief this turn, after the snapshot (§7.1).
+   * What is left after the snapshot and the brief (§7.1).
    *
    * It used to be what was left for command *results*, which accumulated. A brief supersedes
    * itself the way a snapshot does, which is why coaching-architecture.md §8.2's drop order has
@@ -79,8 +89,12 @@ export interface ContextAssembler {
   /** Tier 1. Called once per match, before the session opens. */
   openSession(input: PreambleInput, deadline: MonoMs): Promise<SessionContext>;
 
-  /** Tier 2. Synchronous and budgeted under 5 ms — this is the hot path (§5.4). */
-  openTurn(brief: TurnBrief, now: MonoMs): TurnContext;
+  /**
+   * The hot path: the snapshot *and* the brief, synchronous and budgeted under 5 ms together
+   * (§5.4, coaching-architecture.md §5.5). Nothing here can reach a network, which is what keeps
+   * a turn from needing a watchdog.
+   */
+  openTurn(turn: TurnBrief, now: MonoMs): TurnContext;
 
   /**
    * Where compaction is considered (§9.2). At turn *open* it would add latency to the path the
@@ -112,6 +126,7 @@ export interface ContextAssemblerDeps {
   readonly telemetry?: ContextTelemetry;
   readonly counter?: TokenCounter;
   readonly renderer?: SnapshotRenderer;
+  readonly brief?: BriefRenderer;
   readonly windowBudget?: WindowBudget;
   /** From `packages/config`, injected. This package never reads `process.env`. */
   readonly privacy?: PrivacyPolicy;
@@ -163,6 +178,9 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
     elision: deps.elision ?? false,
   });
   const renderer = deps.renderer ?? createSnapshotRenderer();
+  // The brief renderer is constructed after the coaching memory it reads: `history` is the one
+  // section that reads something other than the world model (coaching-architecture.md §5.4).
+  const brief = deps.brief ?? createBriefRenderer({ coaching });
   const summary = createSummaryRenderer();
   const retention = createRetentionPolicy({
     counter,
@@ -198,23 +216,23 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
       return { preamble, prefix };
     },
 
-    openTurn(brief: TurnBrief, now: MonoMs) {
+    openTurn(turn: TurnBrief, now: MonoMs) {
       const started = now;
       const world = deps.world.snapshot(now);
 
       ledger.append({
         kind: 'turn_opened',
-        turnId: brief.turnId,
-        cause: brief.cause,
+        turnId: turn.turnId,
+        cause: turn.cause,
         at: now,
         clock: world.clock,
       });
-      clockOfTurn.set(brief.turnId, world.clock);
+      clockOfTurn.set(turn.turnId, world.clock);
 
       const snapshot = renderer.render(world, {
-        turnId: brief.turnId,
+        turnId: turn.turnId,
         now,
-        cause: brief.cause,
+        cause: turn.cause,
         budget: { maxTokens: snapshotTokens, spentTokens: 0 },
         privacy,
         tape: deps.tape?.recent(DEFAULT_TAPE_EVENTS, null) ?? [],
@@ -223,7 +241,7 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
 
       const ref = ledger.append({
         kind: 'snapshot',
-        turnId: brief.turnId,
+        turnId: turn.turnId,
         rendered: { text: snapshot.text, tokens: snapshot.tokens },
         sections: snapshot.sections.map((s) => s.id),
         at: now,
@@ -235,10 +253,41 @@ export function createContextAssembler(deps: ContextAssemblerDeps): RikiContext 
         deps.telemetry?.noteTruncation('snapshot', snapshot.omitted.map(String));
       }
 
+      const rendered = brief.render(world, {
+        turnId: turn.turnId,
+        cause: turn.cause,
+        ...(turn.topic === undefined ? {} : { topic: turn.topic }),
+        now,
+        budget: { maxTokens: briefTokens, spentTokens: 0 },
+        privacy,
+      });
+
+      // An empty brief is not appended: there is nothing for retention to supersede and nothing
+      // for the model to read, and a zero-token ledger entry would make "Riki had nothing to say"
+      // and "Riki said nothing about it" look the same in the record (§6.5).
+      if (!rendered.empty) {
+        ledger.append({
+          kind: 'brief',
+          turnId: turn.turnId,
+          rendered: { text: rendered.text, tokens: rendered.tokens },
+          sections: sectionIdsOf(rendered),
+          at: now,
+        });
+      }
+
+      deps.telemetry?.noteRender('brief', now - started, rendered.tokens);
+      if (rendered.omitted.length > 0) {
+        deps.telemetry?.noteTruncation('brief', rendered.omitted.map(String));
+      }
+
       return {
-        turnId: brief.turnId,
+        turnId: turn.turnId,
         snapshot,
-        remaining: { maxTokens: briefTokens, spentTokens: 0 },
+        brief: rendered,
+        remaining: {
+          maxTokens: briefTokens,
+          spentTokens: rendered.tokens,
+        },
       };
     },
 

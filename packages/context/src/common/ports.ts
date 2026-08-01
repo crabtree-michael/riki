@@ -154,7 +154,11 @@ export interface BuildBenchmark {
  * the golden corpus is where output is inspected.
  */
 export interface ContextTelemetry {
-  noteRender(tier: 'preamble' | 'snapshot' | 'summary', elapsedMs: number, tokens: number): void;
+  noteRender(
+    tier: 'preamble' | 'snapshot' | 'brief' | 'summary',
+    elapsedMs: number,
+    tokens: number,
+  ): void;
   noteTruncation(tier: string, omitted: readonly string[]): void;
   noteCompaction(reason: string, droppedTokens: number, estimatedAfter: number): void;
   /** The §7.6 drift signal: our estimate versus what the session actually reports. */

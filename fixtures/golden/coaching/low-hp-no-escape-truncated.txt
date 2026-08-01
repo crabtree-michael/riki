@@ -1,0 +1,4 @@
+threat: hp 84% | mp 61% | nevermore bot ~3s · zuus mid ~7s (0.78)
+
+--- 26 tokens
+--- omitted: history, cooldowns, positions
