@@ -24,6 +24,10 @@ Docs are split by kind, because "design doc" was covering four different things:
 - [**state-capture-architecture.md**](design/state-capture-architecture.md) — the module and class
   architecture that implements it: the fact envelope, the source interface, the fusion reducer and
   its policies, and the read interface `context` and `events` consume.
+- [**agent-command-execution-architecture.md**](design/agent-command-execution-architecture.md) —
+  what happens when the agent asks Riki something: parsing and validating a tool call, the four
+  ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it
+  with `state-capture-architecture.md` §7, whose read interface it consumes.
 
 ## Research
 
@@ -48,6 +52,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted — ⚠ number collides with the row above |
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
 | [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
+| [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -89,3 +94,5 @@ bottom of three separate documents where nobody found them. Full statements in
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
 | 7   | Does the Realtime session get its own hidden window, or does the overlay host it? ([ADR-0010](adr/0010-dedicated-voice-window.md), Proposed) | With `packages/realtime`                                  |
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
+| 9   | May consent for `read_screen` be remembered for a match, or is it per call? Per call is the default until someone decides otherwise | Before `read_screen` ships                                |
+| 10  | Can the Realtime API emit more than one function call per response? It decides whether the command queue needs to exist at all | Before `packages/context/src/tools/queue.ts` is written   |

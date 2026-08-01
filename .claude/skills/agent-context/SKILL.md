@@ -37,17 +37,54 @@ before anything reaches the agent:
 When you change scoring, add the case to the suppression tests. The failure mode here is not
 a crash; it is a product that people turn off.
 
+## Tier 3 — commands the agent issues
+
+A tool call is a *command*, and it reads what has already been observed. It never reaches into
+the game (ADR-0003). The architecture is
+`docs/design/agent-command-execution-architecture.md`; four rules are worth knowing before you
+open it, because each is easy to break in a way that looks fine:
+
+- **Every call is answered exactly once, within its deadline.** Nothing in the pipeline throws
+  or rejects — a failure is a *result*, with text written in Riki's voice. An unanswered
+  `call_id` stalls the turn, and the model's documented behaviour when a result never arrives
+  is to hallucinate one (realtime §11.6). A watchdog per call, not per queue, is what makes
+  the guarantee true rather than hoped for.
+- **The manifest is frozen for the session** (ADR-0011). Tool definitions live in the cached
+  prefix under a 16,384-token cap shared with the instructions, so withdrawing a tool when its
+  source dies busts the cache. Availability is a property of the result instead.
+- **A dead source degrades to an aged answer, not to silence.** "Last seen mid ~12s ago" beats
+  "I can't see that" whenever the model already holds the fact. `unavailable` is for things
+  never observed.
+- **Commands read the world model, never a source.** No handler talks to GSI, the log tailer or
+  the sidecar. `get_minimap_summary` requests a fresh pass and then waits for the model to
+  change (state-capture §7.2), so every CV fact is gated and aged exactly once.
+
+Adding a command is one handler file, one registry entry, one golden fixture — and a re-measure
+of the manifest's token cost, which is the part people skip.
+
 ## Latency
 
 Model → snapshot is budgeted at under 5 ms. The snapshot is rendered per turn, so anything
 expensive belongs in the world model's derived state, computed once, not in the renderer.
 
+Command work has its own budget: ~1200 ms *(tunable)* per turn, all commands together. It is
+*added* to a conversational latency floor that realtime §7 already puts at 1–2 s, so a turn that
+gathers perfect detail produces a coach who answers after the fight.
+
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — The tool surface is where three of this repo's rules meet, and two of them are
+invisible from inside `packages/context`.** Designing Tier 3 turned up that a tool result is
+subject to the snapshot's staleness rules (dota2 §6.2), the log tailer's privacy tagging
+(state-capture §4.2, chat text is `sensitive`), *and* the Realtime context budget — and that the
+third one has no owner in this package. *Why:* if you are changing anything about what a tool
+returns, check all three; the one that will bite is the token cost, because tool results
+accumulate in conversation history and are billed as input on every later turn, while the
+snapshot replaces itself.
 
 ## See also
 
 `docs/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy);
-`REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
+`docs/design/agent-command-execution-architecture.md` (Tier 3 — the pipeline, ports, failure
+taxonomy and budgets); `REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
 persona lives — open).
