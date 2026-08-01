@@ -57,11 +57,44 @@ still land what was completed:
   why. An honest gap that Kiln can route around is far more useful than a silent one.
 - Don't commit code you know to be broken without labelling it as such.
 
+## Read the skill for your area — and update it when you learn something
+
+`.claude/skills/` holds one skill per area of the project: `workspace`, `protocol`,
+`testing`, `game-state`, `agent-context`, `voice-realtime`, `overlay-ui`, `vision-sidecar`,
+`config-secrets`. They are committed to the repo, so you and every other agent get the same
+set.
+
+They exist because a document only helps someone who opens it. A skill loads automatically
+when your task matches it, which makes it the right home for the things that are cheap to
+say and expensive to rediscover.
+
+**Start:** the skill for your area should already have loaded. Skim it. It is shorter than
+the design doc and it carries what previous agents got wrong.
+
+**Finish:** before you commit, ask *did I learn something that would have saved me time at
+the start?* If yes, add it to that area's skill **in the same commit as the work**. There is
+no follow-up task and no review queue — the next agent here will be someone else, with no
+memory of your session. A learning you did not commit did not happen.
+
+Worth writing down: a mistake the docs did not warn you about; a command that worked after
+several that did not; a limit you measured rather than read; an approach you tried and
+abandoned, with why. Not worth writing down: a restatement of a design doc, or general
+TypeScript and Rust advice — the `superpowers:*` skills already cover method.
+
+Sometimes it belongs elsewhere. If it contradicts a design doc, fix the doc. If it is a
+decision, it is an ADR. If it is a fact about an external system, it is a research note in
+`docs/`. Otherwise it is a skill, and that is the common case.
+
+Add it under `## Learnings` with the date and one line of *why*. Full rules, including the
+size cap and when to prune: `REPO_SKELETON.md` §13.
+
 ## Notes and conventions
 
 - Design and research documents live in `docs/`. If your task produces durable reasoning —
   a design decision, a trade-off, a piece of research — it belongs there, committed
   alongside the code.
+- `docs/` is for reasoning that lasts; `.claude/skills/` is for practice that changes. When
+  in doubt, the skill is cheaper to write and cheaper to correct.
 - Write assuming the reader is another agent with no memory of this conversation. State
   assumptions explicitly; the existing docs in `docs/` flag theirs up front, and that is
   the house style.

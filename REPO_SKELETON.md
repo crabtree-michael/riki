@@ -9,7 +9,8 @@ and the Realtime API integration decision (see
 [`docs/openai-realtime-research.md`](docs/openai-realtime-research.md)).
 
 This document is written for the agents who will build Riki. Read §1 and §2 to know where your
-work goes, §5 to know what "tested" means here, and §9 for the definition of done.
+work goes, §5 to know what "tested" means here, §9 for the definition of done, and §13 for the
+skills that carry this knowledge into a task without anyone having to reopen this file.
 
 ---
 
@@ -88,6 +89,11 @@ riki/
 ├── .env.example                     every var, documented, no real values (§7)
 ├── .gitattributes                   LFS rules for fixture frames
 ├── .gitignore
+│
+├── .claude/
+│   ├── settings.json                marketplaces + enabled plugins, project scope
+│   └── skills/                      one skill per area — living practice, not spec (§13)
+│       └── <area>/SKILL.md
 │
 ├── .github/
 │   └── workflows/
@@ -227,6 +233,11 @@ reasoning. Three changes:
 
 House style is already set by the existing docs and should hold: state assumptions up front,
 mark the ones that are load-bearing, record rejected alternatives so they are not re-proposed.
+
+**`docs/` is not the only place knowledge lives.** A document has to be opened to help
+anyone, and an agent dispatched into `packages/events` will not open this one. Skills —
+`.claude/skills/`, §13 — carry the same knowledge into the task automatically. Everything in
+this section still holds; §13 covers the part that `docs/` structurally cannot.
 
 ---
 
@@ -533,8 +544,9 @@ One name per action, from the repo root. If a command is not here, it should be.
 | `pnpm format` / `pnpm format:check` | Prettier + rustfmt |
 | `pnpm typecheck` | `tsc --noEmit` across the workspace |
 | `pnpm codegen` | Regenerate JSON Schema + Rust types from `packages/protocol` |
+| `pnpm check:skills` | Validate `.claude/skills/**`: frontmatter, size cap, links, §2.2 coverage (§13.7) |
 | `pnpm bench` | criterion micro-benchmarks |
-| `pnpm check` | **lint + typecheck + test + codegen-clean.** What CI runs; run before committing. |
+| `pnpm check` | **lint + typecheck + test + codegen-clean + check:skills.** What CI runs; run before committing. |
 | `pnpm build` | Production build of app + sidecar |
 
 `pnpm check` matters most: it is one thing to remember, and it is the same thing CI runs, so an
@@ -574,6 +586,8 @@ Extends `AGENTS.md` rather than replacing it.
 
 **Before you start**
 - Read the spec section for your area (§2.2 has the mapping).
+- Skim your area's skill in `.claude/skills/` (§13.3). It should already have loaded; it is
+  shorter than the spec and it carries what previous agents got wrong.
 - Check `docs/adr/` — the decision may already be made.
 - `git pull`. Others commit to `main` while you work.
 
@@ -587,11 +601,13 @@ Extends `AGENTS.md` rather than replacing it.
 - `pnpm check` passes.
 - New behaviour has a test at the lowest tier that can catch it (§5.3).
 - If you added a design decision, it is an ADR — not a comment.
+- If you learned something that would have saved you time at the start, it is in your area's
+  skill, in this commit (§13.5).
 - If you left something undone, the commit message says what and why (`AGENTS.md`).
 
 **Definition of done:** the work is on `main`, `pnpm check` is green, the behaviour is covered by
 a test that runs without Dota 2 or a live API, and anything you learned that the next agent needs
-is in `docs/`.
+is written down where they will hit it — `docs/` for reasoning, the area's skill for practice.
 
 ---
 
@@ -602,7 +618,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 
 | # | Step | Unblocks |
 |---|---|---|
-| 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, CI | Everything. Nothing else should land before the gates exist. |
+| 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The §12.1 milestone, and `pnpm dev:replay` |
@@ -614,6 +630,10 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 
 Steps 1–3 are strictly sequential. 4–8 can run in parallel across agents, which is the point of
 the layout.
+
+Each step also updates its area's skill (§13.9). The nine skills exist already, seeded from the
+design docs; scaffolding an area is the first chance to replace inherited assumptions with what
+building it actually turned out to require.
 
 ---
 
@@ -670,3 +690,222 @@ Recorded so they are not re-proposed.
 | Mock-heavy unit tests over shared fakes | Divergent mocks per package drift from reality; shared fakes stay honest because `pnpm dev:replay` uses them too |
 | A token-minting service for alpha/beta | Hosting, accounts, and rate limiting to solve a distribution problem that does not exist while the only users are the people building Riki. `RIKI_OPENAI_API_KEY` in a local `.env` costs one line (§7.1). Revisit at distribution, not before (§11.2) |
 | The API key in the committed user config file or in `packages/realtime` directly | `.env` is gitignored and `packages/config` is the one module that reads the environment (§6.2). Both alternatives put a live key somewhere a lint rule cannot see it |
+
+---
+
+## 13. Skills
+
+> Numbered last because inserting a section in the middle would renumber every cross-reference
+> in this document, and roughly a third of the `§N` references here point at *other* documents.
+> Read it after §3; it is the fourth kind of writing this repo keeps, and the only one that
+> reaches an agent without the agent going looking.
+
+`docs/` records what we decided and why. It does not follow anyone into a task. A skill does:
+Claude Code loads a project skill automatically when the work matches its description, so the
+knowledge arrives unprompted.
+
+That difference is the entire justification for having both. Per A5, the agent who works on
+`packages/events` next week has no memory of this repository and did not read this file. The
+realistic failure is not that a design doc was wrong — it is that nobody opened it. Skills are
+how the repo pushes rather than waits.
+
+### 13.1 Where they live, and why they are committed
+
+```
+.claude/
+├── settings.json                    marketplaces + enabled plugins (already committed)
+└── skills/
+    ├── workspace/SKILL.md
+    ├── protocol/SKILL.md
+    ├── testing/SKILL.md
+    ├── game-state/SKILL.md
+    ├── agent-context/SKILL.md
+    ├── voice-realtime/SKILL.md
+    ├── overlay-ui/SKILL.md
+    ├── vision-sidecar/SKILL.md
+    └── config-secrets/SKILL.md
+```
+
+Project scope, in git — the same mechanism and the same reasoning as
+`docs/superpowers-plugin-decision.md`: committed means every collaborator and every dispatched
+agent gets the identical set with no per-machine setup. `.claude/settings.local.json` remains
+gitignored and personal, and is where someone opts out of anything.
+
+These are Riki's own skills. They sit alongside the 14 `superpowers:*` skills the plugin
+already provides, which cover *method* — brainstorming, TDD, systematic debugging, verification
+before completion. **Riki's skills cover this codebase and nothing else.** A skill here that
+explains how to write a good test is duplicated effort that will rot; a skill that says *no test
+in this repo may require a running Dota 2 client* is not written down anywhere an agent will
+trip over it otherwise.
+
+### 13.2 Skill versus document
+
+The repo now keeps four kinds of writing, and the boundary is worth stating once.
+
+| Kind | Answers | Read when | Source of truth for |
+|---|---|---|---|
+| Design doc (`docs/`) | How the system should work | You start in an area | Behaviour, architecture |
+| Research note (`docs/`) | What is true about the outside world | You evaluate an external dependency | External facts |
+| ADR (`docs/adr/`) | What we decided, and whether it still stands | Before re-litigating | Decisions |
+| **Skill** (`.claude/skills/`) | **How to do the work here without repeating a known mistake** | **Automatically, whenever a task touches the area** | **Nothing** |
+
+Two rules keep that from blurring:
+
+1. **Skills are procedural; docs are declarative.** A skill says "GSI's rate is unreliable —
+   derive timing from `map.clock_time`, never from update count." The doc says why, with the
+   measurements. The skill cites the doc rather than restating its numbers, because a number
+   copied into two files diverges.
+2. **On conflict, the document wins.** A skill that disagrees with its design doc is stale, not
+   authoritative. Fix it in the same commit as whatever you were doing when you noticed.
+
+### 13.3 The roster — one skill per area
+
+Deliberately mirrors the ownership map in §2.2, so that *where does my task go* and *which skill
+fires* have the same answer.
+
+| Skill | Fires when the task is about | Area | Primary spec |
+|---|---|---|---|
+| `workspace` | Starting or finishing anything; which package owns a change; recording a learning | repo-wide | §2, §8, §9, §13.5 |
+| `protocol` | Any message crossing a process or language boundary; `pnpm codegen` | `packages/protocol`, `crates/riki-ipc` | §4 |
+| `testing` | Writing a test, adding a fixture, deciding if something is testable | everywhere | §5 |
+| `game-state` | GSI POSTs, console log, fusion, staleness, confidence | `packages/gsi`, `log-tail`, `world-model` | dota2 §2, §4 |
+| `agent-context` | The snapshot the LLM sees, agent tools, whether Riki speaks | `packages/context`, `packages/events` | dota2 §6 |
+| `voice-realtime` | Realtime session, transport, barge-in, mic and speaker path | `packages/realtime`, `packages/audio` | realtime §3–§5 |
+| `overlay-ui` | The chip, tray, global hotkey, settings, any visible surface | `apps/desktop` | ui-design §3–§10 |
+| `vision-sidecar` | Screen capture, CV, the perf budget, the sidecar process | `crates/riki-*` | dota2 §2.2, §9 |
+| `config-secrets` | A new setting, an env var, the API key, anything that logs | `packages/config`, `packages/telemetry` | §7 |
+
+**Nine, not twenty-five.** A skill scoped to too narrow a slice never fires, and one scoped to
+everything fires constantly and gets ignored. The split point is the directory an agent will be
+working in for the whole task. `game-state` bundles three packages because a task touching GSI
+almost always touches fusion; it splits into `gsi` and `world-model` the day it outgrows the
+size cap (§13.6), and that split is a normal event, not a failure.
+
+**What this costs.** Only each skill's `description` line is always-on: ~3.2 kB across all nine,
+call it **~800 tokens per session** — slightly more than the ~688 the Superpowers plugin already
+adds, and measured rather than guessed. Bodies are 2.3–3.8 kB — roughly 600–1,000 tokens — and
+load only on a match.
+
+That is a real budget, and it is spent deliberately: descriptions are written to *match* — naming
+the directories, file types and the words a task will actually use — rather than to *summarise*.
+A description that reads well but does not fire has cost tokens and delivered nothing. If the
+roster grows past roughly a dozen skills, tighten descriptions before adding more.
+
+### 13.4 Format
+
+```markdown
+---
+name: <matches the directory name>
+description: <what it covers and when to use it — this is the matching surface>
+---
+
+# <Title>
+
+<the rules that hold in this area, each traceable to a spec>
+
+## Learnings
+<dated entries, newest first>
+
+## See also
+<the docs that are the source of truth>
+```
+
+Constraints, all checkable (§13.7):
+
+- `name` matches the directory; `description` is present and written for matching.
+- **≤150 lines.** Past that it is a document, not a skill.
+- Every rule is traceable to a spec section or to a dated learning. A rule with no provenance
+  is folklore, and folklore is what skills are supposed to replace.
+- Learnings carry a date, because a stale learning is only detectable if you can see its age.
+
+Superpowers ships a `skill-authoring` skill; use it when creating a new one.
+
+### 13.5 Keeping them current — the update protocol
+
+This is the part that has to be automatic, because it is the part that will otherwise never
+happen.
+
+**The trigger is finishing a task.** Before you commit, ask: *did I learn something that would
+have saved me time at the start?* If yes, it goes into the area's skill **in the same commit as
+the work**. Not a follow-up task and not a note to the orchestrator — per `AGENTS.md` there is
+no review queue, and the next agent in this area will be someone else with no memory of your
+session. A learning that is not committed did not happen.
+
+**What qualifies:**
+
+- A mistake you made that the docs did not warn you about.
+- A command, flag or incantation that worked after several that did not.
+- A limit or quirk you *measured* rather than read.
+- An approach you tried and abandoned, with why — this is the highest-value kind and the one
+  most often lost.
+
+**What does not:**
+
+- Restating a design doc. Link it instead.
+- General TypeScript or Rust advice. `superpowers:*` covers method.
+- Anything true only of the data in your one task.
+
+**Where else it might belong.** The skill is the default, not the only destination:
+
+| What you learned | Where it goes |
+|---|---|
+| It contradicts a design doc | Fix the doc. Touch the skill only if the *procedure* changes |
+| It is a decision | An ADR in `docs/adr/`, and the skill links to it |
+| It is a fact about an external system | A research note in `docs/` |
+| It is "how not to get this wrong here" | The skill — **this is the default** |
+
+**How to write it.** Add an entry under `## Learnings` with the date and one line of *why*:
+
+```markdown
+## Learnings
+
+**2026-08-14 — `cargo watch` fights the sidecar supervisor.** Rebuilds trigger a restart
+storm because the supervisor's backoff resets on a clean exit. Use `pnpm dev` rather than
+running `cargo watch` directly, or set `RIKI_FAKE_VISION=1`.
+```
+
+If the learning changes how the area should be worked — not just a one-off gotcha — promote it
+into the body as a rule and leave the dated entry as its provenance.
+
+### 13.6 Pruning — append-mostly, not append-only
+
+A skill that only grows becomes a changelog, and nobody reads a changelog before starting work.
+
+- **When a learning becomes enforcement, delete it.** A lint rule, a type or a test that makes
+  the mistake impossible is strictly better than a paragraph asking people to remember. Say so
+  in the commit: the knowledge moved, it was not lost.
+- **When a learning is superseded, replace it** rather than appending a contradiction. Two
+  entries that disagree leave the reader to guess which is current.
+- **At the 150-line cap, split or promote.** Split along the directory boundary if one exists;
+  promote to a design doc if what has accumulated is really architecture.
+
+### 13.7 Validation
+
+`pnpm check:skills`, wired into `pnpm check` and the `docs.yml` workflow:
+
+- Frontmatter parses; `name` matches the directory; `description` is non-empty and under the
+  length limit.
+- Body is under the line cap.
+- Every internal link resolves — this is what catches skills left pointing at a doc that moved,
+  including the `docs/` reorganisation proposed in §3.
+- Every area in the §2.2 ownership map maps to exactly one skill. A new package with no owning
+  skill fails the check, which is how the roster stays complete as the codebase grows rather
+  than by anyone remembering.
+
+markdownlint and the lychee link check already run over `docs/`; extend both to
+`.claude/skills/**`.
+
+### 13.8 Parallel agents
+
+Skills are per-area precisely so that two agents working at once do not touch the same file —
+the same reasoning as the directory layout (§2.1). `workspace` is the shared one: append at the
+end, do not restructure it, and if you find yourself rewriting its shape, that is a task in its
+own right rather than a side effect of another one.
+
+### 13.9 Lifecycle
+
+A skill is created **with** its area, not after it. In the scaffolding order (§10), whoever
+lands step *N* lands that area's skill in the same commit, seeded from the design doc's
+constraints. The nine skills above are seeded now, ahead of the code, because the design corpus
+already contains most of what they need to say and because the agents doing the scaffolding are
+the first people who need them.
