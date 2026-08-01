@@ -118,7 +118,7 @@ Four things, and keeping them apart is most of the architecture:
 | `RealtimeSession` + transport | voice renderer | The peer connection has to be where the tracks are |
 | Level *maths* | `packages/audio`, anywhere | Pure functions over `Float32Array`; unit-tested with no audio device |
 | Level *ballistics* | overlay renderer | Display decisions, not audio ones — overlay §7.4 draws this line and it stands |
-| `Ducker` implementation | main | It is an OS call (WASAPI session ducking and its equivalents); `packages/audio` declares the interface only |
+| `Ducker` implementation | main | It is an OS call (WASAPI session ducking on Windows; see §4.4 for macOS); `packages/audio` declares the interface only |
 | `LocalCommandParser` | `packages/realtime`, anywhere | A pure function from a transcript to at most one command |
 
 ### 2.3 What crosses the preload bridge
@@ -319,6 +319,14 @@ platform-dependent `available`; a no-op implementation is a legitimate implement
 itself as unavailable rather than silently pretending. −12 dB with a 120 ms ramp in and 250 ms out
 (ui-design §7.2), disableable, and the disable check lives in the sink rather than in the machine
 (overlay §8).
+
+> **Verify before building:** ducking another application's audio is a Windows-shaped capability,
+> and macOS is the primary target (ui-design A3). Core Audio lets a process control its own output
+> but exposes no public API for attenuating another app's, so the likely honest answer on the
+> primary platform is `available === false` and a settings control that explains itself. That
+> would make ducking a Windows-only feature rather than a cross-platform one — worth establishing
+> before §7.2's ramp figures are implemented, because if it holds, the no-op path is the *default*
+> path and deserves the better error copy.
 
 ---
 
