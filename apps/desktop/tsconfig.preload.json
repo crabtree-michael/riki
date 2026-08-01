@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The preload bridge sees both worlds: `contextBridge` and `ipcRenderer` from Electron, and the
+  // renderer's `window` to expose onto. That is exactly why it is the only path between them, and
+  // why it is three functions wide (docs/design/overlay-architecture.md §6.2).
+  "extends": "./tsconfig.base.json",
+  "include": ["src/preload/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }],
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  }
+}

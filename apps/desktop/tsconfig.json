@@ -1,9 +1,21 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
-  },
-  "include": ["src/**/*.ts"],
-  "references": []
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Solution-style: the app builds nothing itself, its four sub-projects do.
+  //
+  // The split is what docs/design/overlay-architecture.md §11.3 asks for, and it exists for two
+  // reasons. The renderer needs DOM types, which the single project could not give it without
+  // handing them to main as well; and the renderer must *not* have `@types/node`, which is what
+  // turns "no Node in the renderer" into a type error rather than a code review.
+  //
+  // `include` globs must stay disjoint — under `tsc --build` every file belongs to exactly one
+  // project, and an overlap is reported as a duplicate-input error rather than being merged.
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.preload.json" },
+    { "path": "./tsconfig.renderer.json" },
+    { "path": "./tsconfig.test.json" }
+  ]
 }

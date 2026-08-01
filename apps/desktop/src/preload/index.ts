@@ -5,7 +5,12 @@
  * Nothing secret crosses here — the API key is resolved in main by @riki/config and never
  * reaches the renderer (§7.1).
  *
- * Skeleton only — no implementation yet.
+ * This module is the overlay window's preload entry: importing it exposes the bridge. Other
+ * windows get their own entry, because each should see only the surface it needs.
  */
 
-export {};
+import { exposeOverlayBridge } from './overlay-bridge.js';
+
+export * from './overlay-bridge.js';
+
+exposeOverlayBridge();

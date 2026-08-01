@@ -1,20 +1,19 @@
 /**
- * The chip's renderer-side contracts — the parts that are pure, and therefore the parts that can
- * be unit-tested without launching a window.
+ * The chip's renderer-side contracts.
  *
- * Deliberately DOM-free. `apps/desktop/tsconfig.json` is a single project with `lib: ["ES2023"]`,
- * so renderer code cannot currently name `HTMLElement` at all (verified: `error TS2304`). The
- * view interfaces that need DOM types — ChipView, BarsView, GlyphView, TextSlot, CaptionPanel —
- * are specified in docs/design/overlay-architecture.md §7.2 and land as code when step 6 splits
- * this app into main / preload / renderer projects (§11.3).
- *
- * Declarations only.
+ * The `tsconfig` split of §11.3 has landed, so the view interfaces can name DOM types here. What
+ * the renderer still does not have is `@types/node` — that is deliberate, and it is what turns
+ * "no Node in the renderer" into a type error rather than a code review
+ * (docs/design/overlay-architecture.md §7, §11.3).
  */
 
 import type {
   AccentToken,
+  CaptionModel,
+  ChipText,
   ChipState,
   ChipViewModel,
+  GlyphId,
   LevelFrame,
   Millis,
   MotionSignature,
@@ -27,6 +26,39 @@ export interface OverlayApp {
   level(frame: LevelFrame): void;
   environment(env: OverlayEnvironment): void;
   dispose(): void;
+}
+
+/**
+ * The `update` / `frame` split is the whole of ui-design.md §10's "composite-only animation".
+ * `update` runs a handful of times per turn and may reflow — the chip's 160 ms width animation
+ * happens there. `frame` runs at 30 Hz and may only write `transform` and `opacity`.
+ */
+export interface ChipView {
+  update(model: ChipViewModel): void;
+  frame(sample: MotionSample): void;
+  /** Advances the elapsed counter without re-running `update` (§7.2). */
+  tickElapsed(seconds: number): void;
+  dispose(): void;
+}
+
+export interface BarsView {
+  /** `scaleY` on pre-sized elements, never a height change — height is layout. */
+  setHeights(heights: readonly number[]): void;
+  setVisible(visible: boolean): void;
+}
+
+export interface GlyphView {
+  set(glyph: GlyphId, accent: AccentToken): void;
+}
+
+export interface TextSlot {
+  set(text: ChipText | null): void;
+  /** Once a second, rather than re-shaping text every frame (§7.2). */
+  tickElapsed(seconds: number): void;
+}
+
+export interface CaptionPanel {
+  set(captions: CaptionModel | null): void;
 }
 
 /**

@@ -1,0 +1,296 @@
+/*
+ * The chip's appearance. ui-design.md §4 is the specification; this is the implementation.
+ *
+ * Two rules hold throughout, and both are enforced elsewhere so they cannot quietly stop being
+ * true: every colour comes from tokens.css (a lint rule rejects hex literals in renderer code),
+ * and the per-frame path writes only `transform` and `opacity` (ui-design.md §10). Anything in
+ * here that animates `width` is on the `update` path, which runs a handful of times per turn.
+ */
+
+@import url('./tokens/tokens.css');
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Per-pixel alpha: the window is transparent and click-through, and the only pixels that exist
+     are the ones the chip draws. */
+  background: transparent;
+  /* Belt and braces with setIgnoreMouseEvents: nothing here is a control. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.riki-root {
+  --riki-scale: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  font:
+    500 12px/1.35 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  color: rgb(255 255 255 / 88%);
+  transform: scale(var(--riki-scale));
+  transform-origin: top center;
+}
+
+/* --- the chip ------------------------------------------------------------------------------ */
+
+.riki-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  min-width: 32px;
+  max-width: 180px;
+  height: var(--riki-chip-height);
+  padding: 0 var(--riki-chip-pad);
+  border: 1px solid var(--riki-chip-border);
+  border-radius: var(--riki-chip-radius);
+  background: var(--riki-chip-bg);
+  box-shadow: 0 2px 8px var(--riki-chip-shadow);
+  /* Content-driven width, animated rather than snapped (ui-design.md §4.1). This is layout, and it
+     is on the `update` path — never the frame path. */
+  transition:
+    width var(--riki-width-change) ease-out,
+    opacity var(--riki-fade-in) linear;
+  white-space: nowrap;
+}
+
+.riki-chip[hidden] {
+  display: none;
+}
+
+.riki-chip[data-phase='entering'] {
+  animation: riki-fade-in var(--riki-fade-in) ease-out;
+}
+
+.riki-chip[data-phase='leaving'] {
+  opacity: 0;
+  transition: opacity var(--riki-fade-out) ease-in;
+}
+
+/* Latched capture gets a brighter border, so push and latch are never confused (§6.2). */
+.riki-chip.is-latched {
+  border-color: rgb(255 255 255 / 34%);
+}
+
+/* Silence past the nudge delay: "we hear nothing" (ui-design.md §5.1). */
+.riki-chip.is-dimmed {
+  opacity: 0.6;
+}
+
+/* Muted is the one thing rendered at rest, and it is deliberately faint (ui-design.md §3). */
+.riki-chip[data-state='muted'] {
+  opacity: 0.4;
+  max-width: 32px;
+}
+
+@keyframes riki-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* --- the glyph ----------------------------------------------------------------------------- */
+
+.riki-chip__glyph {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--riki-dot-size);
+  height: var(--riki-dot-size);
+  transform: scale(var(--riki-glyph-scale, 1));
+}
+
+.riki-chip__glyph::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--riki-accent);
+}
+
+/* Armed: an outline only — the chip is alive, the bars have not moved yet. */
+.riki-chip__glyph[data-glyph='dot-outline']::before {
+  background: transparent;
+  border: 1.5px solid var(--riki-accent);
+}
+
+/* Processing: a segmented ring, so the sweep is not the only thing distinguishing it. */
+.riki-chip__glyph[data-glyph='dot-segmented']::before {
+  background: transparent;
+  border: 1.5px dashed var(--riki-accent);
+}
+
+/* Speaking: a filled dot inside a ring. */
+.riki-chip__glyph[data-glyph='dot-ringed']::before {
+  inset: 2px;
+}
+
+.riki-chip__glyph[data-glyph='dot-ringed']::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 1px solid var(--riki-accent);
+  border-radius: 50%;
+}
+
+/* Muted: a dot with a bar through it. */
+.riki-chip__glyph[data-glyph='slashed']::before {
+  background: transparent;
+  border: 1.5px solid var(--riki-accent);
+}
+
+.riki-chip__glyph[data-glyph='slashed']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  width: calc(100% + 2px);
+  height: 1.5px;
+  background: var(--riki-accent);
+  transform: rotate(-45deg);
+}
+
+/* Acting, Confirming and Error are characters: a shape is not enough to say which verb, which
+   question, or which fault. */
+.riki-chip__glyph[data-glyph='gear'],
+.riki-chip__glyph[data-glyph='query'],
+.riki-chip__glyph[data-glyph='bang'] {
+  display: grid;
+  place-items: center;
+  color: var(--riki-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.riki-chip__glyph[data-glyph='gear']::before,
+.riki-chip__glyph[data-glyph='query']::before,
+.riki-chip__glyph[data-glyph='bang']::before {
+  background: transparent;
+}
+
+.riki-chip__glyph[data-glyph='gear']::after {
+  content: '⚙';
+}
+
+.riki-chip__glyph[data-glyph='query']::after {
+  content: '?';
+}
+
+.riki-chip__glyph[data-glyph='bang']::after {
+  content: '!';
+}
+
+/* --- the bars ------------------------------------------------------------------------------ */
+
+.riki-chip__bars {
+  display: flex;
+  align-items: center;
+  gap: var(--riki-bar-gap);
+  height: var(--riki-bar-max-height);
+}
+
+.riki-chip__bars[hidden] {
+  display: none;
+}
+
+.riki-bar {
+  width: var(--riki-bar-width);
+  height: var(--riki-bar-max-height);
+  border-radius: 1.5px;
+  background: var(--riki-accent);
+  /* scaleY on a pre-sized element: the frame path may not touch height (ui-design.md §10). */
+  transform: scaleY(0.22);
+  transform-origin: center;
+}
+
+/* --- text ---------------------------------------------------------------------------------- */
+
+.riki-chip__text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.riki-chip__text[hidden],
+.riki-chip__primary[hidden],
+.riki-chip__elapsed[hidden],
+.riki-chip__hint[hidden] {
+  display: none;
+}
+
+.riki-chip__elapsed {
+  color: rgb(255 255 255 / 60%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hints are keyboard affordances rendered as text, never buttons (§1.1). */
+.riki-chip__hint {
+  color: rgb(255 255 255 / 55%);
+  font-size: 11px;
+}
+
+/* --- captions ------------------------------------------------------------------------------ */
+
+.riki-captions {
+  box-sizing: border-box;
+  max-width: 320px;
+  padding: 8px 12px;
+  border: 1px solid var(--riki-chip-border);
+  border-radius: 10px;
+  background: var(--riki-chip-bg);
+  box-shadow: 0 2px 8px var(--riki-chip-shadow);
+}
+
+.riki-captions[hidden] {
+  display: none;
+}
+
+.riki-captions__line {
+  margin: 0;
+  white-space: normal;
+}
+
+.riki-captions__line[hidden] {
+  display: none;
+}
+
+.riki-captions__you {
+  color: rgb(255 255 255 / 70%);
+}
+
+/* --- reduced motion ------------------------------------------------------------------------ */
+
+/*
+ * A variant of every state rather than a global disable (ui-design.md §9.1). The bars stay — they
+ * carry real information — and become one static filled bar, which is the count the view is built
+ * with. What goes is the looping animation and the transitions.
+ */
+.riki-reduced-motion .riki-chip,
+.riki-reduced-motion .riki-bar {
+  transition: none;
+  animation: none;
+}
+
+.riki-reduced-motion .riki-chip__bars {
+  gap: 0;
+}
+
+.riki-reduced-motion .riki-bar {
+  width: 18px;
+}

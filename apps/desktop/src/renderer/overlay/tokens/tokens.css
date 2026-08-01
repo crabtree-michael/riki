@@ -1,0 +1,59 @@
+/*
+ * The only place in the repo a colour value exists.
+ *
+ * These are CSS custom properties rather than a TypeScript module for two reasons, one of them
+ * non-obvious. The `no-restricted-syntax` rule in eslint.config.js rejects every hex literal under
+ * renderer/**, with no exemption for the token module itself — a TypeScript module holding
+ * `#6FD3FF` would be rejected by the rule that exists to protect it. And custom properties are
+ * where these values are consumed anyway, which makes the high-contrast variant a class swap
+ * rather than a re-render (docs/design/overlay-architecture.md §7.5).
+ *
+ * Values are ui-design.md §4.2, verbatim. Two rules hold here:
+ *
+ *   - No pure red, ever. Saturated red at the screen edge is the near-universal game signal for
+ *     taking damage; an error chip in #FF0000 will be misread as a game event. Coral is
+ *     unmistakably "notification" rather than "damage". A Tier 1 test parses this file and
+ *     asserts it (apps/desktop/test/token-palette.test.ts).
+ *   - The chip must be legible on a snowfield and on a night level. A translucent dark chip with
+ *     a light hairline border satisfies both.
+ */
+
+:root {
+  /* Chip surface */
+  --riki-chip-bg: rgba(12, 14, 18, 0.72);
+  --riki-chip-border: rgba(255, 255, 255, 0.14);
+  --riki-chip-shadow: rgba(0, 0, 0, 0.45);
+
+  /* Accents. Armed shares Listening's cyan, and Acting shares Processing's violet — which is why
+     the glyph and the motion signature, not the colour, are what tell the states apart. */
+  --riki-accent-listening: #6fd3ff;
+  --riki-accent-working: #b9a8ff;
+  --riki-accent-speaking: #7ee8b0;
+  --riki-accent-confirm: #ffd37e;
+  --riki-accent-error: #ff8a7a;
+  --riki-accent-muted: #8a93a6;
+
+  /* Geometry, ui-design.md §4.1, logical pixels at 1×. */
+  --riki-chip-height: 28px;
+  --riki-chip-radius: 14px;
+  --riki-chip-pad: 12px;
+  --riki-dot-size: 10px;
+  --riki-bar-width: 3px;
+  --riki-bar-gap: 2px;
+  --riki-bar-max-height: 18px;
+  --riki-bar-min-height: 4px;
+
+  /* Motion, ui-design.md §8. */
+  --riki-fade-in: 80ms;
+  --riki-fade-out: 200ms;
+  --riki-width-change: 160ms;
+}
+
+/*
+ * Low vision, ui-design.md §9.1: raise the background to 0.92 and the border to 0.4. A variant of
+ * every state rather than a separate palette, so nothing else in the view has to know about it.
+ */
+.riki-contrast-high {
+  --riki-chip-bg: rgba(12, 14, 18, 0.92);
+  --riki-chip-border: rgba(255, 255, 255, 0.4);
+}

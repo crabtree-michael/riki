@@ -31,6 +31,11 @@ const BOUNDARY_ELEMENTS = [
     mode: 'full',
     pattern: 'packages/context/src/tools/handlers/*.ts',
   },
+  // More specific than `desktop-main`, and listed first so it wins: the interaction machine is
+  // pure and vendor-free, and the presenter renders state rather than talking to the model
+  // (docs/design/overlay-architecture.md §11.2).
+  { type: 'desktop-session', mode: 'full', pattern: 'apps/desktop/src/main/session/**' },
+  { type: 'desktop-overlay-main', mode: 'full', pattern: 'apps/desktop/src/main/overlay/**' },
   { type: 'desktop-main', mode: 'full', pattern: 'apps/desktop/src/main/**' },
   { type: 'desktop-preload', mode: 'full', pattern: 'apps/desktop/src/preload/**' },
   { type: 'desktop-renderer', mode: 'full', pattern: 'apps/desktop/src/renderer/**' },
@@ -107,10 +112,27 @@ export default tseslint.config(
               message: 'packages/world-model may not import packages/realtime.',
             },
             {
-              // The preload bridge is the only path from renderer to main.
+              // The preload bridge is the only path from renderer to main. `preload` is on this
+              // list too: its implementation imports `electron`, so a renderer that could reach
+              // it would have Electron in it. The bridge's *type* lives in shared/ for exactly
+              // that reason (docs/design/overlay-architecture.md §6.2).
               from: ['desktop-renderer'],
-              disallow: ['desktop-main'],
-              message: 'Renderer code may not import from main/ — go through the preload bridge.',
+              disallow: [
+                'desktop-main',
+                'desktop-session',
+                'desktop-overlay-main',
+                'desktop-preload',
+              ],
+              message:
+                'Renderer code may not import from main/ or preload/ — the vocabulary both sides speak is in shared/.',
+            },
+            {
+              // The machine stays pure: no window, and no vendor. The adapters exist to hold the
+              // imports it must not have.
+              from: ['desktop-session'],
+              disallow: ['desktop-overlay-main', 'desktop-preload', 'desktop-renderer'],
+              message:
+                'main/session/** is the pure interaction machine — take collaborators by injection instead.',
             },
             {
               // The load-bearing rule for Tier 3 (agent-command-execution-architecture.md §2.3).
@@ -160,12 +182,36 @@ export default tseslint.config(
                 'package',
                 'tool',
                 'desktop-main',
+                'desktop-session',
+                'desktop-overlay-main',
                 'desktop-preload',
                 'desktop-renderer',
                 'desktop-shared',
               ],
               disallow: ['openai'],
               message: 'The openai SDK may only be imported by packages/realtime.',
+            },
+            {
+              // §11.2. `electron` is the one that bites: a machine that can construct a window is
+              // a machine that cannot be tested without one. The `@riki/*` half of these rules is
+              // below, in `no-restricted-imports` — see the note there.
+              from: ['desktop-session'],
+              disallow: ['electron'],
+              message:
+                'main/session/** must stay pure and vendor-free — main/adapters/** exists to hold those imports (overlay-architecture.md §5.6).',
+            },
+            {
+              // The view knows only the view model.
+              from: ['desktop-renderer'],
+              disallow: ['electron'],
+              message:
+                'renderer/** may not import electron — it receives a ChipViewModel and a level stream, and nothing else.',
+            },
+            {
+              from: ['desktop-shared'],
+              disallow: ['electron'],
+              message:
+                'shared/ is the vocabulary main and the renderer both speak — it must be importable by a renderer that has no Electron.',
             },
             {
               from: [['package', { name: 'realtime' }]],
@@ -190,6 +236,65 @@ export default tseslint.config(
               disallow: ['electron'],
               message:
                 'packages/context may not import electron — it must run in a bare vitest process.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // The `@riki/*` half of the overlay's boundaries (docs/design/overlay-architecture.md §11.2).
+  //
+  // These are `no-restricted-imports` rather than `boundaries/external` for a measured reason:
+  // `boundaries` only sees imports that **resolve**, and a workspace package that is not a
+  // declared dependency of apps/desktop does not resolve — so a `boundaries/external` rule naming
+  // `@riki/realtime` here reports success while catching nothing. `no-restricted-imports` matches
+  // the literal specifier, which is what makes it fire before the dependency is ever added.
+  {
+    files: ['apps/desktop/src/main/session/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@riki/*'],
+              message:
+                'main/session/** is the pure interaction machine: it has heard of turn.responseEnded, never of response.audio.done. main/adapters/** holds these imports (overlay-architecture.md §5.6).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/main/overlay/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@riki/realtime', '@riki/audio'],
+              message:
+                'main/overlay/** renders state; it does not talk to the model (overlay-architecture.md §11.2).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/renderer/**/*.ts', 'apps/desktop/src/shared/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@riki/*'],
+              message:
+                'The view knows only the view model, and shared/ has to be importable by it — neither may reach a package (overlay-architecture.md §11.2).',
             },
           ],
         },

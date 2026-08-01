@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The vocabulary both sides speak. Types only, so it needs neither DOM nor Node.
+  "extends": "./tsconfig.base.json",
+  "include": ["src/shared/**/*.ts"],
+  "compilerOptions": {
+    "types": []
+  }
+}

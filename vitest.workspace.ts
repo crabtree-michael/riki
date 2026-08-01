@@ -25,9 +25,24 @@ export default defineWorkspace([
   {
     test: {
       name: 'desktop',
-      include: ['apps/desktop/src/**/*.test.ts', 'apps/desktop/test/**/*.test.ts'],
+      include: [
+        'apps/desktop/src/main/**/*.test.ts',
+        'apps/desktop/src/preload/**/*.test.ts',
+        'apps/desktop/src/shared/**/*.test.ts',
+        'apps/desktop/test/**/*.test.ts',
+      ],
       exclude: ['apps/desktop/e2e/**'],
       environment: 'node',
+    },
+  },
+  {
+    // The chip's view code needs a document to write into, and an in-memory one is enough — this
+    // is still Tier 1 by REPO_SKELETON.md §5.2's rule: no game, no microphone, no GPU, no window.
+    // Tier 5 (Playwright on a real Electron build) remains the only place a window launches.
+    test: {
+      name: 'desktop-renderer',
+      include: ['apps/desktop/src/renderer/**/*.test.ts'],
+      environment: 'happy-dom',
     },
   },
   {

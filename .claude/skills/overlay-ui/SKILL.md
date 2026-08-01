@@ -30,6 +30,15 @@ Hidden must render **no window at all** — idle costs nothing, and a test asser
   chip and the tray are two projections of one state; earcons and ducking are its effects. The
   renderer holds presentation state only — animation phase, level ballistics, fade. Start from
   `docs/design/overlay-architecture.md`; it carries the class and method signatures.
+- **The component is implemented**: `main/session` (machine, runtime), `main/overlay` (window
+  controller, presenter, placement, level pump), `preload/overlay-bridge.ts`, `renderer/overlay`
+  (chip, motion, ballistics, tokens). Fakes for every injected seam are in `main/testing/fakes.ts`
+  and chip models for renderer tests in `renderer/overlay/testing/models.ts` — use them rather than
+  writing new ones.
+- **Nothing launches it yet.** There is no app entry, no bundler, no `pnpm build`/`dev`, and no
+  Tier 5 harness, so the chip has never been rendered on a screen and every claim in §12 of the
+  design doc is still unverified. `index.html` expects a compiled `index.js` beside it; the build
+  that produces one belongs to the `apps/desktop` shell.
 - **The chip can carry no clickable affordance.** `setIgnoreMouseEvents(true)` means the window
   receives no pointer event at all, so `Esc ✕`, `Fix ▸` and `[Y] yes` in `ui-design.md` §5.1 are
   keyboard hints rendered as text, not buttons. Confirming gets scoped `Y`/`N` accelerators that
@@ -88,6 +97,61 @@ the two wrappers up front. The apt libraries it needs beyond a base image are `l
 `libdrm2`, `libgbm1`, `libxkbcommon0`, `libxcomposite1`, `libxdamage1`, `libxfixes3`,
 `libxrandr2`, `libxshmfence1`, `libx11-xcb1`, `libgtk-3-0t64`, `libasound2t64`, plus `xvfb`
 and `dbus-x11`.
+
+**2026-08-01 — the `tsconfig` split is done, and it is what catches renderer leaks.** `apps/desktop`
+is now a solution over five projects (`shared`, `main`, `preload`, `renderer`, `test`). Three things
+that only show up once you are in it:
+
+- `include` globs must be **disjoint**. Under `tsc --build` a file belongs to exactly one project,
+  and an overlap is a duplicate-input error, not a merge.
+- The renderer has `types: []` on purpose. `HTMLElement` resolves, `process` does not — verified in
+  both directions with a throwaway file. Don't "fix" a missing Node type there by adding `node`.
+- Cross-project imports need the project in `references`, and this is the rule that caught the real
+  bug: the renderer importing `preload/overlay-bridge.js` for the `RikiOverlayBridge` type would
+  have pulled `electron` into the renderer. The bridge's *type* now lives in `shared/overlay.ts`,
+  and `preload/**` is on the renderer's lint disallow list next to `main/**`.
+
+*Why:* the compiler found this before the lint did, and it is the kind of leak that looks harmless
+in review — you are only importing a type.
+
+**2026-08-01 — `boundaries/external` cannot enforce the `@riki/*` rules, and passes while not doing
+so.** §11.2 asks for "`main/session/**` may not import `@riki/realtime`". Written as a
+`boundaries/external` rule it reports success and catches nothing, because that plugin only sees
+imports that **resolve** — and a workspace package that is not a declared dependency of
+`apps/desktop` does not resolve. `electron` *is* a dependency, so the `electron` half of the same
+rule fires correctly, which makes the failure even easier to miss. Use `no-restricted-imports` with
+a `group` pattern for cross-package rules; it matches the literal specifier and fires before anyone
+adds the dependency.
+
+Same shape as the `workspace` skill's first learning, one layer down, and worth knowing:
+**`packages/world-model` → `@riki/realtime` in `eslint.config.js` has this bug today.** It was left
+alone rather than changed from an overlay task, but it is decoration until someone converts it.
+
+**2026-08-01 — `Millis` is main's clock, and the renderer cannot use it for anything.** The
+elapsed counter was specified as `elapsedFromMs`, a start timestamp. The renderer has no access to
+main's monotonic clock, so it has nothing to subtract that from. The field is now `elapsedMs`, a
+duration measured by main, that the renderer counts on from. Anything crossing the bridge that
+looks like a timestamp is probably a bug — send durations.
+
+**2026-08-01 — "every state has a distinct motion signature" is not achievable, and should not be.**
+Both `REPO_SKELETON.md` §5.4 and this design ask for a distinct glyph *and* motion per state. But
+ui-design §4.3 defines Acting as "as Processing, plus a verb", and Confirming, Muted and a settled
+Error are all static — so the signatures collide by design. The glyphs are pairwise distinct, and
+the assertion that means what §4.3 intends is over the **(glyph, motion) pair**. Design doc updated;
+don't re-derive this.
+
+**2026-08-01 — `isStatic(signature)` cannot stop the clock on its own.** A settled Error is static;
+the same signature 10 ms after entry is not. The motion module exports `settlesAtMs(signature)`
+alongside the `MotionDirector` interface, and the composition root restarts the animation clock on
+every state change so each signature animates from its own zero — without that, an Error entered
+from Listening inherits Listening's elapsed time and skips its double-pulse entirely.
+
+**2026-08-01 — renderer view code is testable at Tier 1 with `happy-dom`.** There is a
+`desktop-renderer` Vitest project for `apps/desktop/src/renderer/**/*.test.ts` on the `happy-dom`
+environment. It needs no game, microphone, GPU or window, so §5.2 still holds, and it covers the
+things Tier 5 would otherwise be the only witness to: `scaleY`-only frames, captions off by
+default, the clock actually stopping. Tier 5 is still the only place a *window* launches — assert
+placement, pixels and the 100 ms budget there.
 
 ## See also
 

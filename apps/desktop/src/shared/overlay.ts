@@ -60,8 +60,14 @@ export interface ChipText {
   readonly primary: string;
   /** Faded after the first two uses, then never shown again (ui-design.md §5.1). */
   readonly hint?: string;
-  /** Set once the elapsed counter is due; the renderer ticks it locally (§7.2). */
-  readonly elapsedFromMs?: Millis;
+  /**
+   * How long it has been, at the moment this model was made. Set once the elapsed counter is due,
+   * and the renderer ticks on from here (§7.2).
+   *
+   * A duration, deliberately, and not the timestamp it started at: `Millis` is main's monotonic
+   * clock, which the renderer has no access to and must never try to compare against its own.
+   */
+  readonly elapsedMs?: Millis;
 }
 
 export interface CaptionModel {
@@ -115,6 +121,20 @@ export type OverlayCommand =
   | { readonly kind: 'model'; readonly model: ChipViewModel }
   | { readonly kind: 'env'; readonly env: OverlayEnvironment }
   | { readonly kind: 'teardown' };
+
+/**
+ * The renderer's entire view of the outside world, exposed by the preload bridge as
+ * `window.rikiOverlay`. Three functions, no escape hatches, no `ipcRenderer` (§6.2).
+ *
+ * Declared here rather than beside its implementation because the renderer has to name the type
+ * and the implementation imports `electron` — a renderer that could reach that module would have
+ * Electron in it, which is the thing `sandbox: true` and the lint boundary both exist to prevent.
+ */
+export interface RikiOverlayBridge {
+  onCommand(fn: (command: OverlayCommand) => void): Unsubscribe;
+  onLevel(fn: (frame: LevelFrame) => void): Unsubscribe;
+  send(intent: OverlayIntent): void;
+}
 
 export type OverlayIntent =
   /** Mounted, or remounted after a crash: main re-projects the current model. */

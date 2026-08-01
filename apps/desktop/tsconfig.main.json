@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Electron main. Node globals, no DOM: main never touches a document, and a `document` that
+  // type-checks in main is a bug waiting to be written.
+  "extends": "./tsconfig.base.json",
+  "include": ["src/main/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }],
+  "compilerOptions": {
+    "types": ["node"]
+  }
+}

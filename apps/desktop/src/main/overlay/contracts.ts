@@ -29,7 +29,14 @@ export interface Rectangle {
 export interface DisplaySnapshot {
   readonly id: number;
   readonly workArea: Rectangle;
+  /**
+   * OS display scaling. Deliberately *not* applied to the resolved bounds — Electron window
+   * bounds are device-independent pixels — but it is what the chip scale defaults from, and the
+   * renderer needs it to snap a 1 px hairline border to a device pixel.
+   */
   readonly scaleFactor: number;
+  /** Where the overlay lands when there is no full-screen app to follow (ui-design.md §9.2). */
+  readonly primary: boolean;
 }
 
 /** Eight presets plus drag-to-place, stored per executable (ui-design.md §2.4). */
@@ -56,10 +63,13 @@ export type ChipScale = 0.75 | 1 | 1.25 | 1.5;
  * Prefer the display holding the Dota window — the capture sidecar already knows its bounds,
  * because capture is window-scoped (dota2 §7). Degrades to focus, then to primary; a hint that
  * has not arrived is not an error.
+ *
+ * `focused` carries bounds for the same reason `gameWindow` does: "focused" is a property of a
+ * window, not of a display, and a resolver that cannot see the window has no way to answer.
  */
 export type DisplayTargetHint =
   | { readonly kind: 'gameWindow'; readonly bounds: Rectangle }
-  | { readonly kind: 'focused' }
+  | { readonly kind: 'focused'; readonly bounds: Rectangle }
   | { readonly kind: 'primary' };
 
 /** Pure geometry, so every anchor × scale × display case is a Tier 1 test (§5.4). */
@@ -90,9 +100,12 @@ export interface OverlayWindowController {
   warm(): Promise<void>;
   /** Synchronous `showInactive()`. No awaits, no allocation, nothing before it. */
   showFast(): void;
+  /** After the hold, and cancelled if a `showFast()` arrives first — that is the anti-strobe rule. */
   hide(afterMs?: Millis): void;
   isVisible(): boolean;
   send(command: OverlayCommand): void;
+  /** Levels ride their own channel so a 30 Hz stream never queues behind a model (§6.1). */
+  sendLevel(frame: LevelFrame): void;
   /** One size per (anchor, scale, display). The chip animates inside it; the window does not. */
   applyPlacement(bounds: Rectangle, scale: ChipScale): void;
   setCaptureExcluded(on: boolean): CaptureExclusionResult;

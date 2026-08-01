@@ -5,24 +5,53 @@
  * is resolved by @riki/config in main and injected into @riki/realtime, so there is no code path
  * from it to this file (REPO_SKELETON.md §7.1, and §5.4 tests its absence from this surface).
  *
- * Inbound intents are validated and allow-listed before they reach the machine. The renderer is
- * the least privileged process in the app and is treated as untrusted input.
- *
- * Declarations only. See docs/design/overlay-architecture.md §6.
+ * Outbound intents are allow-listed here as well as in main. Two checks for the same thing is
+ * deliberate: this one keeps a renderer *bug* from reaching IPC at all, and main's keeps a
+ * compromised renderer from reaching the machine (docs/design/overlay-architecture.md §6.2).
  */
 
-import type { LevelFrame, OverlayCommand, OverlayIntent, Unsubscribe } from '../shared/overlay.js';
+import { contextBridge, ipcRenderer } from 'electron';
 
-/** Exposed as `window.rikiOverlay`. This is the entire API available to the chip. */
-export interface RikiOverlayBridge {
-  onCommand(fn: (command: OverlayCommand) => void): Unsubscribe;
-  onLevel(fn: (frame: LevelFrame) => void): Unsubscribe;
-  send(intent: OverlayIntent): void;
+import type { LevelFrame, OverlayCommand, RikiOverlayBridge } from '../shared/overlay.js';
+import { OVERLAY_BRIDGE_KEY, OVERLAY_CHANNELS } from '../shared/channels.js';
+import { parseOverlayIntent } from '../shared/intents.js';
+
+/**
+ * The bridge's *shape* and the channel names live in shared/, because main and the renderer both
+ * have to name them and neither may import this module — it imports `electron`.
+ */
+export { OVERLAY_BRIDGE_KEY, OVERLAY_CHANNELS };
+export type { RikiOverlayBridge };
+
+export function createOverlayBridge(): RikiOverlayBridge {
+  return {
+    onCommand(fn) {
+      const listener = (_event: unknown, payload: unknown): void => {
+        // Structured-cloned from main, the only sender on this channel. The cast is the trust
+        // boundary, and it points the safe way: main is more privileged than we are.
+        fn(payload as OverlayCommand);
+      };
+      ipcRenderer.on(OVERLAY_CHANNELS.command, listener);
+      return () => void ipcRenderer.removeListener(OVERLAY_CHANNELS.command, listener);
+    },
+
+    onLevel(fn) {
+      const listener = (_event: unknown, payload: unknown): void => {
+        fn(payload as LevelFrame);
+      };
+      ipcRenderer.on(OVERLAY_CHANNELS.level, listener);
+      return () => void ipcRenderer.removeListener(OVERLAY_CHANNELS.level, listener);
+    },
+
+    send(intent) {
+      // Normalised, not forwarded: only the fields the allow-list names cross the boundary.
+      const checked = parseOverlayIntent(intent);
+      if (checked === null) return;
+      ipcRenderer.send(OVERLAY_CHANNELS.intent, checked);
+    },
+  };
 }
 
-/** Channel names, kept in one place so main and preload cannot drift (§6.1). */
-export const OVERLAY_CHANNELS = {
-  command: 'riki:overlay:command',
-  level: 'riki:overlay:level',
-  intent: 'riki:overlay:intent',
-} as const;
+export function exposeOverlayBridge(): void {
+  contextBridge.exposeInMainWorld(OVERLAY_BRIDGE_KEY, createOverlayBridge());
+}

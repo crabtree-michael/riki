@@ -83,6 +83,15 @@ teardown noise under Xvfb, not a failure — assert on the test result, not on c
 *Why:* the failure without a display is a Playwright launch timeout with a wall of process
 output, which reads like a broken harness rather than a missing X server.
 
+**2026-08-01 — there is a fifth Vitest project, and DOM tests are Tier 1.** `desktop-renderer` runs
+`apps/desktop/src/renderer/**/*.test.ts` on `happy-dom`; the node-env `desktop` project now lists
+`src/main`, `src/preload`, `src/shared` and `test/` explicitly rather than all of `src`. An
+in-memory document needs no game, microphone, GPU or window, so §5.2 holds and view code does not
+have to wait for Tier 5 to be tested at all. Tier 5 is still the only place a *window* launches.
+
+*Why:* the alternative was shipping ~600 lines of untested DOM code against a Playwright harness
+that does not exist yet, which is the "untested, please check" outcome this skill exists to prevent.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

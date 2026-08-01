@@ -1,7 +1,12 @@
 # Riki — Overlay Component Architecture
 
-**Status:** Design. No implementation exists yet; `apps/desktop` is still the skeleton from
-REPO_SKELETON.md §10 step 1.
+**Status:** Implemented, except where noted below. Steps 1–4 of §15's build order have landed:
+the machine, the runtime, the window controller and the renderer. Step 5 (adapters) waits on the
+packages it adapts; step 6 (moving the wire types to `@riki/protocol`) is a coordination event.
+**Not landed:** the Tier 5 Playwright harness and the `apps/desktop` shell that would launch a
+window — the app entry, the bundler, and `pnpm build` / `pnpm dev`. Until those exist, the
+component is exercised by 246 unit tests and has never been rendered on a screen. Every number in
+§12 remains unverified.
 **Scope:** The technical architecture of the voice agent's visible surface — the overlay chip,
 the machine that drives it, and the seams between it and the rest of Riki.
 **Reads with:** [`ui-design.md`](ui-design.md) is the *product* specification for this surface —
@@ -368,6 +373,11 @@ scattered through view code:
 | `confirm-timeout` | 20 s in Confirming | resolve denied |
 | `hide-hold` | 400 ms after entering Idle | window hidden after the renderer's 200 ms fade |
 
+`hide-hold` is the one timer the machine does **not** schedule. The hold travels on the `window`
+effect (§4.5) and `OverlayWindowController` owns it, because the thing that has to cancel it is a
+`showFast()` arriving mid-hold — and only the controller sees that. It stays in `TimerId` because
+the controller schedules it on the same injected `Clock`.
+
 The nudge and the timeout are user-configurable (ui-design §9.1: they are hostile defaults for
 people who speak slowly), which is why they come from `MachineEnvironment` rather than being
 constants in the reducer.
@@ -435,6 +445,7 @@ export interface OverlayWindowController {
   hide(afterMs?: Millis): void;
   isVisible(): boolean;
   send(command: OverlayCommand): void;
+  sendLevel(frame: LevelFrame): void;   // separate channel — §6.1
   applyPlacement(bounds: Rectangle, scale: number): void;
   setCaptureExcluded(on: boolean): CaptureExclusionResult;   // reports what it actually got
   reload(): Promise<void>;            // crash recovery
@@ -463,7 +474,7 @@ export interface PlacementResolver {
 
 export type DisplayTargetHint =
   | { readonly kind: 'gameWindow'; readonly bounds: Rectangle }   // from the capture sidecar
-  | { readonly kind: 'focused' }
+  | { readonly kind: 'focused';    readonly bounds: Rectangle }   // "focused" is a window property
   | { readonly kind: 'primary' };
 ```
 
@@ -641,6 +652,11 @@ happens here. `frame` runs at 30 Hz and may only write `transform` and `opacity`
 bars are `scaleY` on pre-sized elements, never height changes, and the elapsed counter ticks once
 a second through `tickElapsed` rather than being re-shaped every frame.
 
+`ChipText.elapsedMs` is a **duration**, not the timestamp the turn started at. `Millis` is main's
+monotonic clock and the renderer has no access to it, so a start time would be a number the
+renderer could not subtract anything from; it is sent the elapsed value main measured and counts on
+from there. The field was `elapsedFromMs` in the first draft of this document, which was wrong.
+
 ### 7.3 Motion and the animation clock
 
 ```ts
@@ -660,13 +676,23 @@ export interface MotionDirector {
 ```
 
 `isStatic` is what stops the clock. Confirming, Muted and a settled Error have no animation, and
-ui-design §10 requires the timer to stop, not merely to render identical frames. Reduced motion
+ui-design §10 requires the timer to stop, not merely to render identical frames.
+
+`isStatic` alone turned out not to be enough, and the gap is the word *settled*: an Error that has
+finished its double-pulse is static, but the same signature ten milliseconds after entry is not.
+The module therefore also exports `settlesAtMs(signature): Millis | null` — when a signature stops
+moving, or `null` if it never does — and the composition root stops the clock at that time. Keeping
+it a free function rather than a fourth method leaves `MotionDirector` a pure function of its
+arguments with no notion of "when did this state start". Reduced motion
 turns most signatures static, so on a machine with the OS setting on, the overlay's steady state
 is genuinely zero work.
 
-`sample` is pure and gets the exhaustive test that §5.4 asks for: every state has a distinct
-glyph *and* a distinct motion signature, asserted over the state enum, in both the normal and
-reduced-motion variants. Reduced motion is a variant of each state, not a global off switch —
+`sample` is pure and gets the exhaustive test that §5.4 asks for, with one correction that only
+appeared when the assertion was written: motion signatures are **not** pairwise distinct, and
+cannot be. ui-design §4.3 defines Acting as "as Processing, plus a verb", and Confirming, Muted and
+a settled Error are all static. What is distinct is the *glyph*, and what the test asserts is the
+pair — eight visible states, eight glyphs, eight (glyph, motion) pairs. That still delivers what
+§4.3 actually asks for, which is that no state is told apart by colour alone. Reduced motion is a variant of each state, not a global off switch —
 the amplitude bars carry real information and become a single static filled bar rather than
 disappearing.
 
@@ -837,34 +863,48 @@ stop being true:
 - No `process.env` outside `packages/config` — settings reach the machine as an injected
   `MachineEnvironment`.
 
-### 11.2 Rules to add when the code lands
+### 11.2 Rules added when the code landed
 
-Both belong in `eslint.config.js` at step 6, not now: a rule that fires on nothing is decoration,
-and the `workspace` skill's first learning is that boundary rules silently pass unless you watch
-them fail.
+All in `eslint.config.js`, each confirmed firing against a throwaway violating file before being
+kept — the `workspace` skill's discipline, and it earned its keep here (see the note under the
+table).
 
-| Rule | Why |
+| Rule | Mechanism |
 |---|---|
-| `main/session/**` may not import `electron`, `@riki/realtime`, `@riki/audio` | Keeps the machine pure and vendor-free; the adapters exist precisely to hold those imports |
-| `main/overlay/**` may not import `@riki/realtime` | The presenter renders state; it does not talk to the model |
-| `renderer/overlay/**` may not import `@riki/*` or `electron` | The view knows only the view model |
+| `main/session/**` may not import `electron` | `boundaries/external` |
+| `main/session/**` may not import `@riki/*` | `no-restricted-imports` |
+| `main/overlay/**` may not import `@riki/realtime` or `@riki/audio` | `no-restricted-imports` |
+| `renderer/**` and `shared/**` may not import `electron` or `@riki/*` | both |
+| `renderer/**` may not import `main/**` **or `preload/**`** | `boundaries/element-types` |
+| `main/session/**` may not import `main/overlay/**`, `preload/**` or `renderer/**` | `boundaries/element-types` |
 
-Each should be landed the way that skill prescribes: write a file that violates it, run
-`pnpm exec eslint` on it, confirm the error, delete the file.
+Two of these are not where you would first put them, and the reasons are worth keeping.
 
-### 11.3 A build-config change step 6 must make
+**`@riki/*` cannot be a `boundaries/external` rule here.** That plugin only sees imports that
+resolve, and a workspace package which is not a declared dependency of `apps/desktop` does not
+resolve — so the rule reports success while catching nothing. `no-restricted-imports` matches the
+literal specifier, which is what makes it fire *before* anyone adds the dependency. This is the
+same trap as the `workspace` skill's first learning, one layer down.
 
-`apps/desktop/tsconfig.json` is a single project with `lib: ["ES2023"]`, so **renderer code cannot
-currently reference a DOM type at all** — `HTMLElement` is `error TS2304`. Verified, not assumed.
-The renderer, the preload and the main process want three different lib and module setups, so
-step 6 should split `apps/desktop` into three composite projects (`tsconfig.main.json`,
-`tsconfig.preload.json`, `tsconfig.renderer.json`, the last with `lib: ["ES2023", "DOM"]`) and
-reference them from the app's solution config. This is also what makes "no Node in the renderer"
-a type error rather than a code review.
+**`preload/**` joins `main/**` on the renderer's disallow list.** The preload *implementation*
+imports `electron`; a renderer that could import it would have Electron in it. That is why
+`RikiOverlayBridge` — the bridge's type — is declared in `shared/overlay.ts` rather than beside its
+implementation.
 
-That constraint is why the scaffolded contracts in this repo are DOM-free: the view interfaces
-that need `HTMLElement` are specified in §7 of this document and land as code when the project
-split does.
+### 11.3 The build-config change — landed
+
+`apps/desktop/tsconfig.json` was a single project with `lib: ["ES2023"]`, so renderer code could
+not reference a DOM type at all — `HTMLElement` was `error TS2304`. It is now a solution config
+over five projects: `tsconfig.shared.json`, `.main.json`, `.preload.json`, `.renderer.json` and
+`.test.json`. The renderer gets `lib: ["ES2023", "DOM"]` and, deliberately, `types: []` — no
+`@types/node`, which is what makes "no Node in the renderer" a type error rather than a code
+review. Both directions were confirmed by writing a file that violates each and watching it fail.
+
+Two things to know before editing them. The `include` globs must stay **disjoint**: under
+`tsc --build` every file belongs to exactly one project, and an overlap is a duplicate-input error
+rather than a merge. And a file that imports across a project boundary must have that project
+listed in `references`, or the compiler rejects the import — which is how the renderer's attempt to
+import the preload *implementation* (and with it, `electron`) was caught.
 
 ---
 
@@ -893,7 +933,7 @@ Tier 1.
 | Unit | Tier | Asserts |
 |---|---|---|
 | `reduce` | 1 | The full state × input table, incl. barge-in, Esc from every phase, mute suppressing triggers, `reported` deduping repeat faults |
-| `projectChip` / `projectTray` | 1 | Every state has a distinct glyph *and* motion signature (§5.4); tray collapses nine states to four |
+| `projectChip` / `projectTray` | 1 | Every state has a distinct glyph, and a distinct **(glyph, motion) pair**; tray collapses nine states to four |
 | Timers | 1 | Each row of §4.6 fires once, is cancelled on exit, and honours the configurable nudge/timeout |
 | `GestureRecognizer` | 1 | The 250 ms tap/hold threshold, both directions, at the boundary |
 | `PlacementResolver` | 1 | Eight anchors × four scales × multi-display, incl. a display disappearing |
@@ -902,6 +942,7 @@ Tier 1.
 | Token palette | 1 | No `#FF0000`-family value in the accents (§5.4) |
 | `SessionRuntime` | 4 | With a fake clock and fake window: `showFast()` is called in the same tick as the trigger; effects are applied in order; a renderer reload re-projects |
 | Overlay messages | 3 | Once they move to `@riki/protocol` — round-trip through the contract corpus |
+| ChipView, BarsView, TextSlot, CaptionPanel, `mountOverlay` | 1 | Attributes, `scaleY`-only frames, captions off by default, the clock stopping on a settled state. In an in-memory DOM (`happy-dom`), which needs no game, microphone, GPU or window and so still satisfies §5.2 |
 | The window | 5 | ≤100 ms key-down → paint; hidden means not visible and not painting; reduced motion and high contrast; captions off by default; Esc cancels; barge-in returns to Listening |
 | Idle cost | 6 | Dota 1 % low with the chip idle and visible (`bench/frametime`) |
 
@@ -935,6 +976,21 @@ Left open:
   overlay is where the leak would be visible, so it needs an owner before captions ship.
 
 ---
+
+## 14a. Decisions the implementation had to make
+
+The design left these open by omission; recorded here rather than only in code comments.
+
+| Question | Decision | Why |
+|---|---|---|
+| Esc while Confirming | Denies the consent **and** cancels the turn → Idle | ui-design §3.1 says Esc from any active state returns to Hidden; §4.4 grabs Esc as a confirm key. Both, in that order. `N` is deliberately different — "no, but carry on" — and stays in Processing |
+| A persistent fault blocking the trigger | It does not: the key re-arms from Error | The window is click-through, so `Fix ▸` is a hint, not a button. Refusing the key would leave the chip with no recovery path at all. The second identical fault is deduped, so a failed retry costs one silent return to Idle |
+| Tray `attention` | Read off `reported`, not off the Error phase | A revoked microphone outlives the four seconds of Error chip, and the tray is the surface that must keep saying so |
+| Fault dedupe scope | Persistent faults only | "Fail loudly but only once" (§1.6) is about a broken mic. A second "didn't catch that" is news, not nagging |
+| Trigger during Processing or Acting | Aborts the turn and starts a new capture | The player has something else to say; queueing behind an answer they have stopped waiting for is worse than dropping it |
+| `responseEnded` in a latched session | Returns to Listening, not to Idle | That is what latching means, and it is the "session active" affordance §14 promised |
+| Consent granted | → Processing, and `tool.started` owns the edge into Acting | One source for Acting rather than two that can disagree |
+| Speaking's `⌥Space ✕` hint | Not rendered | Rendering it means naming the bound key, which the machine does not know — `trigger/` owns the binding and is a sibling task. Still open |
 
 ## 15. Build order
 

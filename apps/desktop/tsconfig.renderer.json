@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The chip. DOM types, and deliberately no `@types/node`: "no Node in the renderer" is a lint
+  // boundary and a `sandbox: true` window, but here it is also a type error, which is cheaper.
+  "extends": "./tsconfig.base.json",
+  "include": ["src/renderer/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }],
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": []
+  }
+}
