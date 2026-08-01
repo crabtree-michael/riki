@@ -9,3 +9,6 @@ allowBuilds:
   lefthook: true
   # Native resolver binary behind eslint-import-resolver-typescript.
   unrs-resolver: true
+# Electron is deliberately absent above: since v43 it declares no lifecycle scripts at all,
+# so there is no build for allowBuilds to permit. It ships an `install-electron` bin instead,
+# which apps/desktop runs from its own postinstall.

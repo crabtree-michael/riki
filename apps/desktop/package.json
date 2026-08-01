@@ -5,6 +5,11 @@
   "type": "module",
   "description": "The Electron application: lifecycle, tray, hotkeys, overlay window, sidecar supervisor",
   "scripts": {
+    "postinstall": "install-electron",
     "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "electron": "^43.2.0"
   }
 }

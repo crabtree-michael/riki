@@ -107,6 +107,27 @@ absent reports success, so "the gate is green" means nothing until you know whic
 ran. When you install a tool the repo tolerates missing, re-run the whole gate before assuming
 your change is what broke it.
 
+**2026-08-01 — `allowBuilds` cannot fetch the Electron binary, because there is no build to
+allow.** Since v43, `electron`'s published `package.json` has **no `scripts` field at all** — the
+`postinstall` that every guide and older answer refers to is gone. Adding `electron: true` to
+`allowBuilds` in `pnpm-workspace.yaml` therefore does nothing at all, silently: `pnpm install`
+reports success, `electron --version` works (that is the JS CLI shim), and the failure only
+surfaces later as a missing `dist/` when something tries to *launch* it. Electron now ships an
+`install-electron` bin instead, wired from the owning workspace project:
+
+```jsonc
+// apps/desktop/package.json
+"scripts": { "postinstall": "install-electron", ... }
+```
+
+A workspace project's own lifecycle scripts are not gated by `allowBuilds`, so this runs on a
+fresh clone — look for `apps/desktop postinstall$ install-electron` in the install output.
+
+*Why:* verified by wiping every `node_modules` and reinstalling, which is the only test that
+means anything here — a plain `pnpm install` over an already-populated tree is a no-op and will
+happily "confirm" a fix that does not work. Use the same wipe-and-reinstall check for any
+postinstall change.
+
 **2026-08-01 — lefthook owns `pre-push`, so `git lfs install` silently loses.** It refuses to
 overwrite an existing hook and exits with instructions most people skip; the clean/smudge filters
 still get installed, so LFS *looks* fine — files check out and commit correctly — but nothing

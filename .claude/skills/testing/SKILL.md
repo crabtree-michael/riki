@@ -65,7 +65,23 @@ player's ear.
 
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — Tier 5 needs a display, and `xvfb-run` is enough of one.** Playwright's
+`_electron` launches a real window, so on a headless box (no `DISPLAY`, no `WAYLAND_DISPLAY`)
+it fails in the launch call, not in your assertions. Verified end to end against a throwaway
+Electron main + `_electron.launch()`:
+
+```sh
+xvfb-run -a --server-args="-screen 0 1920x1080x24" pnpm test:e2e
+```
+
+Two things worth knowing before you burn time on them. **No Playwright browser download is
+needed** — `_electron` drives the Electron binary the app already depends on, so
+`playwright install` is not part of setup for tier 5. And a stray
+`ERROR:zygote_linux.cc … Broken pipe` on the way out of a passing run is Chromium sandbox
+teardown noise under Xvfb, not a failure — assert on the test result, not on clean stderr.
+
+*Why:* the failure without a display is a Playwright launch timeout with a wall of process
+output, which reads like a broken harness rather than a missing X server.
 
 ## See also
 
