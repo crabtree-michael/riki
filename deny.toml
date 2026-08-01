@@ -19,6 +19,10 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# Our own crates are `publish = false` and carry `license = "UNLICENSED"`, which is not a
+# valid SPDX expression — without this, cargo-deny fails on the four workspace members
+# before it ever looks at a dependency. The allow-list above is about what we *ship*.
+private = { ignore = true }
 
 [bans]
 multiple-versions = "warn"

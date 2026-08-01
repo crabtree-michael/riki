@@ -59,7 +59,21 @@ CI. It is a release gate, and its numbers get committed.
 
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — `clippy::pedantic` is on, and `doc_markdown` will fail your doc comments.**
+`Cargo.toml` sets `pedantic = "warn"` at the workspace level and `pnpm lint:rust` passes
+`-D warnings`, so a warning is a build failure. `doc_markdown` flags any bare identifier-looking
+word in a `//!` or `///` comment — `PipeWire`, `ScreenCaptureKit`, `REPO_SKELETON.md` — and the
+skeleton's own three `lib.rs` headers all failed the first time a toolchain existed to run them.
+*Why:* backtick product and file names in doc comments as you write them. `cargo clippy --fix`
+applies these automatically if you have already made the mess.
+
+**2026-08-01 — `license = "UNLICENSED"` is not valid SPDX, and cargo-deny fails on it.**
+The workspace crates inherit it from `[workspace.package]`, so `cargo deny check` reported
+`error[unlicensed]` on all four members before it looked at a single dependency. Fixed with
+`private = { ignore = true }` under `[licenses]` in `deny.toml`, which is the right scope
+anyway — the allow-list is about what we *ship*, not about our own unpublished crates.
+*Why:* if you add a crate and cargo-deny starts failing, check whether it is complaining about
+us rather than about a dependency.
 
 ## See also
 
