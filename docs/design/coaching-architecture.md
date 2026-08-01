@@ -1,7 +1,10 @@
 # Proactive Coaching — Deletion Plan & Module Architecture
 
-**Status:** Spec / architecture proposal, for review. **No implementation lands with this document.**
-Every change it describes belongs to a follow-up ticket; §16 is the ticket list.
+**Status:** Accepted ([ADR-0023](../adr/0023-coaching-replaces-command-execution.md)), and
+**§16 steps 1–5 are built**. The deletion is done: `packages/context/src/tools/`, the
+`packages/realtime` seam, and the overlay's `Acting` and `Confirming` states are gone, and
+`packages/context/src/coaching/` exists with a golden corpus. Steps 6–8 remain — `packages/events`,
+the composition root, and tuning. §16 marks each.
 **Scope:** Two halves of one decision. First, the complete removal of the agent command execution
 system — Tier 3 of [`dota2-state-capture-design.md`](dota2-state-capture-design.md) §6.3, the
 `packages/context/src/tools/` pipeline, its seam in `packages/realtime`, and the two overlay states
@@ -13,18 +16,24 @@ memory layer, the rendering primitives and the window budget are all reused unch
 arithmetic is re-derived here. [`state-capture-architecture.md`](state-capture-architecture.md) §7
 is still the only way a game fact reaches this component. `dota2-state-capture-design.md` §6.4 is
 the trigger policy this document builds out.
-[`agent-command-execution-architecture.md`](agent-command-execution-architecture.md) is the
-document being deleted; §2.6 says what happens to it.
+`agent-command-execution-architecture.md` is the document that was deleted with the system it
+described; §2.6 records why, and it is in git history if the reasoning is ever wanted.
 **Out of scope:** The persona text itself (§7.4 gives the one-line default and routes the rest to
 open question 5), the wire protocol and session lifecycle (`packages/realtime`), fusion
 (`packages/world-model`), and the salience *scoring function* — §6.2 gives its shape and inputs and
 deliberately does not give its coefficients.
 
-> **⚠ Read this first: the trigger half is being built in parallel.**
+> **⚠ Read this first: the trigger half is somebody else's.**
 >
 > While this document was being written, another agent began implementing `packages/events` — the
 > trigger half of coaching — against a sibling document, `coaching-trigger-architecture.md`. That
-> work is further along and more detailed than §6 here, and **where the two disagree, it wins.**
+> work is more detailed than §6 here, and **where the two disagree, it wins.**
+>
+> **As of the deletion landing, `packages/events` is still an empty stub with a doc comment**, so
+> §4.4's independence is doing real work rather than being a nicety: `BRIEF_PLAN` keys on event ids
+> written as string literals, so the content half compiled, shipped and golden-tested without the
+> trigger half existing. §6.6 row 4 — the one open seam — is **closed**: `TurnBrief.topic` carries
+> `CoachEvent.topic` through `openTurn`.
 >
 > The split of ownership that results is clean, and it is the one §4.1 argues for on independent
 > grounds:
@@ -1109,27 +1118,49 @@ first.
 
 Each step is a ticket. Each leaves `main` green, and no step depends on a step after it.
 
-1. **Salvage, without deleting anything.** Move `FakeWorldModel`/`observed`/`FakeReferenceData`/
+1. ✅ **Salvage, without deleting anything.** Move `FakeWorldModel`/`observed`/`FakeReferenceData`/
    `ManualTimers` to `src/testing/`, `ReferenceDataPort` and `CapturePort` to `common/ports.ts`,
    `Timers` to `common/timers.ts`. Pure moves, `pnpm check` green, **its own commit.** §2.2 is the
    spec and this is the step that makes every later one reversible.
-2. **Delete `packages/context/src/tools/`** and the `packages/realtime` seam (§2.1, §2.4, §2.5),
+
+   *One thing was not a pure move, and it was forced.* `ReferenceDataPort` returned `ToolOutcome<T>`
+   — the ten-code failure taxonomy, which is command vocabulary and dies in step 2. It now returns a
+   two-arm `Fetched<T>`: reference data is best-effort by construction and its surviving consumer
+   only asks whether the data arrived. The taxonomy needed ten codes because a *model* was going to
+   read them out loud.
+2. ✅ **Delete `packages/context/src/tools/`** and the `packages/realtime` seam (§2.1, §2.4, §2.5),
    including the ledger's `command` arm, the retention ladder's two rungs, and `PrefixBudget`'s
    manifest part. Keep `tools: []` and the ignore-and-count wire branch. The existing package tests
    are the regression suite.
-3. **Delete `Acting` and `Confirming`** across the machine, the shared types, the intent parser and
+3. ✅ **Delete `Acting` and `Confirming`** across the machine, the shared types, the intent parser and
    the renderer (§7.2), with the `ui-design.md` edit. Separate ticket because it is a different
    package and a different skill.
-4. **Docs and ADRs** (§2.6): delete the command architecture document, sweep its inbound links,
+
+   *The regression test is not "the type is gone"* — the compiler proves that, and it misses the
+   orphan colour token, the orphan glyph rule in `overlay.css` and the orphan row in the renderer's
+   own `Record<ChipState, …>`, none of which typecheck. `machine.test.ts` drives every input against
+   every reachable phase and asserts neither deleted phase is entered and no `keys` effect is
+   emitted.
+4. ✅ **Docs and ADRs** (§2.6): delete the command architecture document, sweep its inbound links,
    mark ADR-0011/0018/0019 Superseded, close open questions 9 and 10, update REPO_SKELETON §2.2's
    ownership map and the `agent-context` and `overlay-ui` skills.
-5. **`packages/context/src/coaching/`** — `BriefPlanner`, `BRIEF_PLAN`, `BriefRenderer`, the
-   sections, and the golden corpus. Buildable **today**, against a fake world model and with no
-   session: it is a pure function of a snapshot and a request. Land it with the golden corpus, not
-   after it. This is the ticket that is genuinely unclaimed, and it is the one to dispatch first.
-6. **`packages/events`** — **in flight already**, against `coaching-trigger-architecture.md`. Not a
-   ticket to dispatch from this document. What this document owes it is row 4 of §6.6, and what it
-   owes this document is nothing.
+5. ✅ **`packages/context/src/coaching/`** — `BriefPlanner`, `BRIEF_PLAN`, `BriefRenderer`, the seven
+   sections, and the golden corpus. Built against a fake world model with no session, exactly as
+   claimed: it is a pure function of a snapshot and a request.
+
+   *Two things the spec did not anticipate.* `positions` carries both halves of the snapshot's
+   `seen`/`unseen` pair as **one** section, so the brief renderer needs no closure pass and has no
+   rule where dropping one thing obliges dropping another — the same simplification §2.5 gives the
+   retention ladder, arrived at independently. And §5.4's "relative to now" for `windows` is **not
+   implemented**: subtracting the clock from a window is arithmetic over two observed values inside
+   a section, which §5.5 forbids and which would yield a number carrying neither age nor confidence.
+   The sections render absolute clock times; the snapshot's header carries `T mm:ss` every turn. If
+   relative reads better, the fix is a `derived.*In` field in `packages/world-model`.
+6. **`packages/events`** — against `coaching-trigger-architecture.md`. Not a ticket to dispatch from
+   this document. What this document owed it — row 4 of §6.6 — is **paid**: `TurnBrief.topic`
+   exists and `openTurn` threads it to the planner. What it owes this document is nothing.
+   `BRIEF_PLAN`'s eight rows are keyed on the ids that union names; a ninth id with no row falls to
+   the widest row rather than to nothing, and `plan.test.ts` asserts the table is total.
 7. **The composition root** in `apps/desktop/src/main/agent/` — wire events → context → realtime and
    the `EventTapeReader` port, and close §6.6 row 4 by passing `CoachEvent.topic` through
    `openTurn`. The first point at which anything here touches a session, and the first at which the
@@ -1137,12 +1168,11 @@ Each step is a ticket. Each leaves `main` green, and no step depends on a step a
 8. **Tuning**, with a replay harness and a person. §12 rows 1 and 2, and every number in §15. Last,
    because it is the only step that cannot be done against a fixture.
 
-Steps 1–4 are the deletion and are strictly ordered. Step 5 can run in parallel with the in-flight
-step 6, which is the point of §4.4 putting the seam at a lookup table rather than at a shared type:
-neither package has to wait for the other to compile.
+Steps 1–5 landed in that order, one commit each, `pnpm check` green at every step. §4.4's bet paid:
+step 5 shipped with step 6 not yet started, because the seam is a lookup table keyed on string
+literals rather than a shared type, so neither package had to wait for the other to compile.
 
-**Sequencing note for whoever picks this up.** Steps 2 and 6 touch different packages and can
-proceed in parallel, but step 2 deletes `ToolCallPort` from `packages/realtime` while step 6's
-package declares a dependency on `@riki/context`. Whoever lands second reconciles, per AGENTS.md.
-The deletion should not wait on the trigger work: nothing in `packages/events` imports the tool
-pipeline, which is the strongest evidence available that the two are genuinely separable.
+**Sequencing note for whoever picks up step 6.** `packages/realtime` no longer has a `ToolCallPort`
+and `packages/context` no longer has a `tools/` directory; there is nothing left to reconcile
+against. What step 6 will find already in place: `TurnBrief.topic`, `CoachingMemoryReader` on
+`ContextAssembler.coaching`, and a `BRIEF_PLAN` row for each of the eight `CoachEventKind` members.

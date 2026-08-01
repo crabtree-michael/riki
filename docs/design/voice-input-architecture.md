@@ -532,15 +532,19 @@ model* from the one that heard the audio, so it is an approximation of what was 
 a record of it — do not use it to reconstruct model state. And it costs: a small per-minute ASR
 charge on top of the audio tokens, which is why it is a setting and not a constant.
 
-### 6.2 Two kinds of "command", and only one of them is ours
+### 6.2 Two kinds of "command", and only one of them was ever ours
 
 "Command parsing" in a voice product usually means turning speech into intents. Here, most of that
-job belongs to the model and arrives back as a tool call — `get_enemy_detail`, `read_screen` — and
-`agent-command-execution-architecture.md` owns all of it. This component forwards those calls to
-the tool pipeline in main and returns their results; it does not interpret them.
+job used to belong to the model and arrive back as a tool call — `get_enemy_detail`, `read_screen`.
+**ADR-0023 deleted that half entirely** (`coaching-architecture.md` §7.1): the session is configured
+with `tools: []`, a stray function call is counted and never answered, and the facts a turn needs
+are assembled before the model is asked to speak.
 
-What is left is a short list of **control phrases that must work when the model is unavailable,
-slow, or misbehaving**:
+What is left is the only thing in Riki that turns speech into an action — a short list of **control
+phrases that must work when the model is unavailable, slow, or misbehaving**. They matter *more*
+after that deletion, not less: under proactive coaching Riki speaks when the player is holding
+nothing, so `quiet-mode` — "only when I ask" — is the off switch for the primary path, and it must
+work with the model down.
 
 | Phrase class | `LocalCommand` | Effect |
 |---|---|---|
@@ -930,8 +934,8 @@ export interface CostMeter {
 together: `packages/config` yields the key and the settings; `ClientSecretBroker` mints; the voice
 window is created and handed the secret plus `SessionContext`; `VoiceBridge` (overlay §5.6)
 attaches to the `RealtimeSessionHandle`; `ContextWindowPort` is bound to
-`ContextWindowExecutor`; `ToolCallPort` is bound to the tool pipeline
-(agent-command-execution §4). None of those packages import each other.
+`ContextWindowExecutor`. There is no `ToolCallPort` to bind: ADR-0023 removed it. None of those
+packages import each other.
 
 ---
 

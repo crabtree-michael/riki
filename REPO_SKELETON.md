@@ -115,10 +115,10 @@ riki/
 │   ├── log-tail/                    console.log tailer: chat, kill feed, rotation handling
 │   ├── world-model/                 the model, fusion, provenance, staleness, confidence,
 │   │                                derived state, ring history (dota2 §4)
-│   ├── context/                     snapshot renderer (Tier 2) + tool surface (Tier 3)
-│   │                                + session preamble assembly (Tier 1) (dota2 §6)
+│   ├── context/                     session preamble, rolling snapshot, coaching brief,
+│   │                                memory layer (dota2 §6, coaching §4–§5)
 │   ├── events/                      event engine, salience scoring, trigger policy,
-│   │                                interrupt gates (dota2 §6.4)
+│   │                                interrupt gates (dota2 §6.4, coaching-trigger)
 │   ├── realtime/                    OpenAI Realtime session: transport, event bus, barge-in,
 │   │                                truncation policy, cost accounting
 │   ├── audio/                       device enumeration, RMS/envelope for the bars, resampling,
@@ -191,8 +191,9 @@ languages, and the dev tools all read from it.
 | Chat / kill feed from `console.log` | `packages/log-tail` | dota2 §2.3 |
 | Merging sources, staleness, confidence | `packages/world-model` | dota2 §4 |
 | The ~300-token snapshot the LLM sees | `packages/context` | dota2 §6.2 |
-| Agent tools (`get_enemy_detail`, …) | `packages/context` | dota2 §6.3 |
-| "Should Riki speak?" | `packages/events` | dota2 §6.4 |
+| The coaching brief the LLM is given for one moment | `packages/context/src/coaching` | coaching §4–§5 |
+| What Riki coaches on, and when | `packages/events` | coaching-trigger, dota2 §6.4 |
+| Wiring events → context → realtime | `apps/desktop/src/main/agent` | coaching §9.3 |
 | Realtime session, barge-in, truncation | `packages/realtime` | realtime §2, §4, §5 |
 | Mic level, earcons, ducking, resampling | `packages/audio` | ui-design §7, realtime §3 |
 | Screen capture, calibration, minimap CV | `crates/riki-*` | dota2 §2.2 |
@@ -654,7 +655,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay`. **Landed except `tools/gsi-replay`** — `packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour and tests, `FakeGsiSource` and the fixture corpus exist, but the replay tool and `pnpm dev:replay` still need the composition root (§8 of the state-capture architecture), which belongs to step 6 |
-| 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration |
+| 5 | `packages/context` + `fixtures/golden/` | Snapshot and coaching-brief format iteration. **Landed**, including `src/coaching/` and `fixtures/golden/coaching/`. The command surface this step originally included was deleted by ADR-0023 |
 | 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work |
 | 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice |
 | 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in dota2 §11.3 |
@@ -701,7 +702,10 @@ Flagged rather than assumed. Each needs a human call or a spike.
    C ABI.
 5. **Where does the agent's prompt/persona live?** It is neither code nor doc exactly. Proposal:
    versioned prompt files in `packages/context/prompts/` with golden tests, so a persona change
-   shows up as a reviewable diff.
+   shows up as a reviewable diff. **More urgent since ADR-0023**: with no tool descriptions, the
+   preamble persona is the only thing shaping how Riki sounds, and one of its rules is not
+   stylistic — *say when you do not know* — because the agent can no longer look anything up
+   (coaching §3.2, §7.4).
 6. **Anti-cheat spike must precede step 6.** `ui-design.md` §13.3 calls this a blocking risk. If a
    global hook plus an always-on-top window is not viable, the entire trigger design changes and
    the overlay directory is wasted work.
@@ -804,7 +808,7 @@ fires* have the same answer.
 | `protocol` | Any message crossing a process or language boundary; `pnpm codegen` | `packages/protocol`, `crates/riki-ipc` | §4 |
 | `testing` | Writing a test, adding a fixture, deciding if something is testable | everywhere | §5 |
 | `game-state` | GSI POSTs, console log, fusion, staleness, confidence | `packages/gsi`, `log-tail`, `world-model` | dota2 §2, §4 |
-| `agent-context` | The snapshot the LLM sees, agent tools, whether Riki speaks | `packages/context`, `packages/events` | dota2 §6 |
+| `agent-context` | The snapshot the LLM sees, the coaching brief, whether Riki speaks | `packages/context`, `packages/events` | dota2 §6, coaching |
 | `voice-realtime` | Realtime session, transport, barge-in, mic and speaker path | `packages/realtime`, `packages/audio` | realtime §3–§5 |
 | `overlay-ui` | The chip, tray, global hotkey, settings, any visible surface | `apps/desktop` | ui-design §3–§10 |
 | `vision-sidecar` | Screen capture, CV, the perf budget, the sidecar process | `crates/riki-*` | dota2 §2.2 |

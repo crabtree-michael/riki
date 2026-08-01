@@ -1,7 +1,18 @@
 # ADR-0011: The command manifest is frozen for the life of a session
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0023](0023-coaching-replaces-command-execution.md)
 **Date:** 2026-08-01
+**Superseded:** 2026-08-01
+
+> **There is no manifest.** ADR-0023 deleted agent command execution, so nothing is advertised to
+> the model and there is no list to freeze. The 2,000 tokens this ADR was budgeting are back
+> (`coaching-architecture.md` §8.1), and the cached prefix now holds the persona and the preamble
+> and nothing else.
+>
+> **The reasoning below is not wrong, and one part of it outlived the decision**: a session's
+> cached prefix must not be rewritten mid-match, whatever is in it. That constraint now applies to
+> the preamble alone, which is why `PreambleAssembler.assemble` is required to be byte-identical
+> across a reconnect (`context-and-memory-architecture.md` §4.4).
 
 ## Context
 
@@ -61,5 +72,6 @@ cached prefix, which is read from the API's caching documentation and **has not 
 here**. `agent-command-execution-architecture.md` §12 lists it as the check that would relax this
 decision to a preference.
 
-See [agent-command-execution-architecture.md](../design/agent-command-execution-architecture.md)
-§8.1.
+See [coaching-architecture.md](../design/coaching-architecture.md) §8.1 for where those 2,000
+tokens went. `agent-command-execution-architecture.md`, which this ADR cites throughout, was
+deleted with the system it described.

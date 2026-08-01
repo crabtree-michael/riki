@@ -25,19 +25,13 @@ Docs are split by kind, because "design doc" was covering four different things:
   architecture that implements it: the fact envelope, the source interface, the fusion reducer and
   its policies, and the read interface `context` and `events` consume. **Built**, except the
   composition root — start at §13, which records where the code differs from §3–§7.
-- [**agent-command-execution-architecture.md**](design/agent-command-execution-architecture.md) —
-  what happens when the agent asks Riki something: parsing and validating a tool call, the four
-  ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it
-  with `state-capture-architecture.md` §7, whose read interface it consumes.
-  **⚠ Slated for deletion** by [ADR-0023](adr/0023-coaching-replaces-command-execution.md) — read
-  `coaching-architecture.md` first, which says what replaces it and why.
-- [**coaching-architecture.md**](design/coaching-architecture.md) — the deletion plan for the
-  command execution system above, and the proactive coaching path that replaces it: what gets
-  removed and what must be salvaged first, how state capture and the memory layer feed a coaching
-  brief, how proactive triggering works, and where voice intents and the overlay route now that
-  there is nothing to execute. Spec and architecture only — §16 is the follow-up ticket list. The
-  trigger half has a sibling document, `coaching-trigger-architecture.md`, landing separately;
-  §6.6 records where the two designs meet.
+- [**coaching-architecture.md**](design/coaching-architecture.md) — how Riki decides a moment is
+  worth speaking about and what the model is shown for it: the coaching brief, `BRIEF_PLAN`, where
+  voice intents and the overlay route, and the revised budgets. It is also the record of what was
+  deleted to get here — `agent-command-execution-architecture.md` described a command execution
+  system that no longer exists, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md)
+  removed both. **Built**, except the trigger half: `packages/events` has a sibling document,
+  `coaching-trigger-architecture.md`, and §6.6 records where the two designs meet.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -75,19 +69,19 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted                                       |
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
 | [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Accepted (by `packages/realtime`, 2026-08-01)  |
-| [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
+| [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | **Superseded** by 0023 — there is no manifest  |
 | [0012](adr/0012-conversation-ledger-is-ours.md)           | Riki keeps its own conversation ledger   | Accepted                                       |
 | [0013](adr/0013-durable-memory-is-typed-observations.md)  | Durable memory is typed, local, no free text | Accepted, one default needs a human call   |
 | [0014](adr/0014-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
 | [0015](adr/0015-ephemeral-client-secret-minted-in-main.md) | Main mints the ephemeral client secret  | Accepted                                       |
 | [0016](adr/0016-mic-open-for-the-match-gate-in-the-graph.md) | Mic open per match; the gate is ours  | Accepted                                       |
 | [0017](adr/0017-server-vad-on-with-response-creation-ours.md) | Server VAD on, response creation ours | Accepted, on one unverified claim              |
-| [0018](adr/0018-argument-schemas-from-a-local-declaration.md) | Argument schemas from a local declaration, not zod yet | Accepted, migrate when protocol lands |
-| [0019](adr/0019-get-build-benchmark-is-reference-class.md) | `get_build_benchmark` is a `reference` command | Accepted, corrects the design doc          |
+| [0018](adr/0018-argument-schemas-from-a-local-declaration.md) | Argument schemas from a local declaration, not zod yet | **Superseded** by 0023 — there are no arguments |
+| [0019](adr/0019-get-build-benchmark-is-reference-class.md) | `get_build_benchmark` is a `reference` command | **Superseded** by 0023 — survives as a brief constraint |
 | [0020](adr/0020-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API             |
 | [0021](adr/0021-speech-occupies-the-window-as-audio.md)   | Speech is costed as audio, not as its transcript | Accepted, on one estimated constant    |
 | [0022](adr/0022-the-api-key-is-an-opaque-type.md)         | The API key is an opaque type            | Accepted — closes the accidental-log class     |
-| [0023](adr/0023-coaching-replaces-command-execution.md)   | Proactive coaching replaces command execution | **Proposed** — supersedes 0011, 0018, 0019 on acceptance |
+| [0023](adr/0023-coaching-replaces-command-execution.md)   | Proactive coaching replaces command execution | Accepted — supersedes 0011, 0018 and 0019      |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -125,13 +119,13 @@ bottom of three separate documents where nobody found them. Full statements in
 | 2   | How does a non-developer user get an API key?                                                                          | Before the first build goes to anyone outside the team    |
 | 3   | git-lfs for `fixtures/frames/`, or a scripted download from object storage?                                            | Before the frame corpus grows                             |
 | 4   | Rust vs. C++ for the sidecar — how mature are the ScreenCaptureKit bindings really?                                    | During the CV spike                                       |
-| 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests | With `packages/context`                                   |
+| 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests. **More urgent since [ADR-0023](adr/0023-coaching-replaces-command-execution.md)**: with no tool descriptions, the preamble persona is the only thing shaping how Riki sounds, and "say when you do not know" is now a rule the product depends on | With `packages/context` |
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
 | 7   | ~~Does the Realtime session get its own hidden window?~~ **Settled** — yes ([ADR-0010](adr/0010-dedicated-voice-window.md), now Accepted) | — |
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
-| 9   | ~~May consent for `read_screen` be remembered for a match, or is it per call?~~ **Moot if [ADR-0023](adr/0023-coaching-replaces-command-execution.md) is accepted** — `read_screen` is deleted and nothing Riki does needs consent | — |
-| 10  | ~~Can the Realtime API emit more than one function call per response?~~ **Moot if [ADR-0023](adr/0023-coaching-replaces-command-execution.md) is accepted** — the command queue does not exist | — |
-| 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)) | Before `RetentionPolicy` numbers are load-bearing          |
+| 9   | ~~May consent for `read_screen` be remembered for a match, or is it per call?~~ **Closed** by [ADR-0023](adr/0023-coaching-replaces-command-execution.md) — `read_screen` is deleted, and nothing Riki does needs consent or a permission prompt | — |
+| 10  | ~~Can the Realtime API emit more than one function call per response?~~ **Closed** by [ADR-0023](adr/0023-coaching-replaces-command-execution.md) — it decided whether the command queue needed to exist, and the queue does not exist | — |
+| 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)). **Inputs changed**: command results were ~200 of the ~750 tokens/min and are now zero; [coaching §8.2](design/coaching-architecture.md) re-derives it as ~675 and ~42 min | Before `RetentionPolicy` numbers are load-bearing |
 | 12  | Should durable player memory be on by default? [ADR-0013](adr/0013-durable-memory-is-typed-observations.md) says yes on structural grounds; REPO_SKELETON §7.2 says privacy-relevant defaults are off | With the first-run consent flow                           |
 | 13  | Does post-match review ship, and does the conversation ledger therefore persist? It holds the player's own voice transcript | Before post-match review is built                          |
 | 14  | Does Chromium's echo cancellation survive a `getUserMedia` stream routed through Web Audio? A tone and an analyser answer it ([voice-input §3.4](design/voice-input-architecture.md)) | **Blocking** — before the capture graph or its pre-roll is built |

@@ -1,15 +1,25 @@
 ---
 name: agent-context
-description: What the LLM sees and when Riki speaks — `packages/context` (session preamble, rolling snapshot, agent tools) and `packages/events` (salience scoring, trigger policy, interrupt gates). Use when changing the snapshot format or its token budget, adding an agent tool, or changing the rules that decide whether Riki says anything at all.
+description: What the LLM sees and when Riki speaks — `packages/context` (session preamble, rolling snapshot, coaching brief, memory) and `packages/events` (salience scoring, trigger policy, interrupt gates). Use when changing the snapshot or brief format or its token budget, adding an advice topic or a brief section, or changing the rules that decide whether Riki says anything at all.
 ---
 
 # Feeding the agent, and deciding when to speak
 
-The agent never sees the raw stream. It sees three tiers, and the third is pull, not push.
+The agent never sees the raw stream, and **it cannot ask for anything**. Everything is push:
 
-1. **Session preamble** — written once, cached. Hero pool, patch, player history.
-2. **Rolling snapshot** — ~250–400 tokens, refreshed per turn. This is the hot path.
-3. **Tools** — `get_enemy_detail` and friends. The agent asks; nothing is pushed.
+1. **Session preamble** — written once, cached. Hero pool, patch, player history, and all
+   reference data, because there is no mid-match lookup path.
+2. **Rolling snapshot** — ~250–400 tokens, refreshed per turn, general. This is the hot path.
+3. **Coaching brief** — ~150 tokens, refreshed per turn, focused on the one thing this turn is
+   *about*. `BRIEF_PLAN` maps an event id to the sections that moment needs.
+
+> **There used to be a fourth thing and it was a *pull* surface** — `get_enemy_detail`,
+> `read_screen`, a parse/admit/queue/execute/render pipeline, a manifest in the cached prefix, and
+> a consent gate. [ADR-0023](../../../docs/adr/0023-coaching-replaces-command-execution.md) deleted
+> all of it. If you find a reference to a tool call, a manifest, an effect class or a failure code
+> anywhere in this repo, it predates that decision — fix it. The session is configured with
+> `tools: []`, and a stray `response.function_call_arguments.done` is counted by
+> `VoiceTelemetry.strayToolCall` and never answered.
 
 ## The snapshot format is an interface
 
@@ -37,30 +47,36 @@ before anything reaches the agent:
 When you change scoring, add the case to the suppression tests. The failure mode here is not
 a crash; it is a product that people turn off.
 
-## Tier 3 — commands the agent issues
+## The coaching brief — what a moment needs
 
-A tool call is a *command*, and it reads what has already been observed. It never reaches into
-the game (ADR-0003). The architecture is
-`docs/design/agent-command-execution-architecture.md`; four rules are worth knowing before you
-open it, because each is easy to break in a way that looks fine:
+`packages/context/src/coaching/`, spec in `docs/design/coaching-architecture.md` §4–§5. Four rules,
+each easy to break in a way that looks fine:
 
-- **Every call is answered exactly once, within its deadline.** Nothing in the pipeline throws
-  or rejects — a failure is a *result*, with text written in Riki's voice. An unanswered
-  `call_id` stalls the turn, and the model's documented behaviour when a result never arrives
-  is to hallucinate one (realtime §11.6). A watchdog per call, not per queue, is what makes
-  the guarantee true rather than hoped for.
-- **The manifest is frozen for the session** (ADR-0011). Tool definitions live in the cached
-  prefix under a 16,384-token cap shared with the instructions, so withdrawing a tool when its
-  source dies busts the cache. Availability is a property of the result instead.
-- **A dead source degrades to an aged answer, not to silence.** "Last seen mid ~12s ago" beats
-  "I can't see that" whenever the model already holds the fact. `unavailable` is for things
-  never observed.
-- **Commands read the world model, never a source.** No handler talks to GSI, the log tailer or
-  the sidecar. `get_minimap_summary` requests a fresh pass and then waits for the model to
-  change (state-capture §7.2), so every CV fact is gated and aged exactly once.
+- **`BRIEF_PLAN` lives in `packages/context`, not `packages/events`.** Section priority interacts
+  with the token budget, and the salience path must never acquire a reason to know about tokens.
+  Events names the moment; context decides what it is worth rendering. The table keys on event ids
+  written as **string literals**, which is why the content half could ship before `packages/events`
+  existed at all.
+- **Position in a plan row is priority, and the lead section is undroppable.** A brief either
+  carries the thing the trigger fired on or renders nothing — there is no middle state where the
+  model holds context for advice it can no longer justify.
+- **A brief that renders nothing is a turn that does not happen.** `CoachingBrief.empty` is a
+  value, not an exception; the composition root closes the turn `'silent'`. Nothing on this path
+  throws, and nothing is appended to the ledger for an empty brief — a zero-token entry would make
+  "had nothing to say" and "said nothing about it" look the same in the record.
+- **A section does no arithmetic and formats no age itself.** Any comparison — farm against a
+  benchmark, a window against the clock — is a `derived.*` field from `packages/world-model`, and
+  `field()` is the only path from an `Observed<T>` to the text. Both rules are the snapshot's, and
+  a brief section that breaks either produces a number with no age and no confidence sitting next
+  to numbers that have both.
 
-Adding a command is one handler file, one registry entry, one golden fixture — and a re-measure
-of the manifest's token cost, which is the part people skip.
+Adding an advice topic is **one detector file in `packages/events`, one arm on `CoachEventKind`,
+and one row in `BRIEF_PLAN`**. Two files, two packages, no existing module changes behaviour. That
+cheapness is deliberate and is the one genuinely good property of the deleted tool registry.
+
+Adding a brief *section* is one file in `coaching/sections/`, a mention in whichever plan rows want
+it, and one golden diff. The plan mention is the part not to skip: **a section no plan row names
+never renders, and nothing fails** — `plan.test.ts` asserts both directions for exactly that.
 
 ## Memory — the window is a cache, not a record
 
@@ -90,27 +106,37 @@ bare fact" enforceable rather than remembered.
 Model → snapshot is budgeted at under 5 ms. The snapshot is rendered per turn, so anything
 expensive belongs in the world model's derived state, computed once, not in the renderer.
 
-Command work has its own budget: ~1200 ms *(tunable)* per turn, all commands together. It is
-*added* to a conversational latency floor that realtime §7 already puts at 1–2 s, so a turn that
-gathers perfect detail produces a coach who answers after the fight.
+**The brief shares that budget rather than adding to it.** There used to be a second, ~1200 ms
+command budget on top of a conversational latency floor realtime §7 already puts at 1–2 s — a turn
+that gathered perfect detail produced a coach who answered after the fight. Brief assembly is pure
+and synchronous, so the whole of a turn's context work is one <5 ms slice with nothing awaited.
+**Anything that could make a brief slow is a design error, not a condition**: if a section ever
+needs a network, it earns back the watchdog, the breaker and the queue that ADR-0023 removed.
 
 ## Learnings
 
-**2026-08-01 — Tiers 1 and 2 and the memory layer are implemented; the composition root is not.**
-`createContextAssembler()` (`src/assembler.ts`) is the runtime surface, and everything §16 lists as
-steps 1–6 and 8 has landed with tests. What has *not*: step 7, the `ContextWindowPort` adapter and
-the session wiring in `apps/desktop/src/main/agent/`, which needs `packages/realtime`. So
+**2026-08-01 — the preamble, the snapshot, the memory layer and the coaching brief are implemented;
+the composition root is not.** `createContextAssembler()` (`src/assembler.ts`) is the runtime
+surface, and `openTurn` renders the snapshot *and* the brief in one synchronous call. What has
+*not* landed: the session wiring in `apps/desktop/src/main/agent/`, which needs `packages/realtime`
+and `packages/events`. So
 `Compactor.consider()` produces a `WindowPlan` and hands it to an injected `onWindowPlan` callback,
 and nothing executes it yet. *Why:* if you are here to "hook up the window", the seam already exists
 and takes a value — do not add a method to this package to make the truncation happen.
 
-**2026-08-01 — the snapshot's field paths are this package's invention, and `packages/world-model`
-has not agreed to them.** `self.hpPct`, `self.kda`, `self.abilities` (a `{id, cooldown}[]`),
+**2026-08-01 — the field paths are this package's invention, and `packages/world-model` has not
+agreed to them.** `self.hpPct`, `self.kda`, `self.abilities` (a `{id, cooldown}[]`),
 `derived.nextItem` (`{item, inSeconds}`), `derived.teamfightIntensity` and the rest are read as
-strings through `FieldPath` and exist nowhere else. Step 4 will either supply them or not. *Why:*
-when that package lands, the fixture corpus in `fixtures/golden/snapshot/` is what tells you which
-names moved — grep `path('` in `snapshot/sections/` for the full list, it is about thirty, and they
-are all in one directory on purpose.
+strings through `FieldPath` and exist nowhere else. *Why:* when that package lands, the fixture
+corpora tell you which names moved — grep `path('` in **both** `snapshot/sections/` and
+`coaching/sections/`, which is about forty between them, all in two directories on purpose.
+
+The brief added several that nothing supplies yet and that a `packages/world-model` task should
+know are wanted: `derived.threats` (`{hero, area, etaSeconds}[]`), `derived.buybackCost`,
+`derived.nextStackAt`, `derived.paceNetWorth`, `derived.paceLevel`, and
+`enemies.<hero>.ultimate`. Each exists because the alternative was arithmetic inside a section,
+which coaching §5.5 forbids — an absent field renders as an omitted section, which is the correct
+degradation and is why they could be declared ahead of being supplied.
 
 **2026-08-01 — `dropsWith` cannot be applied before composition, so the renderer composes twice.**
 The `seen`/`unseen` pairing looks like a property of the ladder, and it is not: the composer drops
@@ -142,16 +168,18 @@ other way inverts the ladder.** Protecting the last N turns wholesale means the 
 would go straight to summarising conversation. *Why:* the ladder's order is the design; the
 never-dropped set is deliberately narrower than it first reads.
 
-**2026-08-01 — the "drop a result and its call together" rule is held by the entry shape, not by the
-policy.** One `command` ledger entry carries the call's name *and* its result, so a ref drops both
-or neither and `packages/realtime` maps the ref back to two conversation items. *Why:* the design
-calls this the rule an implementation is most likely to get wrong, and the reason it cannot go wrong
-here is structural rather than careful — if you ever split that entry in two, the rule stops being
-free and `retention.test.ts`'s pairing assertion is what should catch it.
+**2026-08-01 — the "drop a result and its call together" rule is gone, and so is every other
+ordering dependency in the ladder.** ~~One `command` ledger entry carried the call's name *and* its
+result, so a ref dropped both or neither.~~ ADR-0023 deleted commands; the `brief` arm that replaced
+the `command` arm supersedes *itself* the way a snapshot does. The ladder is four rungs and
+**nothing on it obliges dropping anything else**, which `retention.test.ts` now asserts directly.
+*Why:* if you ever add a paired entry back — two ledger entries that are only meaningful together —
+you re-earn the trap, and the design called it the rule an implementation is most likely to get
+wrong. Keep the pair inside one entry, as that one did.
 
 **2026-08-01 — `FakeWorldModel` coalesced `clock: null` to 600, so the pre-horn snapshot was
 untestable.** `options.clock ?? 600` treats the one value a test passes on purpose as absent. Fixed
-in `tools/testing/index.ts`. *Why:* general shape worth carrying — in a fake, `??` on any option
+in `src/testing/index.ts`. *Why:* general shape worth carrying — in a fake, `??` on any option
 whose `null` is meaningful silently deletes the case somebody wrote the fake to reach.
 
 **2026-08-01 — the enrichment deadline is a race, not a timeout, and the loser needs cancelling.**
@@ -160,20 +188,21 @@ produces a preamble" true. Cancel the timer afterwards: under `ManualTimers` a p
 into whatever test runs next and reads as a flake there rather than a bug here.
 
 **2026-08-01 — `patch_notes` is planned and unserviceable, deliberately.** `ReferenceDataPort` is
-`item`/`matchup`/`benchmark` (command architecture §5.3) — there is no patch-notes method. The
+`item`/`matchup`/`benchmark` (`common/ports.ts`) — there is no patch-notes method. The
 planner still emits the request the design's union declares, the fetcher has an empty case for it,
 and the section renders the patch version from `PreambleInput.patch` alone without claiming to be
 degraded. *Why:* adding the port method later is one case in `preamble/assemble.ts`, not a change to
 three files — and if you are wondering why the section looks thin, that is why.
 
-**2026-08-01 — The tool surface is where three of this repo's rules meet, and two of them are
-invisible from inside `packages/context`.** Designing Tier 3 turned up that a tool result is
-subject to the snapshot's staleness rules (dota2 §6.2), the log tailer's privacy tagging
-(state-capture §4.2, chat text is `sensitive`), *and* the Realtime context budget — and that the
-third one has no owner in this package. *Why:* if you are changing anything about what a tool
-returns, check all three; the one that will bite is the token cost, because tool results
-accumulate in conversation history and are billed as input on every later turn, while the
-snapshot replaces itself.
+**2026-08-01 — anything rendered for the model is subject to three rules and two of them are
+invisible from inside this package.** Written for tool results and it transferred whole to the
+coaching brief: rendered text is subject to the snapshot's staleness rules (dota2 §6.2), the log
+tailer's privacy tagging (state-capture §4.2, chat text is `sensitive`), *and* the Realtime context
+budget. *Why:* check all three when you change what any renderer emits. The token cost used to be
+the one that bit, because tool results **accumulated** in conversation history and were billed as
+input on every later turn. A brief replaces itself like a snapshot, so that particular sting is
+gone — which is most of why coaching-architecture.md §8.2's arithmetic came out *lower* than the
+design it replaced despite adding a renderer.
 
 **2026-08-01 — realtime §5's `retention_ratio: 0.8` is not `targetAfter`, and conflating them
 compacts twice as often as intended.** They are different knobs against different triggers. 0.8 is
@@ -206,45 +235,35 @@ conclusion. Before implementing anything that references a previous turn, ask wh
 that turn has been compacted away; the answer is usually that the reference has to carry enough
 information to be falsifiable, which is why the marker is now `(unchanged since 14:12)`.
 
-**2026-08-01 — `packages/context` has three tiers and they share more vocabulary than the first one
-expects.** `tools/` landed first and declared `MonoMs`, `Observed<T>`, `Staleness`, `PrivacyPolicy`
-and the world-model reader itself; all three tiers need every one of them. They now live in
-`src/common/` and `tools/` re-exports them. *Why:* if you are adding to this package, put a type in
-`common/` the moment a second tier names it — the transitional declarations all collapse into
-`@riki/protocol` and `@riki/world-model` later, and one file to edit beats three. Duplicating
-instead is silently fine until the package index re-exports both and `tsc` reports TS2308.
+**2026-08-01 — `packages/context` has several renderers and they share more vocabulary than the
+first one expects.** `tools/` landed first and declared `MonoMs`, `Observed<T>`, `Staleness`,
+`PrivacyPolicy` and the world-model reader itself; everything needed every one of them, so they
+moved to `src/common/`. *Why:* put a type in `common/` the moment a second directory names it —
+the transitional declarations all collapse into `@riki/protocol` and `@riki/world-model` later, and
+one file to edit beats three. Duplicating instead is silently fine until the package index
+re-exports both and `tsc` reports TS2308.
 
-**2026-08-01 — the dedup memo will deadlock on itself unless you publish *after* admission.** §6.4
-wants a call registered as in-flight "before any work starts", and §4.4 makes the memo admission's
-*first* check. Do both literally and every call matches its own in-flight entry and awaits its own
-result: every command hangs until its watchdog fires, which reads like a queue bug and is not one.
-The fix is ordering, not locking — publish immediately after the admission verdict, which is still
-inside the synchronous prefix of `invoke()` (parse, resolve and `admit` are all sync), so a
-duplicate arriving a microtask later still joins. *Why:* the symptom is uniform and far from the
-cause, and the same trap is waiting in any "register before starting" cache whose lookup sits in the
-path being registered.
+*This is not hypothetical and it bit twice.* Deleting `tools/` (ADR-0023) meant moving four things
+out of it first, in **its own commit**, because `tools/testing/` was imported by every test file in
+the package — deleting first turns the whole package red at once, which is the worst position from
+which to work out what was load-bearing. And building `coaching/` re-declared
+`UNSEEN_AFTER_SECONDS`, which TS2308 caught at the index exactly as described: it is also
+`AgeFormatter`'s `unseenAfterMs`, so a second copy is a number that can drift from the one deciding
+whether a position renders as an age or as `unseen >Ns`. It imports Tier 2's now.
 
-**2026-08-01 — the effect class's limits are a ceiling, so a class default below any member's number
-is unbuildable.** `registry.ts` enforces §3.2's tighten-only rule at construction, and it fired
-immediately: §8.2 gives `get_recent_events` 200 result tokens while the `model` class default was
-120. The class default has to be the *largest* number §8.2 allows any member, with narrower commands
-tightening to their own. *Why:* the check is worth keeping precisely because it found this — but
-read it the right way round when it fires. It is usually telling you the class default is wrong, not
-that the command is.
-
-**2026-08-01 — a single erased `ToolDefinition<never, unknown>` cannot exist, because
-`ResultRenderer<R>` is contravariant in `R`.** The pipeline holds definitions monomorphically and
-knows only `unknown`; under `strictFunctionTypes` no substitution makes both the handler (covariant
-in its return) and the renderer (contravariant in its input) assignable at once. `defineTool()`
-therefore erases by *closing over* the typed pair while the generics are in scope, and the pipeline
-sees `RegisteredTool` — `decode`/`execute`/`render`, all `unknown`. *Why:* it confines the one type
-assertion in the component to a place where the value provably came from the matching codec, and it
-is the answer to "why is there not just one definition type?" if you are tempted to simplify it.
+**2026-08-01 — three learnings were deleted from this file with the code they were about.** They
+concerned the command pipeline's dedup memo, its effect-class limits, and the variance problem in
+its erased tool definition. All three were hard-won and all three are now about nothing; they are
+in git history at `8b1a902~4` if a future pull surface ever needs them. *Why:* a learning about code
+that no longer exists is worse than no learning — the next agent reads it as current and goes
+looking for the file.
 
 ## See also
 
-`docs/design/context-and-memory-architecture.md` (Tiers 1 and 2, memory, retention);
-`docs/design/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy);
-`docs/design/agent-command-execution-architecture.md` (Tier 3 — the pipeline, ports, failure
-taxonomy and budgets); `REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
-persona lives — open).
+`docs/design/context-and-memory-architecture.md` (preamble, snapshot, memory, retention — with
+three revisions marked in its header);
+`docs/design/coaching-architecture.md` (the brief, `BRIEF_PLAN`, the revised budgets, and the full
+record of what was deleted); `docs/design/dota2-state-capture-design.md` §6, §6.4 (trigger policy);
+[ADR-0023](../../../docs/adr/0023-coaching-replaces-command-execution.md);
+`REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the persona lives — open, and more
+urgent now that the preamble is the only thing shaping how Riki sounds).

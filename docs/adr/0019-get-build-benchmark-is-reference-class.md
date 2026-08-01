@@ -1,12 +1,24 @@
 # ADR-0019: `get_build_benchmark` is a `reference` command, not a `model` one
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0023](0023-coaching-replaces-command-execution.md)
 **Date:** 2026-08-01
+**Superseded:** 2026-08-01
+
+> **There are no commands, so there is no effect class to argue about.** ADR-0023 deleted agent
+> command execution.
+>
+> **The fact this ADR records survives the classification that carried it**, and it is worth
+> keeping in front of whoever builds the next thing that wants benchmark data: it comes from
+> `ReferenceDataPort`, it is an external, disk-cached, patch-keyed lookup, and **it cannot answer
+> inside a per-turn budget**. That is now a brief-assembly constraint. Benchmarks are fetched once
+> at draft into the preamble (`coaching-architecture.md` §5.3) and the comparison reaches a brief
+> as a `derived.pace*` field already computed by `packages/world-model` — never as a lookup on the
+> hot path, which is exactly the mistake this ADR was written to correct.
 
 ## Context
 
-[`agent-command-execution-architecture.md`](../design/agent-command-execution-architecture.md) §3.2
-gives every command exactly one effect class, and the class — not the command — decides concurrency,
+`agent-command-execution-architecture.md` §3.2 — deleted with the system it described — gave every
+command exactly one effect class, and the class — not the command — decided concurrency,
 deadline, consent, caching and behaviour under degradation. That table lists `get_build_benchmark`
 under `model`, whose deadline is **20 ms** because a `model` command is "a memory read wearing a
 promise".

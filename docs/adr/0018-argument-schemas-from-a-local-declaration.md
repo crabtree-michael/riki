@@ -1,12 +1,18 @@
 # ADR-0018: Command argument schemas come from a local declaration, not zod, until protocol lands
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0023](0023-coaching-replaces-command-execution.md)
 **Date:** 2026-08-01
+**Superseded:** 2026-08-01
+
+> **There are no arguments.** ADR-0023 deleted agent command execution, and with it every call the
+> model could make and every argument it could fill in. Nothing in Riki now parses a model-supplied
+> value at all — which removes the class of failure this ADR was designed around rather than
+> solving it (`coaching-architecture.md` §2.1).
 
 ## Context
 
-[`agent-command-execution-architecture.md`](../design/agent-command-execution-architecture.md) §4.2
-sets one hard requirement for a command's arguments:
+`agent-command-execution-architecture.md` — deleted with the system it described — set one hard
+requirement for a command's arguments:
 
 > **The schema and the validator must have one source.**
 

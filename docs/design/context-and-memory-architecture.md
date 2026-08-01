@@ -14,9 +14,12 @@ policy, and durable cross-match player memory. It is Tiers 1 and 2 of
 document does not have, and it lives in `packages/context/src/` per REPO_SKELETON.md §2.2.
 **Reads with:** [`state-capture-architecture.md`](state-capture-architecture.md) §7 defines the read
 interface this component consumes and should be read first.
-[`agent-command-execution-architecture.md`](agent-command-execution-architecture.md) is Tier 3 in the
-same package and shares this document's renderer (§5.1) and window budget (§7.1); its §8.2 hands
-this document the retention question it declined to settle.
+[`coaching-architecture.md`](coaching-architecture.md) is the other renderer in the same package —
+the coaching brief — and it shares this document's `render/` primitives (§5.1) and window budget
+(§7.1). **It also revises this document in three places**, and where the two disagree it wins:
+§2.5 removes the tool manifest from §4.2's prefix budget, replaces the ledger's `command` arm with a
+`brief` arm, and cuts §7.2's drop ladder from five rungs to four by deleting its one pairing rule.
+The document that used to sit here described Tier 3 and was deleted with it (ADR-0023).
 [`openai-realtime-research.md`](../research/openai-realtime-research.md) §1 and §5 supply the two
 caps everything here is sized against.
 **Out of scope:** Tier 3 command execution (same package, designed already), salience scoring and
@@ -204,11 +207,12 @@ and lets `packages/realtime` worry about the rest. Four things rule it out:
 - **The memory layer outlives the session and the snapshot does not.** A reconnect throws away the
   conversation and keeps the ledger; a compaction throws away ledger entries from the window and
   keeps them in the ledger. Those two lifetimes cannot share an object.
-- **Tier 3 already exists and already renders.** A second renderer with the same staleness rules
-  written independently would drift, and the drift would be invisible until Riki hedged a fact in
-  the snapshot and stated it flatly in a tool result. `render/` exists so there is one set of rules.
-  `agent-command-execution-architecture.md` §16 step 3 asks for exactly this and warns that doing it
-  afterwards means the two never re-converge.
+- **There is more than one renderer in this package.** A second renderer with the same staleness
+  rules written independently would drift, and the drift would be invisible until Riki hedged a fact
+  in one place and stated it flatly in the other. `render/` exists so there is one set of rules, and
+  doing it afterwards means the two never re-converge. The second renderer is now the coaching brief
+  (`coaching-architecture.md` §5.4), which composes these primitives rather than its own — §2.1 of
+  that document is explicit that only `render/` is reused and the composer is written fresh.
 
 The cost is indirection, plus one piece of tidying that the scaffold does immediately rather than
 later. `tools/` landed first and declared its own `MonoMs`, `GameClock`, `TurnId`, `CallId`,
@@ -838,11 +842,15 @@ export interface WindowPlan {
 
 Drop order, least-valuable first:
 
-1. **Command results older than the current turn.** `agent-command-execution-architecture.md` §8.2
-   recommended exactly this and left the call to `packages/realtime`; this document is the policy
-   owner and settles it. A stale answer to a question about a fight that ended ten minutes ago has
-   no residual value, while the conversation around it does.
-2. **The tool *calls* whose results were dropped, always in the same plan.** Dropping a result and
+> **⚠ Rungs 1 and 2 below no longer exist.** ADR-0023 deleted command execution, so there are no
+> command results and no calls to pair them with. `coaching-architecture.md` §2.5 replaces both with
+> a single rung — **superseded coaching briefs** — which drops entries independently, and the ladder
+> is four rungs with no ordering dependency anywhere in it. The two rungs are kept here because the
+> pairing argument is the best statement of a trap that any future paired entry would re-earn.
+
+1. ~~**Command results older than the current turn.**~~ A stale answer to a question about a fight
+   that ended ten minutes ago has no residual value, while the conversation around it does.
+2. ~~**The tool *calls* whose results were dropped, always in the same plan.**~~ Dropping a result and
    keeping the call leaves the model looking at a question it asked and never got an answer to,
    which is the vacuum tools §7.4 exists to prevent — reintroduced by the retention policy. Drop the
    pair or neither. This is the rule most likely to be got wrong by an implementation that treats
@@ -1024,13 +1032,15 @@ The division: this component decides *what should not be in the window and what 
 ratio, item ids, and the order of operations. Neither half is testable in the other's terms, which
 is why they are separate packages and why the plan is a value rather than a series of calls.
 
-### 8.5 `ReferenceDataPort` — shared with Tier 3
+### 8.5 `ReferenceDataPort` — now the only consumer
 
-The same port `agent-command-execution-architecture.md` §5.3 declares, used here for draft
-enrichment. That document noted external API enrichment has no owner in REPO_SKELETON §2.2 and that
-having two consumers strengthens the case for its own package without settling it. This document is
-the second consumer and does not settle it either — but it does add a requirement: **the cache must
-be warm-able before a session**, because §4.3's 3-second deadline is otherwise a coin flip on a cold
+Declared in `common/ports.ts` and used here for draft enrichment. It had three consumers and two of
+them were commands; ADR-0023 deleted those, which **weakens** rather than strengthens the case for
+external API enrichment having its own package — still an ownership gap in REPO_SKELETON §2.2, and
+still unsettled. What the deletion does settle is that this is the **only chance to fetch this data
+at all** (`coaching-architecture.md` §5.3), which makes the requirement below more important rather
+than less: **the cache must be warm-able before a session**, because §4.3's 3-second deadline is
+otherwise a coin flip on a cold
 cache. Patch-keyed and pre-fetched at app start, not at draft.
 
 ---
@@ -1134,11 +1144,11 @@ export interface SessionContext {
 }
 ```
 
-Wiring lives in `apps/desktop/src/main/agent/`, the directory
-`agent-command-execution-architecture.md` §9.3 proposed for the tool surface and flagged as an
-ownership gap in REPO_SKELETON §2.2. This component belongs in the same root — it is the other half
-of the same subsystem, it shares the `ReferenceDataPort` and the prefix budget with it, and
-splitting them would mean two roots that have to agree about the 16,384-token cap.
+Wiring lives in `apps/desktop/src/main/agent/`, a directory two design documents proposed and
+neither created, and which REPO_SKELETON §2.2 still lists as an ownership gap. The coaching
+subsystem takes the slot (`coaching-architecture.md` §9.3): it is the other half of the same
+subsystem, it shares the `ReferenceDataPort` and the prefix budget with this one, and splitting them
+would mean two roots that have to agree about the 16,384-token cap.
 
 ---
 
@@ -1307,11 +1317,11 @@ should have to lose an argument first.
 
 `packages/context` is REPO_SKELETON §10 step 5, and the ports it needs land in steps 4, 7 and 8. The
 order below keeps every step testable with the steps after it missing, which is the point of the
-port seam. It interleaves with `agent-command-execution-architecture.md` §16 rather than following
-it — steps 1 and 2 here are that document's step 3.
+port seam. Steps 1 and 2 landed before the coaching brief and are what it composes;
+`coaching-architecture.md` §16 is the build order for the rest.
 
 1. **`render/`** — `AgeFormatter`, `SectionComposer`, `PrivacyGate`. Nothing else can land first
-   without duplicating the staleness rules, and tools §16 step 3 warns that two renderers written
+   without duplicating the staleness rules, and two renderers written
    apart never re-converge. The shared-vocabulary half of this is already done: `common/` exists and
    `tools/` re-exports from it (§2.2).
 2. **`snapshot/`** against `fixtures/gsi/` and a fake world model, with the golden corpus. This is

@@ -84,8 +84,8 @@ it at compaction" has an answer rather than a bug.
 - **Put the memory in `packages/events`, where the novelty gate lives.** Coaching memory is a
   projection of the conversation, and moving a projection away from its source gives two copies of
   "what Riki said" that diverge the first time a compaction or a reconnect touches one. It would
-  also give the salience path a reason to know about tokens, which is the same inversion
-  `agent-command-execution-architecture.md` §9.1 refused for commands.
+  also give the salience path a reason to know about tokens — the same inversion that keeps
+  `BRIEF_PLAN` on the context side of the coaching seam (`coaching-architecture.md` §4.4).
 - **Persist the ledger by default so post-match review is free.** It holds the player's own voice
   transcript. That is a product decision with a privacy consequence and it is listed as open
   (§15.1), not assumed.

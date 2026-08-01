@@ -1,14 +1,16 @@
 # ADR-0023: Proactive coaching replaces agent command execution
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-01
+**Accepted:** 2026-08-01, with the implementation. ADR-0011, ADR-0018 and ADR-0019 are marked
+Superseded as of this acceptance.
 
 ## Context
 
 Riki's Tier 3 was a *pull* surface: the rolling snapshot stays small, and when the agent needs
 detail it issues a function call — `get_enemy_detail`, `read_screen` — which
-[`agent-command-execution-architecture.md`](../design/agent-command-execution-architecture.md)
-turns into an answer through a parse/validate/admit/queue/execute/render pipeline. It is built:
+`agent-command-execution-architecture.md` turned into an answer through a
+parse/validate/admit/queue/execute/render pipeline. It was built:
 ~5,460 lines in `packages/context/src/tools/`, a `ToolCallPort` seam in `packages/realtime`, and
 the overlay's `Acting` and `Confirming` states, which exist for nothing else.
 
@@ -36,8 +38,14 @@ We delete the agent command execution system in its entirety — `packages/conte
 `packages/events` decides *whether and why* Riki speaks (detection, salience, and five gates);
 `packages/context/src/coaching/` decides *what the model is shown for that reason* — a focused,
 budgeted **coaching brief** rendered from the world model through the existing `render/`
-primitives. The seam between them is a list of `BriefSectionId`s declared in an advice catalogue,
-which is the same one-file-per-capability extension point the tool registry had.
+primitives. The seam between them is `BRIEF_PLAN`, a lookup table from event id to
+`BriefSectionId`s — the same one-file-per-capability extension point the tool registry had, and the
+one genuinely good property of it worth carrying over.
+
+**The table lives on the `packages/context` side of that seam**, which is the opposite of what an
+earlier draft of the design proposed and is settled here: section priority interacts with the token
+budget, and `packages/events` must not acquire a reason to know about tokens
+([`coaching-architecture.md`](../design/coaching-architecture.md) §4.4).
 
 **Nothing is repurposed and nothing is kept alongside.** The pipeline, registry, manifest, queue,
 executor, handlers, effect classes and failure taxonomy are removed in full — no part of the system
@@ -77,7 +85,7 @@ make Riki annoying enough to uninstall. Making it the primary path raises the st
 which is why the quiet trigger ships with a conservative default and why the local `quiet-mode`
 phrase — parseable without the model — becomes the most important control in the product.
 
-**On acceptance**, this supersedes [ADR-0011](0011-tool-manifest-frozen-per-session.md) (there is no
+**On acceptance** — which is now, with the implementation — this supersedes [ADR-0011](0011-tool-manifest-frozen-per-session.md) (there is no
 manifest), [ADR-0018](0018-argument-schemas-from-a-local-declaration.md) (there are no arguments) and
 [ADR-0019](0019-get-build-benchmark-is-reference-class.md) (there are no commands; the fact it
 records survives as a brief-assembly constraint). It strengthens [ADR-0003](0003-read-only-observation-only.md),
