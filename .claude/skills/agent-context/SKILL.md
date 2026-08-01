@@ -132,6 +132,33 @@ and the world-model reader itself; all three tiers need every one of them. They 
 `@riki/protocol` and `@riki/world-model` later, and one file to edit beats three. Duplicating
 instead is silently fine until the package index re-exports both and `tsc` reports TS2308.
 
+**2026-08-01 — the dedup memo will deadlock on itself unless you publish *after* admission.** §6.4
+wants a call registered as in-flight "before any work starts", and §4.4 makes the memo admission's
+*first* check. Do both literally and every call matches its own in-flight entry and awaits its own
+result: every command hangs until its watchdog fires, which reads like a queue bug and is not one.
+The fix is ordering, not locking — publish immediately after the admission verdict, which is still
+inside the synchronous prefix of `invoke()` (parse, resolve and `admit` are all sync), so a
+duplicate arriving a microtask later still joins. *Why:* the symptom is uniform and far from the
+cause, and the same trap is waiting in any "register before starting" cache whose lookup sits in the
+path being registered.
+
+**2026-08-01 — the effect class's limits are a ceiling, so a class default below any member's number
+is unbuildable.** `registry.ts` enforces §3.2's tighten-only rule at construction, and it fired
+immediately: §8.2 gives `get_recent_events` 200 result tokens while the `model` class default was
+120. The class default has to be the *largest* number §8.2 allows any member, with narrower commands
+tightening to their own. *Why:* the check is worth keeping precisely because it found this — but
+read it the right way round when it fires. It is usually telling you the class default is wrong, not
+that the command is.
+
+**2026-08-01 — a single erased `ToolDefinition<never, unknown>` cannot exist, because
+`ResultRenderer<R>` is contravariant in `R`.** The pipeline holds definitions monomorphically and
+knows only `unknown`; under `strictFunctionTypes` no substitution makes both the handler (covariant
+in its return) and the renderer (contravariant in its input) assignable at once. `defineTool()`
+therefore erases by *closing over* the typed pair while the generics are in scope, and the pipeline
+sees `RegisteredTool` — `decode`/`execute`/`render`, all `unknown`. *Why:* it confines the one type
+assertion in the component to a place where the value provably came from the matching codec, and it
+is the answer to "why is there not just one definition type?" if you are tempted to simplify it.
+
 ## See also
 
 `docs/design/context-and-memory-architecture.md` (Tiers 1 and 2, memory, retention);

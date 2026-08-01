@@ -243,10 +243,16 @@ export type ToolEffect = 'model' | 'reference' | 'observe' | 'consequential';
 
 | Class | Commands (dota2 §6.3) | Reads | Concurrency | Deadline *(tunable)* | Consent | Cache |
 |---|---|---|---|---|---|---|
-| `model` | `get_enemy_detail`, `get_timings`, `get_recent_events`, `get_build_benchmark` | The current snapshot, in-process | Unbounded — it is a memory read | 20 ms | none | per turn |
+| `model` | `get_enemy_detail`, `get_timings`, `get_recent_events`, ~~`get_build_benchmark`~~ † | The current snapshot, in-process | Unbounded — it is a memory read | 20 ms | none | per turn |
 | `reference` | `get_item_info`, `get_matchup_advice` | Cached external data, patch-keyed | 2 | 400 ms | none | per patch, on disk |
 | `observe` | `get_minimap_summary` | Requests a fresh CV pass, then reads the snapshot | 1 | 600 ms | none | per turn |
 | `consequential` | `read_screen` | Sends pixels off the machine | 1, and at most one per turn | 2500 ms | per call | never |
+
+† **Correction, from implementation:** `get_build_benchmark` is `reference`, not `model`. Its answer
+comes from `ReferenceDataPort.benchmark()` (§5.3, §16 step 5), so a 20 ms deadline could only ever
+time out — and the tighten-only rule below means no per-command override can rescue it.
+[ADR-0019](../adr/0019-get-build-benchmark-is-reference-class.md) records the reasoning. The rest of
+the table stands.
 
 Two of those rows carry a decision:
 

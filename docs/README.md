@@ -68,6 +68,8 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0015](adr/0015-ephemeral-client-secret-minted-in-main.md) | Main mints the ephemeral client secret  | Accepted                                       |
 | [0016](adr/0016-mic-open-for-the-match-gate-in-the-graph.md) | Mic open per match; the gate is ours  | Accepted                                       |
 | [0017](adr/0017-server-vad-on-with-response-creation-ours.md) | Server VAD on, response creation ours | Accepted, on one unverified claim              |
+| [0018](adr/0018-argument-schemas-from-a-local-declaration.md) | Argument schemas from a local declaration, not zod yet | Accepted, migrate when protocol lands |
+| [0019](adr/0019-get-build-benchmark-is-reference-class.md) | `get_build_benchmark` is a `reference` command | Accepted, corrects the design doc          |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

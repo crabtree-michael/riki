@@ -11,18 +11,57 @@
  * file imports them and deletes its copies.
  */
 
-import type { GameClock, MonoMs, Unsubscribe } from './types.js';
+import type { GameClock, HeroId, MonoMs, Observed, Unsubscribe } from './types.js';
 
-/** Opaque here. `packages/world-model` owns its shape; this package only reads through it. */
+/** A dotted path into the world state, e.g. `self.hp` or `enemies.sf.position`. */
+export type FieldPath = string & { readonly __brand: 'FieldPath' };
+
+/**
+ * The draft, as this package needs it. Tier 3 resolves a spoken hero name against it so that
+ * `get_enemy_detail("pudge")` in a game with no Pudge answers "Pudge isn't in this game" rather
+ * than describing a hero nobody is playing (command architecture §4.3).
+ */
+export interface Roster {
+  readonly self: HeroId | undefined;
+  readonly allies: readonly HeroId[];
+  readonly enemies: readonly HeroId[];
+}
+
+/**
+ * The read view. `packages/world-model` owns its real shape; this is the part this package reads.
+ *
+ * The load-bearing detail is `get()`: it hands back the fact *with* its staleness, confidence and
+ * provenance, and there is no accessor that returns a bare `T`. That is mildly annoying at every
+ * call site, which is the intended effect — it is what makes "a stale CV fact renders with its age
+ * or it does not render" (dota2 §4 rule 3) structural rather than remembered.
+ *
+ * Mirrors `WorldSnapshot` in packages/world-model/src/snapshot.ts, except that reads come back as
+ * `Observed<T>` rather than that package's `StaleFact<T>`. The two carry the same information;
+ * collapsing them is one adapter in the composition root when step 4 lands, and §11 of the command
+ * architecture records it.
+ */
 export interface WorldSnapshot {
   readonly version: number;
   readonly now: MonoMs;
   readonly clock: GameClock | null;
+  get<T>(path: FieldPath): Observed<T> | undefined;
+  roster(): Roster;
+  /** Drives `unseen >20s:` — heroes with no fresh position, which is not the same as absent ones. */
+  unseenFor(seconds: number): readonly HeroId[];
+}
+
+/** One field's movement between two versions. `undefined` on either side means never-observed. */
+export interface FieldChange {
+  readonly path: FieldPath;
+  readonly before: Observed<unknown> | undefined;
+  readonly after: Observed<unknown> | undefined;
 }
 
 export interface WorldDelta {
   readonly fromVersion: number;
   readonly toVersion: number;
+  readonly atGameClock: GameClock | null;
+  readonly changes: readonly FieldChange[];
 }
 
 export interface WorldModelReader {

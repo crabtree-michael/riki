@@ -96,6 +96,16 @@ silently passed when first written. Two causes, both non-obvious:
   expressed in `boundaries/external` as well. `element-types` still covers relative imports
   within an element, which is why both blocks exist.
 
+  **Correction, 2026-08-01:** that second bullet is only true while the import does not resolve.
+  Once the importing package actually declares the dependency — which is the only situation the
+  rule needs to catch — `eslint-import-resolver-typescript` resolves `@riki/realtime` to
+  `packages/realtime/**`, boundaries matches it as a **`package` element**, and it is
+  `element-types` that fires while the `external` rule stays silent. Verified by adding the
+  dependency, linting, and removing it again. So: express package-to-package rules in
+  **`element-types`** (as the `world-model → realtime` rule already did), and reserve
+  `boundaries/external` for genuine node_modules packages such as `electron` and `openai`. A rule
+  written only in `external` will pass on a real violation.
+
 *Why:* if you add or edit a boundary rule, write a throwaway file that violates it, run
 `pnpm exec eslint <file>`, confirm the error, then delete it. Ten seconds, and it is the
 difference between a rule and a comment.
@@ -164,6 +174,13 @@ binary to a scratch remote and confirm the object appears under its `lfs/objects
 row, which turns the wide tables in the design docs into 700-column lines, and reflowing prose
 someone else hand-wrapped produces huge diffs that collide with parallel work. If you find
 markdown that looks unformatted, that is why — leave it.
+
+**2026-08-01 — verifying a boundary rule needs the dependency to actually be installed.** The
+recipe in the bullet above ("write a violating file, run `pnpm exec eslint`, confirm the error") is
+necessary but not sufficient for a *cross-package* rule: with no dependency declared, the import
+does not resolve and the rule reports success on a file written specifically to violate it. Add the
+dep to the package's `package.json`, `pnpm install`, lint, confirm the error, then revert both.
+*Why:* this is how the correction above was found — the rule looked verified and was not.
 
 ## See also
 

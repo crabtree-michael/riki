@@ -11,6 +11,7 @@
 
 import type {
   CallFingerprint,
+  CallId,
   CancelReason,
   CancelSignal,
   ConsentRequest,
@@ -59,6 +60,8 @@ export type ToolHandler<A, R> = (args: A, ctx: ToolContext) => Promise<ToolOutco
 export interface ToolContext {
   readonly ports: ToolPorts;
   readonly scope: TurnScope;
+  /** This call's id. `ConsequentialActivity` is keyed by it, so the indicator names the right call. */
+  readonly callId: CallId;
   readonly now: MonoMs;
   /** Already the minimum of the command's own limit and what is left of the turn (§6.3). */
   readonly deadlineAt: MonoMs;
@@ -102,11 +105,37 @@ export interface ManifestEnvironment {
   readonly readScreenEnabled: boolean;
 }
 
+/**
+ * A definition with its type parameters erased, which is the form the pipeline runs.
+ *
+ * The pipeline is generic over nothing — the executor holds one of these and knows only `unknown`.
+ * A single erased `ToolDefinition<never, unknown>` cannot express that: `ResultRenderer<R>` is
+ * contravariant in `R`, so under `strictFunctionTypes` no substitution makes both the handler and
+ * the renderer assignable at once. `defineTool()` does the erasure by closing over the typed pair
+ * while `A` and `R` are still in scope, which confines the one assertion in this component to a
+ * place where the value flowing through provably came from the matching codec.
+ */
+export interface RegisteredTool {
+  readonly name: ToolName;
+  readonly effect: ToolEffect;
+  readonly summary: string;
+  readonly limits: ToolLimits;
+  readonly needs: readonly PortId[];
+  readonly schema: JsonSchemaObject;
+  /** `[field, kind]` for every `hero` / `item` / `region` argument, for the resolver (§4.3). */
+  readonly subjects: readonly (readonly [string, 'hero' | 'item' | 'region'])[];
+  decode(raw: unknown): ToolOutcome<unknown>;
+  execute(args: unknown, ctx: ToolContext): Promise<ToolOutcome<unknown>>;
+  render(value: unknown, ctx: RenderContext): RenderedResult;
+}
+
 export interface ToolRegistry {
-  register<A, R>(definition: ToolDefinition<A, R>): void;
-  lookup(name: string): ToolDefinition<never, unknown> | undefined;
+  register(tool: RegisteredTool): void;
+  lookup(name: string): RegisteredTool | undefined;
   names(): readonly ToolName[];
-  manifest(env: ManifestEnvironment): ToolManifest;
+  all(): readonly RegisteredTool[];
+  /** Computed once at `match_started` and frozen (ADR-0011). */
+  manifest(env: ManifestEnvironment, frozenAt: MonoMs, maxTokens: number): ToolManifest;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -181,15 +210,30 @@ export type QueueOutcome<T> =
   | { readonly ran: false; readonly failure: ToolFailure };
 
 /**
+ * One unit of queued work.
+ *
+ * ⚠ The scope and the deadline are here rather than being implied, which is a change from the
+ * four-positional-parameter `enqueue` this file first declared. The queue needs the scope to derive
+ * the `CancelSignal` it hands to `run`, and it needs the effective deadline in order to release a
+ * lane slot when a handler hangs — without the latter, one hung `observe` handler holds the single
+ * `observe` slot for the rest of the match, which is the failure §7.4 exists to make impossible.
+ */
+export interface QueueEntry<T> {
+  readonly call: ParsedCall;
+  readonly effect: ToolEffect;
+  readonly scope: TurnScope;
+  /** min(the command's own limit, what is left of the turn) — §6.3. */
+  readonly deadlineAt: MonoMs;
+  /** A property rather than a method: the queue destructures it, and a method would lose `this`. */
+  readonly run: (signal: CancelSignal) => Promise<T>;
+}
+
+/**
  * Per effect class, not global: a `model` read waiting behind a `read_screen` would be a memory
  * access queued behind a network round trip. Limits are the §3.2 table.
  */
 export interface ToolQueue {
-  enqueue<T>(
-    call: ParsedCall,
-    effect: ToolEffect,
-    run: (signal: CancelSignal) => Promise<T>,
-  ): Promise<QueueOutcome<T>>;
+  enqueue<T>(entry: QueueEntry<T>): Promise<QueueOutcome<T>>;
   cancel(turnId: TurnId, reason: CancelReason): void;
   depth(): ReadonlyMap<ToolEffect, number>;
 }
@@ -231,12 +275,25 @@ export interface ResultRenderer<R> {
   render(value: R, ctx: RenderContext): RenderedResult;
 }
 
-/** Illustrative handler return shape, and the reason `Observed<T>` exists (§4.5). */
+/**
+ * What `get_enemy_detail` hands the renderer, and the reason `Observed<T>` exists (§4.5).
+ *
+ * Every field is optional and every present field is `Observed`, which encodes the two distinctions
+ * the product cannot afford to lose: **absent means never observed**, which is not the same as
+ * observed-to-be-absent, and a present value always arrives with the age and confidence that decide
+ * whether it may be spoken at all.
+ *
+ * `lastSeen` is a *named area*, not coordinates, and it is read from a derived field the world model
+ * owns — a coach says "bot lane", not "(4212, 1088)". If that field does not exist yet the value is
+ * simply absent, which is the correct rendering of not knowing (§14: a command that needs data the
+ * model does not have is a `packages/world-model` change, not a change here).
+ */
 export interface EnemyDetail {
   readonly hero: HeroId;
   readonly level?: Observed<number>;
   readonly alive?: Observed<boolean>;
-  readonly lastSeen?: Observed<{ readonly region: RegionId }>;
+  readonly respawnIn?: Observed<number>;
+  readonly lastSeen?: Observed<string>;
   readonly itemsSeen: readonly Observed<ItemId>[];
 }
 

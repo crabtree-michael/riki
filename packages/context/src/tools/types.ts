@@ -198,6 +198,15 @@ export interface ResultMemo {
   set(fp: CallFingerprint, result: ToolResultMessage): void;
   /** A call already running for this fingerprint — join it rather than starting a second (§6.4). */
   inflight(fp: CallFingerprint): Promise<ToolResultMessage> | undefined;
+  /**
+   * Register a call as running, before any of its work starts.
+   *
+   * `inflight` is only useful if something publishes to it, and *when* it publishes decides
+   * whether deduplication works at all: the duplicate the model emits under interruption arrives
+   * a microtask or two behind the original, so a registration that waited for the handler to start
+   * would miss exactly the case §6.4 exists for.
+   */
+  begin(fp: CallFingerprint, running: Promise<ToolResultMessage>): void;
 }
 
 // -----------------------------------------------------------------------------------------------
