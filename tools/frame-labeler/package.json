@@ -1,0 +1,11 @@
+{
+  "name": "@riki-tools/frame-labeler",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Annotate frames for the CV corpus in fixtures/frames.",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

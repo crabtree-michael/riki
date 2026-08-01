@@ -1,0 +1,18 @@
+# Normalise line endings — Windows is a first-class target (REPO_SKELETON.md §8.2).
+* text=auto eol=lf
+
+# Recorded frames are large binaries and live in git-lfs (REPO_SKELETON.md §8.3).
+# Everything else, including multi-MB JSONL match recordings, is committed plainly so
+# diffs stay reviewable.
+fixtures/frames/**/*.png filter=lfs diff=lfs merge=lfs -text
+fixtures/frames/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+fixtures/frames/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+fixtures/frames/**/*.webp filter=lfs diff=lfs merge=lfs -text
+
+# Fixture audio for the resampling tests.
+fixtures/**/*.wav filter=lfs diff=lfs merge=lfs -text
+
+# Generated files: collapse in review, they are verified by `pnpm codegen:check`.
+*.generated.ts linguist-generated=true
+*.generated.json linguist-generated=true
+pnpm-lock.yaml linguist-generated=true -diff

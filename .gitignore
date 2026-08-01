@@ -1,2 +1,35 @@
 # Personal Claude Code overrides — not shared with collaborators
 .claude/settings.local.json
+
+# Secrets. REPO_SKELETON.md §7.1: this line is the actual protection for the API key;
+# gitleaks is only the backstop, and a test asserts this entry exists.
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+.vite/
+
+# Rust
+target/
+
+# Generated protocol artefacts are committed, but codegen scratch space is not
+.codegen-tmp/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json

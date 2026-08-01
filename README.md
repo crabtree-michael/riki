@@ -2,36 +2,61 @@
 
 Riki is invisible until needed.
 
-## Development environment
+A voice agent that watches a live Dota 2 match and talks to you about it — a click-through
+overlay chip, a push-to-talk hotkey, and no in-game footprint at all. It observes only what the
+player can already see, through channels Valve provides: Game State Integration, the client's
+console log, and screen capture.
 
-This repo ships a shared Claude Code configuration in `.claude/settings.json`. It
-registers Anthropic's official plugin marketplace and enables the
-[Superpowers](https://github.com/obra/superpowers) plugin (v6.2.0) at project
-scope, so every collaborator gets the same agent workflows by default.
+**Status: skeleton.** The layout, gates, and configuration exist; the features do not. See
+[REPO_SKELETON.md §10](REPO_SKELETON.md) for what lands next.
 
-Superpowers is a third-party skills library by Jesse Vincent, distributed through
-Anthropic's curated `claude-plugins-official` marketplace (pinned to a specific
-commit there). It adds 14 skills covering brainstorming, writing and executing
-plans, red/green TDD, systematic debugging, subagent-driven development, code
-review, git worktrees, and verification before completion. Cost is ~688 tokens
-always-on, with each skill's body loaded only when it fires.
-
-### Setup
-
-Claude Code prompts you to install project plugins the first time you trust this
-folder. To do it yourself:
+## Quick start
 
 ```shell
-claude plugin install superpowers@claude-plugins-official --scope project
+pnpm setup     # deps, fixtures, hooks, and a .env from the template
+pnpm check     # lint + format + typecheck + test — what CI runs
 ```
 
-Then run `/reload-plugins` (or restart) to activate it. The plugin ships skills
-only (no slash commands); Claude picks them up on its own, and the
-`using-superpowers` skill is the entry point that explains the rest.
+No Dota 2, microphone, GPU, or OpenAI API key required. That is enforced, not aspirational: no
+test may depend on any of them.
 
-To opt out for yourself without changing the shared config, disable it in
-`.claude/settings.local.json` (gitignored):
+## Layout
 
-```json
-{ "enabledPlugins": { "superpowers@claude-plugins-official": false } }
-```
+| Directory       | What lives there                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop/` | The Electron app: lifecycle, tray, hotkeys, overlay window, sidecar supervisor. Deliberately thin.                   |
+| `packages/`     | The testable core — GSI, world model, context, events, realtime, audio, config, telemetry, and the protocol contract |
+| `crates/`       | The Rust capture/CV sidecar, a separate process with a hard perf budget                                              |
+| `fixtures/`     | Recorded sessions, frames, and transcripts. What makes the repo workable without a game running                      |
+| `tools/`        | Dev-only executables — recorders, replayers, labellers. Nothing here ships                                           |
+| `bench/`        | CV micro-benchmarks (CI-gated) and the frame-time harness (manual, release gate)                                     |
+| `docs/`         | Design, research, decisions, runbooks — [start here](docs/README.md)                                                 |
+
+Full layout, testing strategy, lint gates, and the reasoning behind all of it:
+[REPO_SKELETON.md](REPO_SKELETON.md).
+
+## Commands
+
+| Command           | Does                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| `pnpm setup`      | One command for a fresh clone                                           |
+| `pnpm check`      | lint + format + typecheck + test + codegen-clean. Run before committing |
+| `pnpm test`       | Vitest + `cargo test`. No game, no network, no GPU, no API key          |
+| `pnpm dev:replay` | The whole app driven from fixtures. No Dota and no API key required     |
+| `pnpm dev`        | Electron + Vite HMR + `cargo watch`                                     |
+
+The canonical list is [REPO_SKELETON.md §8.1](REPO_SKELETON.md). Commands whose subsystem is not
+built yet print what they are blocked on instead of failing obscurely.
+
+## Contributing
+
+Humans: [CONTRIBUTING.md](CONTRIBUTING.md). Agents: [AGENTS.md](AGENTS.md).
+
+## Development environment
+
+This repo ships a shared Claude Code configuration in `.claude/settings.json`. It registers
+Anthropic's official plugin marketplace and enables the
+[Superpowers](https://github.com/obra/superpowers) plugin at project scope, so every
+collaborator gets the same agent workflows by default. The reasoning is in
+[ADR-0007](docs/adr/0007-superpowers-plugin-enabled-by-default.md); setup and opt-out are in
+[docs/runbooks/claude-plugin-setup.md](docs/runbooks/claude-plugin-setup.md).

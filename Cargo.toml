@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/riki-vision",
+    "crates/riki-capture",
+    "crates/riki-cv",
+    "crates/riki-ipc",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+riki-capture = { path = "crates/riki-capture" }
+riki-cv = { path = "crates/riki-cv" }
+riki-ipc = { path = "crates/riki-ipc" }
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# The sidecar has a perf budget (state capture design §1): ≤3% of one CPU core average,
+# with no measurable FPS delta. Release builds are optimised accordingly.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# Benchmarks need symbols to be readable in a profiler.
+[profile.bench]
+debug = true

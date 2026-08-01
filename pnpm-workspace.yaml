@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+# Both need a postinstall to fetch/link their platform binary: esbuild backs Vitest,
+# lefthook installs the git hooks (REPO_SKELETON.md §6.1).
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  # Native resolver binary behind eslint-import-resolver-typescript.
+  unrs-resolver: true

@@ -1,0 +1,16 @@
+{
+  "name": "@riki/realtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI Realtime session: transport, event bus, barge-in, truncation policy, cost accounting",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

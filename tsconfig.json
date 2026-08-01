@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Solution-style root: it builds nothing itself, but it is also the project ESLint falls
+  // back to for root-level config files, so it has to carry the strict options.
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "apps/desktop" },
+    { "path": "packages/audio" },
+    { "path": "packages/config" },
+    { "path": "packages/context" },
+    { "path": "packages/events" },
+    { "path": "packages/gsi" },
+    { "path": "packages/log-tail" },
+    { "path": "packages/protocol" },
+    { "path": "packages/realtime" },
+    { "path": "packages/telemetry" },
+    { "path": "packages/world-model" },
+    { "path": "tools/atlas-build" },
+    { "path": "tools/frame-labeler" },
+    { "path": "tools/gsi-record" },
+    { "path": "tools/gsi-replay" },
+    { "path": "tools/setup-gsi-cfg" },
+    { "path": "test" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@riki-tools/atlas-build",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Build hero, item, and digit template atlases per HUD scale.",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

@@ -1,0 +1,22 @@
+node_modules
+dist
+out
+target
+coverage
+pnpm-lock.yaml
+fixtures/frames
+*.generated.ts
+*.generated.json
+
+# Markdown is owned by markdownlint, not Prettier — a deliberate narrowing of
+# REPO_SKELETON.md §6.1's "Prettier formats TS/JSON/MD/YAML".
+#
+# The docs are the primary artefact of this repo right now, hand-wrapped at ~95 columns with
+# tables sized for reading in a terminal. Prettier pads every table cell to the widest row,
+# which turns a readable table into a 700-column line, and it rewrites `*emphasis*` to
+# `_emphasis_` for no gain. Reflowing prose someone else wrote also produces enormous diffs
+# that collide with agents working in the same file.
+#
+# One tool still owns markdown, so §6.1's actual point — nobody has to work out which
+# formatter owns a file — holds.
+*.md

@@ -43,7 +43,7 @@ Shared limits for the `gpt-realtime` family:
 
 > ⚠️ Several third-party blog posts still cite a 128k context window for the Realtime API.
 > That is wrong for the current models — OpenAI's own model page and developer notes both
-> say 32k. Budget accordingly; see [context](#5-context-management-the-real-constraint).
+> say 32k. Budget accordingly; see [context](#5-context-management--the-real-constraint).
 
 ---
 

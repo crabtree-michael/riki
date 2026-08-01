@@ -1,12 +1,14 @@
 # Riki — Repository Skeleton Proposal
 
-**Status:** Proposal. Nothing in this document has been scaffolded yet.
+**Status:** Scaffolded. The layout, gates, and configuration described here exist in the repo;
+the packages and crates are skeletons awaiting the work in §10 steps 2 onward.
 **Scope:** Directory layout, testing strategy, linting and code-quality gates, environment
 configuration, and the build/dev workflow for the Riki codebase.
-**Out of scope:** Product design (see [`docs/ui-design.md`](docs/ui-design.md)), state capture
-architecture (see [`docs/dota2-state-capture-design.md`](docs/dota2-state-capture-design.md)),
+**Out of scope:** Product design (see [`docs/design/ui-design.md`](docs/design/ui-design.md)),
+state capture architecture (see
+[`docs/design/dota2-state-capture-design.md`](docs/design/dota2-state-capture-design.md)),
 and the Realtime API integration decision (see
-[`docs/openai-realtime-research.md`](docs/openai-realtime-research.md)).
+[`docs/research/openai-realtime-research.md`](docs/research/openai-realtime-research.md)).
 
 This document is written for the agents who will build Riki. Read §1 and §2 to know where your
 work goes, §5 to know what "tested" means here, §9 for the definition of done, and §13 for the
@@ -297,6 +299,7 @@ truncation, salience scoring, cooldown and novelty gates, calibration solve, tem
 scoring, audio RMS and envelope math.
 
 **Tier 2 — golden.** Committed expected outputs, reviewed as diffs.
+
 - Snapshot renderer → `fixtures/golden/`. Format changes should show up as a readable diff,
   because the format *is* the interface to the LLM.
 - CV detections → `insta` snapshots against `fixtures/frames/`, with an **F1 floor** rather than
@@ -399,6 +402,13 @@ report-only elsewhere.
 
 Two tools, one per language, doing formatting and linting. No Biome-plus-ESLint-plus-Prettier
 sprawl; agents should not have to work out which formatter owns a file.
+
+**One narrowing, decided during scaffolding: Prettier does not format markdown.** `*.md` is in
+`.prettierignore` and markdownlint owns it alone. Prettier pads every table cell to the widest
+row, which turns the wide tables throughout these docs into 700-column lines, and reflowing
+prose someone else hand-wrapped produces large diffs that collide with agents working in the
+same file. One tool still owns markdown, so the rule above still holds. The rationale is
+repeated in `.prettierignore` so nobody re-adds it.
 
 ### 6.2 Rules that encode design decisions
 
@@ -575,6 +585,7 @@ Recorded frames are binary and large; JSONL fixtures are small and diff well.
 Extends `AGENTS.md` rather than replacing it.
 
 **Before you start**
+
 - Read the spec section for your area (§2.2 has the mapping).
 - Skim your area's skill in `.claude/skills/` (§13.3). It should already have loaded; it is
   shorter than the spec and it carries what previous agents got wrong.
@@ -582,12 +593,14 @@ Extends `AGENTS.md` rather than replacing it.
 - `git pull`. Others commit to `main` while you work.
 
 **While you work**
+
 - Stay in your directory. If your task needs a change in someone else's package, that is usually a
   sign the seam is in the wrong place — say so in your report rather than reaching across.
 - Touching `packages/protocol` is a coordination event (§4). Say so loudly.
 - Add the fixture alongside the code. A parser without a fixture is untestable by the next agent.
 
 **Before you commit**
+
 - `pnpm check` passes.
 - New behaviour has a test at the lowest tier that can catch it (§5.3).
 - If you added a design decision, it is an ADR — not a comment.

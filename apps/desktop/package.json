@@ -1,0 +1,10 @@
+{
+  "name": "@riki/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Electron application: lifecycle, tray, hotkeys, overlay window, sidecar supervisor",
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

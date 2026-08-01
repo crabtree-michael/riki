@@ -1,0 +1,39 @@
+# Fixtures
+
+`fixtures/` is a first-class directory, not a test subfolder: multiple packages, both
+languages, and the dev tools all read from it (REPO_SKELETON.md §2.1).
+
+It exists because of one rule (§5.2):
+
+> No test may require a running Dota 2 client, a real microphone, a GPU, or a live OpenAI
+> session. Every external input has a fixture and a fake.
+
+Agents cannot run Dota 2, cannot use a real microphone, and should not spend money on live
+Realtime sessions. Without fixtures every task would end in "untested, please check".
+
+**Add the fixture alongside the code.** A parser without a fixture is untestable by the next
+agent (§9).
+
+## `gsi/`
+
+Recorded GSI sessions, JSONL, one line per POST with a timestamp. Committed plainly — a full match is a few MB and the diffs are reviewable. Recorded by tools/gsi-record, replayed by FakeGsiSource and tools/gsi-replay.
+
+## `console-log/`
+
+Captured Dota console.log excerpts, including a rotation boundary. Scrub anything you would not want committed: these contain chat.
+
+## `frames/`
+
+Hand-labelled screenshots plus label JSON, stored in git-lfs (see .gitattributes). Grow this corpus deliberately, weighted toward hard frames — chaotic teamfights, not clean laning. Tests that need frames skip with a clear message when the LFS objects are absent.
+
+## `realtime/`
+
+Recorded Realtime event transcripts, replayed by FakeRealtimeTransport. No live session is ever required by a test.
+
+## `golden/`
+
+Expected snapshot-renderer output. The format is the interface to the LLM, so changes show up here as a readable diff.
+
+## `protocol/`
+
+The shared corpus both languages parse in the Tier 3 contract test: TS encodes → Rust decodes → Rust re-encodes → TS decodes → deep-equal.

@@ -75,7 +75,34 @@ should be worked, promote it into the body as a rule. Full rules: `REPO_SKELETON
 
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — A lint rule you cannot see fail is decoration.** The `boundaries/*` rules in
+`eslint.config.js` are how §6.2's design decisions actually hold, and three of the four
+silently passed when first written. Two causes, both non-obvious:
+
+- Boundary rules only fire on imports that **resolve**. Under NodeNext the codebase writes
+  `./foo.js` for `./foo.ts`, which the default resolver cannot follow, so the rule sees
+  nothing and reports success. `eslint-import-resolver-typescript` is configured under
+  `settings['import/resolver']` for exactly this; do not remove it.
+- A cross-package import written by name (`@riki/realtime`) is **external** to boundaries, not
+  an element, so `boundaries/element-types` never sees it. Package-to-package rules have to be
+  expressed in `boundaries/external` as well. `element-types` still covers relative imports
+  within an element, which is why both blocks exist.
+
+*Why:* if you add or edit a boundary rule, write a throwaway file that violates it, run
+`pnpm exec eslint <file>`, confirm the error, then delete it. Ten seconds, and it is the
+difference between a rule and a comment.
+
+**2026-08-01 — `pnpm check` runs green without a Rust toolchain.** The cargo steps skip with a
+`[cargo] skipped …` notice instead of failing (`scripts/cargo.mjs`), so TypeScript-only work is
+not blocked on installing rustup. *Why:* a green check does **not** mean the Rust side built.
+Read the output, and if you touched `crates/`, either install the toolchain or say plainly in
+your commit message that CI is the first real check of it.
+
+**2026-08-01 — Prettier does not format markdown here, deliberately.** `*.md` is in
+`.prettierignore`; markdownlint owns it. *Why:* Prettier pads every table cell to the widest
+row, which turns the wide tables in the design docs into 700-column lines, and reflowing prose
+someone else hand-wrapped produces huge diffs that collide with parallel work. If you find
+markdown that looks unformatted, that is why — leave it.
 
 ## See also
 

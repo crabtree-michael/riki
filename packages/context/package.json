@@ -1,0 +1,15 @@
+{
+  "name": "@riki/context",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Snapshot renderer, agent tool surface, and session preamble assembly",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@riki-tools/gsi-record",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Capture a live GSI session to a fixture file.",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

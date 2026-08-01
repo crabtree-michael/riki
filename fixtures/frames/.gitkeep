@@ -1,0 +1,1 @@
+# Hand-labelled screenshots plus label JSON, stored in git-lfs (see .gitattributes). Grow this corpus deliberately, weighted toward hard frames — chaotic teamfights, not clean laning. Tests that need frames skip with a clear message when the LFS objects are absent.

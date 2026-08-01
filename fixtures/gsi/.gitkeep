@@ -1,0 +1,1 @@
+# Recorded GSI sessions, JSONL, one line per POST with a timestamp. Committed plainly — a full match is a few MB and the diffs are reviewable. Recorded by tools/gsi-record, replayed by FakeGsiSource and tools/gsi-replay.

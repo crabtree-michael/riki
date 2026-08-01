@@ -1,0 +1,25 @@
+{
+  // House style is set by the existing design corpus, not by this file. The rules turned off
+  // below are ones that corpus deliberately breaks; the rest stay on so new markdown stays
+  // consistent with it.
+  "default": true,
+
+  "MD013": false, // line length — tables in the design docs exceed any sane limit
+  "MD024": { "siblings_only": true }, // repeated headings are fine across sections
+  "MD033": false, // inline HTML
+  "MD041": false, // first line need not be a top-level heading
+  "MD046": { "style": "fenced" },
+
+  // The docs use fenced blocks for ASCII architecture diagrams and directory trees, which
+  // have no language to declare.
+  "MD040": false,
+
+  // Bold lead-ins ("**Before you start**") group short lists without inflating the heading
+  // outline, and numbered lists continue across prose between items. Both are used
+  // consistently throughout the corpus.
+  "MD036": false,
+  "MD029": false,
+
+  // Mixed bullet markers appear inside nested option lists; not worth a corpus-wide rewrite.
+  "MD004": false,
+}

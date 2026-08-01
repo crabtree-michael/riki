@@ -1,0 +1,6 @@
+# Clippy runs with `-D warnings` (REPO_SKELETON.md §6.1).
+msrv = "1.82"
+
+# The CV code is full of small numeric helpers on hot paths; a low threshold here produces
+# noise rather than signal.
+cognitive-complexity-threshold = 30

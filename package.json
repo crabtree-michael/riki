@@ -1,0 +1,45 @@
+{
+  "name": "riki",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Voice agent for Dota 2. Invisible until needed.",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/not-scaffolded.mjs dev \"REPO_SKELETON.md §10 step 6 — apps/desktop shell\"",
+    "dev:replay": "node scripts/not-scaffolded.mjs dev:replay \"REPO_SKELETON.md §10 step 4 — FakeGsiSource + tools/gsi-replay\"",
+    "test": "pnpm run test:ts && pnpm run test:rust",
+    "test:ts": "vitest run",
+    "test:rust": "node scripts/cargo.mjs test --workspace",
+    "test:e2e": "node scripts/not-scaffolded.mjs test:e2e \"REPO_SKELETON.md §10 step 6 — Playwright harness\"",
+    "lint": "pnpm run lint:ts && pnpm run lint:md && pnpm run lint:rust",
+    "lint:ts": "eslint .",
+    "lint:md": "markdownlint-cli2 \"**/*.md\"",
+    "lint:rust": "node scripts/cargo.mjs clippy --workspace --all-targets -- -D warnings",
+    "format": "prettier --write . && node scripts/cargo.mjs fmt --all",
+    "format:check": "prettier --check . && node scripts/cargo.mjs fmt --all -- --check",
+    "typecheck": "tsc --build --force",
+    "codegen": "node scripts/codegen.mjs",
+    "codegen:check": "node scripts/codegen.mjs --check",
+    "bench": "node scripts/cargo.mjs bench --workspace",
+    "check": "pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run codegen:check",
+    "build": "node scripts/not-scaffolded.mjs build \"REPO_SKELETON.md §10 step 6 — apps/desktop shell\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-boundaries": "^5.0.1",
+    "lefthook": "^1.10.1",
+    "markdownlint-cli2": "^0.16.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

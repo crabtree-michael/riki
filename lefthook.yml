@@ -1,0 +1,30 @@
+# Local git hooks (REPO_SKELETON.md §6.1). Installed by `pnpm setup`.
+#
+# Pre-commit stays fast: format and lint only what changed. The full gate is `pnpm check`,
+# which is also what CI runs — see §8.1.
+
+pre-commit:
+  parallel: true
+  commands:
+    prettier:
+      glob: '*.{ts,tsx,js,mjs,json,jsonc,md,yml,yaml}'
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+    eslint:
+      glob: '*.{ts,tsx}'
+      run: pnpm exec eslint --fix {staged_files}
+      stage_fixed: true
+    markdownlint:
+      glob: '*.md'
+      run: pnpm exec markdownlint-cli2 {staged_files}
+    rustfmt:
+      glob: '*.rs'
+      run: node scripts/cargo.mjs fmt -- {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    gitleaks:
+      # A committed API key is the failure §7.1 is built to prevent; the .gitignore entry
+      # is the protection, this is the backstop. Skipped with a notice if not installed.
+      run: node scripts/gitleaks.mjs

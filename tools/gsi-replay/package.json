@@ -1,0 +1,11 @@
+{
+  "name": "@riki-tools/gsi-replay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Replay a recorded fixture session into a running dev build. What `pnpm dev:replay` drives.",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --build"
+  }
+}

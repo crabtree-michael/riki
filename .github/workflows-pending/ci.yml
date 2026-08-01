@@ -1,0 +1,108 @@
+# The gate. Same jobs as `pnpm check`, so an agent never discovers a failure only after
+# pushing to main (REPO_SKELETON.md §8.2).
+#
+# Note what is NOT here: no Dota 2, no microphone, no GPU, and no RIKI_OPENAI_API_KEY. CI runs
+# in the keyless mode described in §7.1, which is the same mode agents work in.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Linux is the dev platform, Windows is the target, and Linux/Proton GSI is historically
+  # buggy — platform divergence needs to surface here, not in a bug report.
+  NODE_VERSION: '22'
+
+jobs:
+  node:
+    name: ${{ matrix.job }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        job: [lint, typecheck, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run ${{ matrix.job }}
+        run: pnpm run ${{ matrix.job == 'lint' && 'lint:ts' || matrix.job }}
+      - name: Lint markdown
+        if: matrix.job == 'lint'
+        run: pnpm run lint:md
+      - name: Check formatting
+        if: matrix.job == 'lint'
+        run: pnpm exec prettier --check .
+
+  rust:
+    name: test:rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  codegen-clean:
+    # Generated Rust must never be hand-edited (REPO_SKELETON.md §4). This is what catches it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run codegen
+      - name: Fail if regenerating produced a diff
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Generated files are out of date. Run 'pnpm codegen' and commit the result."
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+  secrets:
+    # A committed API key is the failure §7.1 is built to prevent.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+# Not yet wired, because the code they test does not exist (REPO_SKELETON.md §10):
+#   build  — production build of app + sidecar (step 6)
+#   e2e    — Playwright against a built Electron app, Linux only, headless (step 6)
