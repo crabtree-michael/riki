@@ -9,16 +9,22 @@
  * resampler does not run on the product's default path at all. `resample.ts` says why that does
  * not make the test theatre.
  *
- * Contracts only — no behaviour yet. Every `declare`d function is a signature waiting for
- * REPO_SKELETON.md §10 step 7; the shapes are docs/design/voice-input-architecture.md §3, §4 and
- * §7.1, and §15 of that document maps each section to a file here.
+ * **Ducking is a no-op on macOS, by design and not by omission** (ADR-0020,
+ * docs/research/audio-ducking-platform-support.md). Read those before "fixing" it.
+ *
+ * Implemented: the pure maths (`level`), rate conversion and PCM framing (`resample`), the
+ * playback measurement barge-in depends on (`playback`), the ducking policy (`ducking`), and the
+ * earcon specification table. Still contracts: `device` and `capture`, whose implementations need
+ * `getUserMedia` and an `AudioContext` and therefore land with the voice window
+ * (REPO_SKELETON.md §10 step 6/7). §15 of the design document maps each section to a file here.
  */
 
 export type * from './types.js';
 export type * from './device.js';
 export type * from './capture.js';
-export type * from './level.js';
-export type * from './resample.js';
-export type * from './playback.js';
-export type * from './earcons.js';
-export type * from './ducking.js';
+
+export * from './level.js';
+export * from './resample.js';
+export * from './playback.js';
+export * from './earcons.js';
+export * from './ducking.js';

@@ -71,6 +71,20 @@ the user interrupt. A cancel with no speech behind it (Esc, a local "stop") neve
 the truncate yourself in that case, and only that case — sending both on a real barge-in truncates
 twice at two different offsets.
 
+**2026-08-01 — measure playback from the signal, never from `response.output_audio.delta`.**
+That event does not exist on WebRTC — the audio is on the media track (research §2) — so a
+playback tracker keyed off it passes every WebSocket test and then never starts in production,
+`audibleMs()` stays zero, and barge-in silently stops truncating on the *default* transport. The
+`PlaybackTracker` in `packages/audio/src/playback.ts` analyses the remote track and contains no
+wire event at all, which makes the failure unreachable rather than fixed. Start the measurement
+from `response.output_item.added`, which arrives everywhere.
+
+**2026-08-01 — the API key is an `ApiKey`, not a `string`** (ADR-0022). The `process.env` lint
+boundary stops the deliberate leak; nothing stops `JSON.stringify(deps)` or a key interpolated
+into an error message. Redaction has to cover `toString`, `toJSON` **and**
+`Symbol.for('nodejs.util.inspect.custom')` — that third one is what `console.log` in main actually
+calls, and it is the one people forget.
+
 **2026-08-01 — ducking does not exist on macOS, and macOS is primary.** Settled, with sources, in
 `docs/research/audio-ducking-platform-support.md`; the decision is ADR-0020. `duckOthers` is
 `API_UNAVAILABLE(macos)`, Core Audio reaches only the default device and our own stream, and every

@@ -175,6 +175,18 @@ returns, check all three; the one that will bite is the token cost, because tool
 accumulate in conversation history and are billed as input on every later turn, while the
 snapshot replaces itself.
 
+**2026-08-01 — realtime §5's `retention_ratio: 0.8` is not `targetAfter`, and conflating them
+compacts twice as often as intended.** They are different knobs against different triggers. 0.8 is
+the *API's*, and the API fires when the window is genuinely full — so it leaves 20 % of headroom.
+A local compactor fires at `lowWaterMark`, so copying 0.8 into `targetAfter` while triggering at
+0.75 leaves 5 %, and every compaction re-pays full price for everything retained against an 80×
+cached discount. `DEFAULT_WINDOW_BUDGET`'s 0.75 → 0.55 is the right shape and already avoids this;
+the note is here because all four numbers are marked *(tunable)* and the obvious way to "tune"
+`targetAfter` is to reach for the number in the research note. *Why:* verified the hard way in a
+parked implementation that triggered at 0.95 and retained 0.8 — it compacted every ~3 minutes and
+looked healthy, because the window never overflowed. The window not overflowing is not the goal;
+not busting the cache is.
+
 **2026-08-01 — realtime §5's "15–20 minutes" does not transfer, and the correction inverts what you
 economise.** That number assumes continuous conversation at ~1,800 tokens/min of audio. Riki mostly
 listens, so its audio is a fraction of that — but it injects a ~300-token snapshot and up to 600

@@ -1,7 +1,11 @@
 # Riki — Voice Input Architecture
 
-**Status:** Design. No implementation exists yet; `packages/audio` and `packages/realtime` are the
-skeletons from REPO_SKELETON.md §10 step 1, and the session is step 7.
+**Status:** Design, partially built. Build-order steps 1 and 2 have landed —
+`level.ts`, `resample.ts`, `playback.ts`, `ducking.ts`, `earcons.ts` (the spec table),
+`session-config.ts` with `assertGaShape` and its golden snapshot, `wire.ts`'s parser, `cost.ts`,
+and `credentials.ts` — each with Tier 1 tests. Everything that needs a peer connection, an
+`AudioContext` or `getUserMedia` is still contracts: `capture.ts`, `device.ts`, the transports,
+`turn.ts`, `window.ts`, `transcript.ts`, `commands.ts` and the session facade. §14 has the order.
 **Scope:** The voice path end to end — microphone capture and gating, the real-time audio
 pipeline, the OpenAI Realtime session, transcription and local command parsing, and the class and
 method structure of `packages/audio` and `packages/realtime`.
@@ -733,8 +737,14 @@ export interface ClientSecretBroker {
 }
 
 export interface ClientSecretBrokerDeps {
-  /** Injected by the composition root from @riki/config. This package never reads process.env. */
-  readonly apiKey: string;
+  /**
+   * Injected by the composition root from @riki/config. This package never reads process.env.
+   * An opaque `ApiKey` rather than a `string` (ADR-0022): the lint boundary stops the deliberate
+   * leak, and this stops the accidental one — `JSON.stringify(deps)`, a key interpolated into an
+   * error message, `console.log` of a config object. It renders as `[redacted]` through
+   * `toString`, `toJSON` and `util.inspect`; `reveal()` is the single way out.
+   */
+  readonly apiKey: ApiKey;
   readonly safetyIdentifier: string;    // hashed install id, from main — research §6
   readonly fetch: FetchLike;
   readonly now: () => MonoMs;
@@ -1114,8 +1124,8 @@ Front-loaded so that everything testable lands before anything that needs a wind
 
 | # | Step | Needs |
 |---|---|---|
-| 1 | `level.ts`, `resample.ts`, `commands.ts`, `cost.ts` — the pure half, with their Tier 1 tests | Nothing. No Electron, no fakes |
-| 2 | `session-config.ts` + `assertGaShape` + the golden snapshot | Nothing |
+| ~~1~~ | ~~`level.ts`, `resample.ts`, `commands.ts`, `cost.ts` — the pure half, with their Tier 1 tests~~ **Landed**, except `commands.ts`; `playback.ts`, `ducking.ts` and the `EARCONS` table came with it, since none of the three needs a window either | Nothing. No Electron, no fakes |
+| ~~2~~ | ~~`session-config.ts` + `assertGaShape` + the golden snapshot~~ **Landed**, plus `wire.ts`'s `parseServerEvent` and `credentials.ts` (step 5 was reachable early: a stubbed `fetch` needs no `packages/config`) | Nothing |
 | 3 | `FakeRealtimeTransport` + the `fixtures/realtime/` corpus | Step 2 |
 | 4 | `turn.ts`, `window.ts` against the fake: submission ordering, barge-in, retention | Steps 2–3, and `packages/context`'s types |
 | 5 | `credentials.ts` in main, with a stubbed `fetch` | `packages/config` (step 3 of §10) |

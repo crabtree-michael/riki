@@ -14,7 +14,11 @@
  * They render in the voice window's own context, so they are never gated by the mic gate and never
  * appear in the outbound track.
  *
- * See docs/design/voice-input-architecture.md §4.4. Declarations only.
+ * See docs/design/voice-input-architecture.md §4.4.
+ *
+ * Only the specification table is implemented here. `EarconPlayer` needs an `AudioContext`, which
+ * exists only in the voice window, so its implementation lands with that surface — the table is
+ * what a Tier 1 test can compare against ui-design §7.1 without one.
  */
 
 export type EarconId = 'capture-start' | 'capture-end' | 'error';
@@ -27,8 +31,19 @@ export interface EarconSpec {
   readonly attackMs: number;
 }
 
-/** The ui-design §7.1 table, as data, so the Tier 1 test compares against the specification. */
-export declare const EARCONS: Readonly<Record<EarconId, EarconSpec>>;
+/**
+ * The ui-design §7.1 table, as data, so the Tier 1 test compares against the specification.
+ *
+ * Two-tone blips are expressed as `fromHz` → `toHz` over the whole duration; the error tone holds
+ * one pitch, so `fromHz === toHz`. `attackMs` is short but non-zero on all three: a sine that
+ * starts at a non-zero sample is a click, and a click is exactly the attention-grabbing artefact
+ * a product called "invisible until needed" cannot afford.
+ */
+export const EARCONS: Readonly<Record<EarconId, EarconSpec>> = {
+  'capture-start': { id: 'capture-start', fromHz: 660, toHz: 880, durationMs: 80, attackMs: 4 },
+  'capture-end': { id: 'capture-end', fromHz: 880, toHz: 660, durationMs: 80, attackMs: 4 },
+  error: { id: 'error', fromHz: 330, toHz: 330, durationMs: 140, attackMs: 6 },
+};
 
 export interface EarconPlayer {
   /**
