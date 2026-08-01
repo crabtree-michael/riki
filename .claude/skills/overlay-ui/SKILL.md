@@ -43,7 +43,27 @@ unit tests.
 
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — Electron runs headless here, but only under `xvfb-run` *and* `dbus-run-session`.**
+Verified on a bare Linux sandbox with a transparent, frameless, `setIgnoreMouseEvents(true)`
+window — the actual overlay shape from `ui-design.md` §6.5 — on Electron 43 / Chromium 150:
+
+```shell
+xvfb-run -a dbus-run-session -- electron --no-sandbox main.js
+```
+
+Without `dbus-run-session` it still runs, but floods stderr with `Failed to connect to the bus`
+and cannot reach `org.a11y.Bus`; anything touching the tray (StatusNotifier) or accessibility
+needs a real session bus rather than just a display. A `ContextResult::kTransientFailure` GPU
+line is expected on a machine with no GPU — Chromium falls back to software rendering and the
+window still loads.
+
+*Why:* the e2e harness is Playwright on a real Electron build (§5.3 Tier 5), and it will run on
+exactly this kind of headless box. Debugging "Electron won't start" is much slower than knowing
+the two wrappers up front. The apt libraries it needs beyond a base image are `libnss3`,
+`libnspr4`, `libatk1.0-0t64`, `libatk-bridge2.0-0t64`, `libatspi2.0-0t64`, `libcups2t64`,
+`libdrm2`, `libgbm1`, `libxkbcommon0`, `libxcomposite1`, `libxdamage1`, `libxfixes3`,
+`libxrandr2`, `libxshmfence1`, `libx11-xcb1`, `libgtk-3-0t64`, `libasound2t64`, plus `xvfb`
+and `dbus-x11`.
 
 ## See also
 

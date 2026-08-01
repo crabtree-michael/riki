@@ -98,6 +98,38 @@ not blocked on installing rustup. *Why:* a green check does **not** mean the Rus
 Read the output, and if you touched `crates/`, either install the toolchain or say plainly in
 your commit message that CI is the first real check of it.
 
+**2026-08-01 — and the first time a toolchain existed, both Rust gates failed.** The skeleton
+was recorded as green, but that greenness was three `[cargo] skipped` notices. Installing rustup
+turned up `clippy::pedantic` doc failures in all three crate headers and a cargo-deny
+`unlicensed` error on all four members (both now fixed; details in the `vision-sidecar` skill).
+*Why:* this is the general shape of the trap, not a one-off — a step that skips when a tool is
+absent reports success, so "the gate is green" means nothing until you know which steps actually
+ran. When you install a tool the repo tolerates missing, re-run the whole gate before assuming
+your change is what broke it.
+
+**2026-08-01 — lefthook owns `pre-push`, so `git lfs install` silently loses.** It refuses to
+overwrite an existing hook and exits with instructions most people skip; the clean/smudge filters
+still get installed, so LFS *looks* fine — files check out and commit correctly — but nothing
+uploads the objects on push, and the pointers land in the remote alone. The fix is a lefthook
+command, not a hand-patched `.git/hooks/pre-push` (which `pnpm setup` regenerates):
+
+```yaml
+pre-push:
+  commands:
+    lfs:
+      use_stdin: true
+      run: git lfs pre-push {1} {2}
+```
+
+Both halves are load-bearing and neither is obvious: `git lfs pre-push` needs the hook's argv
+(remote name, URL) *and* reads the ref updates from **stdin**, which lefthook does not forward
+unless you ask. Without `use_stdin` it runs, reports success, and uploads nothing.
+
+*Why:* verified end to end against a local bare remote rather than assumed — the failure mode
+here is a hook that passes loudly while doing nothing, which no one notices until a fixture is
+missing from someone else's clone. If you change this, test it the same way: push a tracked
+binary to a scratch remote and confirm the object appears under its `lfs/objects/`.
+
 **2026-08-01 — Prettier does not format markdown here, deliberately.** `*.md` is in
 `.prettierignore`; markdownlint owns it. *Why:* Prettier pads every table cell to the widest
 row, which turns the wide tables in the design docs into 700-column lines, and reflowing prose

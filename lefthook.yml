@@ -24,6 +24,12 @@ pre-commit:
 
 pre-push:
   commands:
+    lfs:
+      # `git lfs install` refuses to write this hook because lefthook already owns it, so
+      # without this line the frame fixtures (§8.3) push as pointers and the objects never
+      # upload. Needs both the hook's argv (remote, url) and its stdin (the ref updates).
+      use_stdin: true
+      run: git lfs pre-push {1} {2}
     gitleaks:
       # A committed API key is the failure §7.1 is built to prevent; the .gitignore entry
       # is the protection, this is the backstop. Skipped with a notice if not installed.
