@@ -43,12 +43,16 @@ what keeps them honest.
 pnpm check
 ```
 
-That is lint, format, typecheck, test, and codegen-clean — the same thing CI runs. `lefthook`
-formats and lints staged files on commit, but `pnpm check` is the gate.
+That is lint, format, typecheck, test, and codegen-clean.
 
-**Right now it is the only gate.** The CI workflows are written but not active — see
-[`.github/workflows-pending/`](.github/workflows-pending/) for why and for the one command that
-turns them on. Until someone does, nothing checks a push but you.
+**You do not have to remember it.** `lefthook` runs the same gate on `git commit` and refuses the
+commit if anything fails ([ADR-0008](docs/adr/0008-pre-commit-is-the-gate.md)) — about 8 seconds.
+Running `pnpm check` by hand just lets you see the verdict sooner.
+
+**There is no CI**, so that hook is the only thing checking anything. Skipping it is blocked
+rather than discouraged: `--no-verify`, `git commit -n`, `core.hooksPath` overrides and
+`LEFTHOOK=0` are all refused for agents. If the gate is wrong, change `lefthook.yml` in a commit
+that says why — do not go around it.
 
 Also:
 

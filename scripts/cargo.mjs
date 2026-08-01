@@ -13,8 +13,8 @@ const probe = spawnSync('cargo', ['--version'], { stdio: 'ignore' });
 if (probe.error) {
   console.warn(
     `[cargo] skipped \`cargo ${args.join(' ')}\` — no Rust toolchain on this machine.\n` +
-      '[cargo] Install via https://rustup.rs to build and test crates/. CI is not active yet,\n' +
-      '[cargo] so nothing else is compiling them either.',
+      '[cargo] Install via https://rustup.rs to build and test crates/. There is no CI, so\n' +
+      '[cargo] nothing else is compiling them either.',
   );
   process.exit(0);
 }

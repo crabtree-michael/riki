@@ -33,10 +33,10 @@ Two rules follow from that:
 
 ## Before you commit
 
-- `pnpm check` is green. It is lint + format:check + typecheck + test + codegen:check. CI
-  would run the same gate, but **CI is not switched on yet** (the workflows sit in
-  `.github/workflows-pending/`), so your local run is the only thing standing between a
-  mistake and `main`.
+- `pnpm check` is green. It is lint + format:check + typecheck + test + codegen:check. **The
+  pre-commit hook runs the same gate and will refuse the commit if it fails** (~8s, ADR-0008),
+  so running it yourself is just seeing the verdict early. There is no CI behind it, and
+  `--no-verify` is blocked — if the gate is wrong, change `lefthook.yml` and say why.
 - New behaviour has a test at the lowest tier that can catch it (`testing` skill).
 - A decision you made is an ADR in `docs/adr/`, not a code comment.
 - Something you learned is in the area's skill (below).

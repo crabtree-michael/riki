@@ -88,11 +88,7 @@ riki/
 │   └── skills/                      one skill per area — living practice, not spec (§13)
 │       └── <area>/SKILL.md
 │
-├── .github/
-│   └── workflows-pending/           ⚠ written but NOT running — see §8.2 and the README there
-│       ├── ci.yml                   lint · typecheck · test · build (ubuntu + windows)
-│       ├── bench.yml                CV micro-benchmarks, regression gate
-│       └── docs.yml                 markdownlint + link check
+│   (no .github/ — there is no CI; the gate is lefthook's pre-commit, §8.2 and ADR-0008)
 │
 ├── apps/
 │   └── desktop/                     the Electron application
@@ -472,9 +468,9 @@ Rules that come with it, all of them cheap:
 - **The key is read in exactly one place** — `packages/config`, in the Electron **main** process —
   and injected into `packages/realtime`. It does not cross the preload bridge, so the renderer
   never sees it, and it is redacted by `packages/telemetry` alongside chat text and Steam IDs.
-- **Anything that costs money needs a real key, so it is not in CI.** Per §5.2 no test may require
-  a live OpenAI session; `FakeRealtimeTransport` covers the rest. CI runs with the variable unset,
-  which means an agent's `pnpm check` passes on a machine with no key at all.
+- **Anything that costs money needs a real key, so it is not in the gate.** Per §5.2 no test may
+  require a live OpenAI session; `FakeRealtimeTransport` covers the rest. The pre-commit gate runs
+  with the variable unset, which means an agent's commit succeeds on a machine with no key at all.
 - **`pnpm dev:replay` needs no key either.** Fixtures drive the whole app. A key is only needed to
   talk to a live model.
 
@@ -540,7 +536,7 @@ One name per action, from the repo root. If a command is not here, it should be.
 | `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota and no API key required.** |
 | `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU, no API key. |
 | `pnpm test:e2e` | Playwright against a built Electron app |
-| `pnpm lint` | ESLint + markdownlint + clippy. **Not gitleaks** — that runs pre-push (§6.1) and in `ci.yml`. |
+| `pnpm lint` | ESLint + markdownlint + clippy. **Not gitleaks** — the hooks run that (§6.1, §8.2). |
 | `pnpm format` / `pnpm format:check` | Prettier + rustfmt |
 | `pnpm typecheck` | `tsc --build --force` over the project references. Not `--noEmit`: the packages are `composite`, which requires emit. |
 | `pnpm codegen` / `pnpm codegen:check` | Regenerate JSON Schema + Rust types from `packages/protocol`; `:check` fails on a diff |
@@ -549,43 +545,54 @@ One name per action, from the repo root. If a command is not here, it should be.
 | `pnpm check` | **lint + format:check + typecheck + test + codegen:check.** Run before committing. |
 | `pnpm build` | Production build of app + sidecar |
 
-`pnpm check` matters most: it is one thing to remember, and `ci.yml` is written to run the same
-gate, so an agent should not discover a failure only after pushing to `main`.
+`pnpm check` is the same set of checks the pre-commit hook runs (§8.2), so running it by hand is
+how you see the verdict before `git commit` does. The hook is what actually enforces it.
 
-Two caveats on that sentence, both of which cost an agent time if discovered late:
-
-- **CI is not actually running yet** (§8.2), so today `pnpm check` is the *only* thing enforcing
-  any of this.
-- **`pnpm check` is green on a machine with no Rust toolchain**, because the cargo steps skip
-  with a `[cargo] skipped …` notice rather than failing (`scripts/cargo.mjs`). That is deliberate
-  — TypeScript-only work should not require rustup — but it means a green check does not by
-  itself mean the Rust side compiled. Read the output.
+One caveat, which costs an agent time if discovered late: **`pnpm check` is green on a machine
+with no Rust toolchain**, because the cargo steps skip with a `[cargo] skipped …` notice rather
+than failing (`scripts/cargo.mjs`). That is deliberate — TypeScript-only work should not require
+rustup — but it means a green check does not by itself mean the Rust side compiled, and with no
+CI there is no second opinion. Read the output.
 
 **Four of these are stubs.** `dev`, `dev:replay`, `test:e2e` and `build` currently run
 `scripts/not-scaffolded.mjs`, which exits with a pointer to the §10 step that will implement
 them. The rows above describe what they will do, not what they do today.
 
-### 8.2 CI
+### 8.2 The gate: pre-commit, not CI
 
-> ⚠ **Written, not running.** All three workflows live in `.github/workflows-pending/`, because
-> GitHub rejects a push touching `.github/workflows/` unless the token carries the `workflow`
-> scope, and the tokens available so far have had only `repo`. Activating them is three
-> `git mv`s and no file edits — see the README in that directory. Until someone with the scope
-> does that, **nothing enforces this gate on push**; `pnpm check` run locally is all there is.
+**There is no CI.** No GitHub Actions, no `.github/` directory. The full gate runs locally on
+**pre-commit**, defined in `lefthook.yml`. The reasoning is ADR-0008; the short version is that
+agents are the primary contributors, and a failure reported to a cloud log after the agent has
+finished is a failure with no reader.
 
-GitHub Actions, on push to `main` and on PRs (there are no PRs today per `AGENTS.md`, but the
-workflow should not assume that forever):
+What runs on every commit, in order, stopping at the first failure:
 
-- **Matrix: `ubuntu-latest` + `windows-latest`.** Both are load-bearing — Linux is the dev
-  platform, Windows is the target, and `dota2-state-capture-design.md` §2.1 flags Linux/Proton
-  GSI as historically buggy. Platform divergence needs to surface in CI, not in a bug report.
-- Jobs: `lint` · `typecheck` · `test` · `test:rust` · `codegen-clean` · `build` · `e2e`
-  (Linux only, headless) · `docs`.
-- `codegen-clean` fails if regenerating protocol types produces a diff.
-- Caches: pnpm store, Cargo registry and target dir, Playwright browsers.
-- `bench.yml` runs on `crates/**` changes and compares against the baseline on `main`.
-- macOS is not in the matrix initially — it is a third-tier target in the specs and the runner
-  cost is not yet justified. Revisit if macOS becomes a shipping platform.
+| # | Step | Scope |
+|---|---|---|
+| 01–03 | prettier · eslint · rustfmt, with `--fix` | staged files, re-staged after fixing |
+| 04–06 | `prettier --check` · `lint:ts` · `lint:md` | whole repo |
+| 07–09 | `typecheck` · `test:ts` · `codegen:check` | whole repo |
+| 10 | gitleaks | staged diff |
+| 11–12 | `rustfmt --check` · clippy · `cargo test` · cargo-deny | only if the commit touches `crates/`, `Cargo.*` or the Rust config |
+| 13 | lychee link check — **warn only**, skips if not installed | markdown |
+
+Roughly 8s for a TypeScript commit; the same for a Rust one once cargo is warm.
+
+`pre-push` keeps two things that only make sense there: the LFS object upload (§8.3) and a
+full-history gitleaks scan as a backstop.
+
+**Bypassing is blocked, not discouraged.** Since pre-commit is the only enforcement,
+`scripts/block-no-verify.mjs` runs as a Claude Code `PreToolUse` hook (`.claude/settings.json`)
+and refuses `--no-verify`, `git commit -n`, `core.hooksPath` overrides and `LEFTHOOK=0`. It
+covers agents, which is the point; it cannot bind a human at a terminal, and no client-side hook
+can.
+
+**What this gives up.** The deleted `ci.yml` ran a `ubuntu-latest` + `windows-latest` matrix, and
+§2.1 of `dota2-state-capture-design.md` flags Linux/Proton GSI as historically buggy — so
+platform divergence will now surface in a bug report rather than a red build. Nothing compiles
+per-platform yet, so the loss is theoretical until `crates/riki-capture` grows a WGC backend. **If
+CI comes back, it should come back for the platform matrix specifically**, plus the e2e and bench
+jobs that cannot run per-commit — not to duplicate what pre-commit already covers.
 
 ### 8.3 Fixture management
 

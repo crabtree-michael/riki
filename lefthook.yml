@@ -1,27 +1,77 @@
-# Local git hooks (REPO_SKELETON.md §6.1). Installed by `pnpm setup`.
+# Local git hooks — and, since there is no CI, the ONLY enforcement this repo has
+# (REPO_SKELETON.md §8.2, ADR-0008).
 #
-# Pre-commit stays fast: format and lint only what changed. The full gate is `pnpm check`
-# — see §8.1. CI would run the same gate, but it is not switched on yet (§8.2), so these
-# hooks and a local `pnpm check` are the only enforcement there is.
+# The gate lives on pre-commit rather than in GitHub Actions because agents are the primary
+# contributors here: an agent commits, reports "done", and moves on. A failure surfaced minutes
+# later in a cloud log is a failure nobody reads. Surfaced at `git commit`, it lands in the
+# agent's own transcript while it still has the context to fix it.
+#
+# `piped: true` runs these in order and stops at the first failure: the three autofix steps
+# must finish (and re-stage) before anything verifies the result.
+#
+# ONE SHARP EDGE. Steps 04-09 check the whole working tree, not just what is staged. That is
+# what makes them a real gate — a change can break a file it does not touch — but it means
+# unrelated unstaged edits are included in the verdict. Commit or stash them first.
 
 pre-commit:
-  parallel: true
+  piped: true
   commands:
-    prettier:
-      glob: '*.{ts,tsx,js,mjs,json,jsonc,md,yml,yaml}'
+    # ---- autofix, on staged files only -------------------------------------------------
+    01_prettier:
+      glob: '*.{ts,tsx,js,mjs,json,jsonc,yml,yaml}'
       run: pnpm exec prettier --write {staged_files}
       stage_fixed: true
-    eslint:
-      glob: '*.{ts,tsx}'
+    02_eslint:
+      glob: '*.{ts,tsx,js,mjs}'
       run: pnpm exec eslint --fix {staged_files}
       stage_fixed: true
-    markdownlint:
-      glob: '*.md'
-      run: pnpm exec markdownlint-cli2 {staged_files}
-    rustfmt:
+    03_rustfmt:
       glob: '*.rs'
       run: node scripts/cargo.mjs fmt -- {staged_files}
       stage_fixed: true
+
+    # ---- the gate, whole-repo (was ci.yml `node` + `codegen-clean`) --------------------
+    04_format:
+      run: pnpm exec prettier --check .
+    05_lint_ts:
+      run: pnpm run lint:ts
+    06_lint_md:
+      run: pnpm run lint:md
+    07_typecheck:
+      run: pnpm run typecheck
+    08_test:
+      run: pnpm run test:ts
+    09_codegen:
+      run: pnpm run codegen:check
+
+    # ---- secrets (was ci.yml `secrets`) ------------------------------------------------
+    10_secrets:
+      # Staged-only here (~0.3s); pre-push re-scans the full history.
+      run: node scripts/gitleaks.mjs --staged
+
+    # ---- Rust, only when it can possibly be affected (was ci.yml `rust` + `deps`) ------
+    # Warm these are ~1s total, but a cold compile is minutes, so they are scoped rather than
+    # unconditional. Cargo.toml/Cargo.lock are in the glob because a dependency bump breaks
+    # crates without touching a single .rs file.
+    11_rust:
+      glob: '{crates/**/*,Cargo.toml,Cargo.lock,clippy.toml,rustfmt.toml}'
+      run: >
+        node scripts/cargo.mjs fmt --all -- --check &&
+        node scripts/cargo.mjs clippy --workspace --all-targets -- -D warnings &&
+        node scripts/cargo.mjs test --workspace
+    12_deps:
+      glob: '{crates/**/*,Cargo.toml,Cargo.lock,deny.toml}'
+      run: node scripts/cargo.mjs deny check
+
+    # ---- docs links (was docs.yml `links`, continue-on-error) --------------------------
+    13_links:
+      glob: '*.md'
+      run: node scripts/lychee.mjs
+
+# Not ported from the deleted workflows, because the code does not exist yet (§10 step 6):
+# the production build and the Playwright e2e suite. `bench.yml`'s criterion run is also gone
+# on purpose — a perf benchmark on every commit is noise, and it needs a quiet machine to mean
+# anything. Both are called out in ADR-0008 as what a future CI would be for.
 
 pre-push:
   commands:
@@ -32,6 +82,6 @@ pre-push:
       use_stdin: true
       run: git lfs pre-push {1} {2}
     gitleaks:
-      # A committed API key is the failure §7.1 is built to prevent; the .gitignore entry
-      # is the protection, this is the backstop. Skipped with a notice if not installed.
+      # Full-history backstop. pre-commit already scanned the staged diff; this catches a
+      # secret introduced by a commit that skipped the hook.
       run: node scripts/gitleaks.mjs
