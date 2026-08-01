@@ -1,0 +1,4 @@
+{"type":"session.created"}
+{"type":"response.created","response_id":"resp_1"}
+{"type":"response.audio.delta","delta":"AAAA"}
+{"type":"response.audio_transcript.delta","delta":"this should never be handled"}

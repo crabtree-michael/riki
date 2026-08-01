@@ -1,11 +1,14 @@
 # Riki — Voice Input Architecture
 
-**Status:** Design, partially built. Build-order steps 1 and 2 have landed —
-`level.ts`, `resample.ts`, `playback.ts`, `ducking.ts`, `earcons.ts` (the spec table),
-`session-config.ts` with `assertGaShape` and its golden snapshot, `wire.ts`'s parser, `cost.ts`,
-and `credentials.ts` — each with Tier 1 tests. Everything that needs a peer connection, an
-`AudioContext` or `getUserMedia` is still contracts: `capture.ts`, `device.ts`, the transports,
-`turn.ts`, `window.ts`, `transcript.ts`, `commands.ts` and the session facade. §14 has the order.
+**Status:** Built. Every section here has an implementation and Tier 1 tests behind it, and the
+whole path — capture → gate → transport → transcript → local command — runs against fakes with no
+browser, no microphone, no socket and no key. The browser primitives (`getUserMedia`, the Web
+Audio nodes, `RTCPeerConnection`, `WebSocket`, `fetch`) all arrive through structural ports, which
+is what makes that true; the adapters that supply the real ones land with the voice window.
+
+Two things are deliberately still outstanding: **`EarconPlayer`**, which needs a real
+`AudioContext` to make a sound (its specification table is implemented and tested), and the
+**composition root** in `apps/desktop`, which is §14 step 7 and a separate task.
 **Scope:** The voice path end to end — microphone capture and gating, the real-time audio
 pipeline, the OpenAI Realtime session, transcription and local command parsing, and the class and
 method structure of `packages/audio` and `packages/realtime`.
@@ -1124,16 +1127,16 @@ Front-loaded so that everything testable lands before anything that needs a wind
 
 | # | Step | Needs |
 |---|---|---|
-| ~~1~~ | ~~`level.ts`, `resample.ts`, `commands.ts`, `cost.ts` — the pure half, with their Tier 1 tests~~ **Landed**, except `commands.ts`; `playback.ts`, `ducking.ts` and the `EARCONS` table came with it, since none of the three needs a window either | Nothing. No Electron, no fakes |
-| ~~2~~ | ~~`session-config.ts` + `assertGaShape` + the golden snapshot~~ **Landed**, plus `wire.ts`'s `parseServerEvent` and `credentials.ts` (step 5 was reachable early: a stubbed `fetch` needs no `packages/config`) | Nothing |
-| 3 | `FakeRealtimeTransport` + the `fixtures/realtime/` corpus | Step 2 |
-| 4 | `turn.ts`, `window.ts` against the fake: submission ordering, barge-in, retention | Steps 2–3, and `packages/context`'s types |
-| 5 | `credentials.ts` in main, with a stubbed `fetch` | `packages/config` (step 3 of §10) |
-| 6 | `capture.ts`, `playback.ts`, `earcons.ts` in the voice window | ADR-0010 resolved; the app split into per-surface projects |
+| ~~1~~ | ~~`level.ts`, `resample.ts`, `commands.ts`, `cost.ts` — the pure half~~ **Landed** | Nothing. No Electron, no fakes |
+| ~~2~~ | ~~`session-config.ts` + `assertGaShape` + the golden snapshot~~ **Landed** | Nothing |
+| ~~3~~ | ~~`FakeRealtimeTransport` + the `fixtures/realtime/` corpus~~ **Landed** — all six of `REQUIRED_FIXTURES`, replayed through a real session in `test/fixtures.test.ts` | Step 2 |
+| ~~4~~ | ~~`turn.ts`, `window.ts` against the fake~~ **Landed**. Retention *policy* is not here: ADR-0012 put it in `packages/context`, and this is the executor half | Steps 2–3 |
+| ~~5~~ | ~~`credentials.ts` in main, with a stubbed `fetch`~~ **Landed** — reachable early, since a stubbed `fetch` needs no `packages/config` | — |
+| ~~6~~ | ~~`capture.ts`, `playback.ts`, `earcons.ts`~~ **Landed except `EarconPlayer`**, which needs a real `AudioContext`. `CaptureGraph` and `DeviceRegistry` build over injected ports, so neither waits on the window | — |
 | 7 | The composition root, and `pnpm dev:replay` driving a full turn through the fakes | Everything above, plus the overlay's step 6 |
-| 8 | `ducking.ts` implementations, per platform | Step 7 |
+| 8 | `ducking.ts` implementations, per platform | Step 7, and only where a platform has one — [ADR-0020](../adr/0020-ducking-is-a-no-op-by-default.md) |
 
-Steps 1–4 are the majority of the logic and none of them needs a microphone, which is the point.
+Steps 1–6 are the majority of the logic and none of them needs a microphone, which was the point.
 
 ---
 

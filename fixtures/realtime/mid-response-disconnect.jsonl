@@ -1,0 +1,4 @@
+{"type":"session.created"}
+{"type":"response.created","response_id":"resp_1"}
+{"type":"response.output_item.added","item_id":"item_1"}
+{"type":"error","error":{"code":"session_lost","message":"Connection lost mid-response."}}

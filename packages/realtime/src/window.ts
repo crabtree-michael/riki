@@ -18,10 +18,11 @@
  * the ceiling first, and the API truncates oldest-first — which takes the cached prefix, so Riki
  * forgets who it is before it forgets what it just said.
  *
- * See docs/design/voice-input-architecture.md §5.6. Declarations only.
+ * See docs/design/voice-input-architecture.md §5.6.
  */
 
 import type { ItemId, MonoMs, Unsubscribe } from './types.js';
+import type { ClientEvent } from './wire.js';
 
 /**
  * ⚠ `packages/context` owns all four of these (`LedgerRef`, `WindowPlan`, `AppliedWindowPlan`,
@@ -60,4 +61,126 @@ export interface ContextWindowExecutor {
   usage(): WindowUsage | null;
   /** The mapping the ledger deliberately does not hold: a ledger position to a wire item id. */
   bind(ref: LedgerRef, item: ItemId): void;
+}
+
+// -----------------------------------------------------------------------------------------------
+// Implementation
+// -----------------------------------------------------------------------------------------------
+
+export interface ContextWindowExecutorDeps {
+  readonly send: (event: ClientEvent) => void;
+}
+
+/**
+ * The write side, held by the session.
+ *
+ * `packages/context` gets a `ContextWindowExecutor` and cannot reach these: it plans, it does not
+ * report. Usage and API-initiated truncation are things only the wire observes.
+ */
+export interface ContextWindowController extends ContextWindowExecutor {
+  /** From `response.done`. The only source of `usage()`; nothing else may set it. */
+  noteUsage(tokens: number, at: MonoMs): void;
+  /**
+   * The API dropped context before we did.
+   *
+   * Context §6 calls a non-zero count here a bug rather than a condition, and it is: it means our
+   * accounting let the API reach the ceiling first, and the API truncates oldest-first — which
+   * takes the cached prefix, so Riki forgets who it is before it forgets what it just said.
+   */
+  noteApiTruncation(refs: readonly LedgerRef[]): void;
+  /** Session lost: everything bound is gone, and the refs need reporting as such. */
+  noteSessionLost(): void;
+}
+
+/**
+ * A system message rather than an assistant one, deliberately: the model must not come to believe
+ * it *said* the summary. That would be a subtler version of the barge-in failure — a false memory
+ * of its own speech, which every later turn then reasons from.
+ */
+function summaryItem(text: string): ClientEvent {
+  return {
+    type: 'conversation.item.create',
+    item: {
+      type: 'message',
+      role: 'system',
+      content: [{ type: 'input_text', text }],
+    },
+  };
+}
+
+export function createContextWindowExecutor(
+  deps: ContextWindowExecutorDeps,
+): ContextWindowController {
+  const items = new Map<LedgerRef, ItemId>();
+  const listeners = new Set<(refs: readonly LedgerRef[], reason: DropReason) => void>();
+  let reported: WindowUsage | null = null;
+
+  const announce = (refs: readonly LedgerRef[], reason: DropReason): void => {
+    if (refs.length === 0) return;
+    for (const listener of listeners) listener(refs, reason);
+  };
+
+  return {
+    bind(ref, item) {
+      items.set(ref, item);
+    },
+
+    apply(plan: WindowPlan): Promise<AppliedWindowPlan> {
+      const dropped: LedgerRef[] = [];
+      const failed: LedgerRef[] = [];
+
+      // Summaries first, then deletions. The opposite order leaves a window that has forgotten a
+      // stretch of the match and does not yet hold its replacement — a gap the model will
+      // confidently reason across.
+      for (const replacement of plan.replace) {
+        deps.send(summaryItem(replacement.with.text));
+      }
+
+      for (const ref of plan.drop) {
+        const item = items.get(ref);
+        if (item === undefined) {
+          // Nothing bound means the entry never became a conversation item, so there is nothing
+          // on the wire to delete. Dropped, not failed.
+          dropped.push(ref);
+          continue;
+        }
+        try {
+          deps.send({ type: 'conversation.item.delete', item_id: item });
+          items.delete(ref);
+          dropped.push(ref);
+        } catch {
+          // "A delete the API refuses is a failed ref, not an exception. Nothing here throws."
+          failed.push(ref);
+        }
+      }
+
+      announce(dropped, 'planned');
+      return Promise.resolve({ dropped, failed });
+    },
+
+    onDropped(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+
+    /** Never an estimate — see the header. `null` until the session has reported something. */
+    usage() {
+      return reported;
+    },
+
+    noteUsage(tokens, at) {
+      reported = { reportedTokens: tokens, at };
+    },
+
+    noteApiTruncation(refs) {
+      for (const ref of refs) items.delete(ref);
+      announce(refs, 'api_truncation');
+    },
+
+    noteSessionLost() {
+      const lost = [...items.keys()];
+      items.clear();
+      announce(lost, 'session_lost');
+    },
+  };
 }

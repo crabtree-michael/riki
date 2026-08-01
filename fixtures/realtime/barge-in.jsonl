@@ -1,0 +1,6 @@
+{"type":"session.created"}
+{"type":"response.created","response_id":"resp_1"}
+{"type":"response.output_item.added","item_id":"item_1"}
+{"type":"input_audio_buffer.speech_started"}
+{"type":"response.output_audio_transcript.done","item_id":"item_1","transcript":"You should really consider backing"}
+{"type":"response.done","response_id":"resp_1","response":{"id":"resp_1","usage":{"input_token_details":{"audio_tokens":1400,"cached_tokens":960,"text_tokens":300},"output_token_details":{"audio_tokens":60,"text_tokens":20}}}}

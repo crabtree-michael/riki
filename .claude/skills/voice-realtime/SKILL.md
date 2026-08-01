@@ -71,6 +71,21 @@ the user interrupt. A cancel with no speech behind it (Esc, a local "stop") neve
 the truncate yourself in that case, and only that case — sending both on a real barge-in truncates
 twice at two different offsets.
 
+**2026-08-01 — `connect()` returning `Promise<void>` and *throwing* is not the same thing.**
+The WebSocket transport validated its media argument before the first `await`, so a wrong-media
+call threw synchronously and escaped the caller's `.catch()` entirely — surfacing somewhere
+unrelated, or not at all. Mark any method whose signature promises a promise `async`, even when
+the body has nothing to await; the rejection path is part of the contract.
+
+**2026-08-01 — a short command word cannot be fuzzy-matched, and the arithmetic says why.**
+`parseLocalCommand` first used normalised edit distance with a per-command threshold. At four
+characters one edit is a 0.75 ratio, and "stomp" is one edit from "stop" — so any threshold loose
+enough to accept a real mistranscription ("shuddup" is two edits over seven) is loose enough to
+mute the player for saying a different short word. The fix is a tolerance in *edits* scaled by
+length — none below five characters, one per five thereafter — and putting genuine phonetic
+variants in the phrase table instead. *Why:* the failure mode of a false positive here is Riki
+muting itself mid-fight, and the fuzzy matcher is exactly where that gets introduced.
+
 **2026-08-01 — measure playback from the signal, never from `response.output_audio.delta`.**
 That event does not exist on WebRTC — the audio is on the media track (research §2) — so a
 playback tracker keyed off it passes every WebSocket test and then never starts in production,

@@ -12,17 +12,18 @@
  * **Ducking is a no-op on macOS, by design and not by omission** (ADR-0020,
  * docs/research/audio-ducking-platform-support.md). Read those before "fixing" it.
  *
- * Implemented: the pure maths (`level`), rate conversion and PCM framing (`resample`), the
- * playback measurement barge-in depends on (`playback`), the ducking policy (`ducking`), and the
- * earcon specification table. Still contracts: `device` and `capture`, whose implementations need
- * `getUserMedia` and an `AudioContext` and therefore land with the voice window
- * (REPO_SKELETON.md §10 step 6/7). §15 of the design document maps each section to a file here.
+ * Fully implemented. `DeviceRegistry` and `CaptureGraph` take `navigator.mediaDevices` and the
+ * Web Audio nodes through structural ports rather than naming them, so the gate, the pre-roll and
+ * the device swap are all Tier 1 tests with no browser and no microphone. The one thing still
+ * outstanding is `EarconPlayer`, which needs a real `AudioContext` to make a sound and lands with
+ * the voice window; the specification table it plays from is here.
+ * §15 of the design document maps each section to a file here.
  */
 
 export type * from './types.js';
-export type * from './device.js';
-export type * from './capture.js';
 
+export * from './device.js';
+export * from './capture.js';
 export * from './level.js';
 export * from './resample.js';
 export * from './playback.js';

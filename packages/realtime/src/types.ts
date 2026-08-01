@@ -23,6 +23,15 @@ export type Unsubscribe = () => void;
 
 export interface Clock {
   now(): MonoMs;
+  /**
+   * Fires `fire` after `delayMs`, returning a canceller.
+   *
+   * Optional because most of this package only reads the clock. It exists because §5.4's commit
+   * grace has to be *bounded* — a wait for `speech_stopped` that never times out is a hung turn —
+   * and a bare `setTimeout` would make that 400 ms unassertable. Absent means "do not wait",
+   * which is safe: the turn submits immediately and may clip the tail.
+   */
+  schedule?(delayMs: number, fire: () => void): () => void;
 }
 
 export type SessionId = string & { readonly __brand: 'SessionId' };

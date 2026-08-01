@@ -16,8 +16,20 @@
  * level and playback tests need them now and none of them touches a device.
  */
 
+import {
+  createCaptureGraph,
+  type AudioGraphBackend,
+  type CaptureGraphOptions,
+} from '../capture.js';
 import type { CaptureGraph } from '../capture.js';
-import type { LevelSample, MicStream, Unsubscribe } from '../types.js';
+import type {
+  Clock,
+  LevelSample,
+  MicStream,
+  MonoMs,
+  OutboundTrack,
+  Unsubscribe,
+} from '../types.js';
 
 export interface ToneSpec {
   readonly hz: number;
@@ -49,7 +61,146 @@ export interface FakeAudioDevice {
   onDispose(listener: () => void): Unsubscribe;
 }
 
-export declare function createFakeAudioDevice(sampleRate?: number): FakeAudioDevice;
+/**
+ * The gate's gain, as the fake backend applies it.
+ *
+ * Ramps are modelled as instantaneous here: the ramp exists to avoid a click, which is an
+ * acoustic property no test asserts, while the *value* is what the privacy claim rests on. The
+ * ramp duration is recorded separately so a test can still assert it was non-zero.
+ */
+interface GateChange {
+  readonly value: number;
+  readonly rampMs: number;
+}
+
+interface FakeDeviceState {
+  gate: number;
+  readonly gateChanges: GateChange[];
+  readonly outboundFrames: Float32Array[];
+  readonly levelSamples: LevelSample[];
+  emitFrame: ((frame: Float32Array, at: MonoMs) => void) | null;
+  now: MonoMs;
+  stream: MicStream;
+  attached: boolean;
+  readonly disposeListeners: Set<() => void>;
+}
+
+export interface FakeAudioDeviceInternals extends FakeAudioDevice {
+  /** The backend a `CaptureGraph` is built over. Nothing here touches a real `AudioContext`. */
+  readonly backend: AudioGraphBackend;
+  readonly clock: Clock;
+  /** Gate transitions, in order, for asserting the ramp and the closed-by-default posture. */
+  gateChanges(): readonly GateChange[];
+  /** Records what the graph reported, so `levels()` has something to return. */
+  observe(sample: LevelSample): void;
+}
+
+export function createFakeAudioDevice(sampleRate = 48_000): FakeAudioDeviceInternals {
+  const state: FakeDeviceState = {
+    gate: 0,
+    gateChanges: [],
+    outboundFrames: [],
+    levelSamples: [],
+    emitFrame: null,
+    now: 0 as MonoMs,
+    stream: { id: 'fake-mic-1' },
+    attached: true,
+    disposeListeners: new Set(),
+  };
+
+  const outbound: OutboundTrack = { id: 'fake-outbound' };
+
+  const backend: AudioGraphBackend = {
+    outbound,
+    setGate(value, rampMs) {
+      state.gate = value;
+      state.gateChanges.push({ value, rampMs });
+    },
+    onAnalyserFrame(listener) {
+      state.emitFrame = listener;
+      return () => {
+        state.emitFrame = null;
+      };
+    },
+    replaceSource(stream) {
+      state.stream = stream;
+      state.attached = true;
+      return Promise.resolve();
+    },
+    setPreRoll() {
+      /* the delay line is not modelled: it shifts time, and the fake owns the clock */
+    },
+    dispose() {
+      for (const listener of state.disposeListeners) listener();
+      return Promise.resolve();
+    },
+  };
+
+  const advance = (frame: Float32Array): void => {
+    state.now = (state.now + (frame.length / sampleRate) * 1000) as MonoMs;
+    // The analyser is upstream of the gate and runs whenever the device is open (§3.2), so it
+    // sees the frame regardless. The outbound track sees it multiplied by the gate — which is
+    // the whole privacy claim, and it is an assertion about `outbound()` rather than a policy.
+    state.emitFrame?.(frame, state.now);
+    if (state.gate <= 0) return;
+    const gated = new Float32Array(frame.length);
+    for (let i = 0; i < frame.length; i += 1) gated[i] = (frame[i] ?? 0) * state.gate;
+    state.outboundFrames.push(gated);
+  };
+
+  return {
+    backend,
+    clock: { now: () => state.now },
+
+    get stream() {
+      return state.stream;
+    },
+
+    pushTone(spec) {
+      advance(generateTone(spec));
+    },
+
+    pushSilence(durationMs) {
+      advance(generateSilence(sampleRate, durationMs));
+    },
+
+    pushFrames(frames) {
+      for (const frame of frames) advance(frame);
+    },
+
+    outbound() {
+      return state.outboundFrames;
+    },
+
+    levels() {
+      return state.levelSamples;
+    },
+
+    gateChanges() {
+      return state.gateChanges;
+    },
+
+    observe(sample) {
+      state.levelSamples.push(sample);
+    },
+
+    detach() {
+      state.attached = false;
+      state.emitFrame = null;
+    },
+
+    attach() {
+      state.stream = { id: `fake-mic-${String(Date.now() % 1000)}` };
+      state.attached = true;
+      return state.stream;
+    },
+
+    onDispose(listener) {
+      state.disposeListeners.add(listener);
+      return () => state.disposeListeners.delete(listener);
+    },
+  };
+}
 
 // -----------------------------------------------------------------------------------------------
 // Signal generation and analysis — implemented, and device-free
@@ -142,4 +293,19 @@ export function concatFrames(frames: readonly Float32Array[]): Float32Array {
 }
 
 /** A `CaptureGraph` over a `FakeAudioDevice`, with an injected clock. No `AudioContext` anywhere. */
-export declare function createFakeCaptureGraph(device: FakeAudioDevice): CaptureGraph;
+export function createFakeCaptureGraph(
+  device: FakeAudioDeviceInternals,
+  options?: CaptureGraphOptions,
+): CaptureGraph {
+  const graph = createCaptureGraph({
+    backend: device.backend,
+    clock: device.clock,
+    ...(options === undefined ? {} : { options }),
+  });
+  // Wire the graph's own level output back into the device, so `device.levels()` reports what the
+  // graph actually emitted rather than a second, parallel measurement.
+  graph.onLevel((sample) => {
+    device.observe(sample);
+  });
+  return graph;
+}

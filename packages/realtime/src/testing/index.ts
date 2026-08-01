@@ -10,12 +10,10 @@
  * missing `conversation.item.truncate`, a `response.create` that raced the tail of the utterance,
  * a delete issued before its replacement summary. None of them is observable in a reply, so the
  * recording is the assertion (docs/design/voice-input-architecture.md §11).
- *
- * Contracts only.
  */
 
-import type { Unsubscribe, VoiceFault } from '../types.js';
-import type { RealtimeTransport } from '../transport.js';
+import type { MonoMs, Unsubscribe, VoiceFault } from '../types.js';
+import type { RealtimeTransport, TransportState } from '../transport.js';
 import type { ClientEvent, ServerEvent } from '../wire.js';
 
 export interface FixtureSession {
@@ -42,12 +40,125 @@ export interface FakeRealtimeTransport extends RealtimeTransport {
   onSend(listener: (event: ClientEvent) => void): Unsubscribe;
 }
 
-export declare function createFakeRealtimeTransport(): FakeRealtimeTransport;
+export function createFakeRealtimeTransport(): FakeRealtimeTransport {
+  const sent: ClientEvent[] = [];
+  const eventListeners = new Set<(event: ServerEvent) => void>();
+  const stateListeners = new Set<(state: TransportState) => void>();
+  const sendListeners = new Set<(event: ClientEvent) => void>();
+
+  let credentialValid = true;
+
+  const setState = (state: TransportState): void => {
+    for (const listener of stateListeners) listener(state);
+  };
+
+  const emit = (event: ServerEvent): void => {
+    for (const listener of eventListeners) listener(event);
+  };
+
+  return {
+    kind: 'fake',
+
+    connect(secret) {
+      setState('connecting');
+      if (!credentialValid || secret.value === '') {
+        setState('closed');
+        return Promise.reject(
+          Object.assign(new Error('The client secret has expired.'), {
+            kind: 'auth',
+            persistent: true,
+            retryable: false,
+          }),
+        );
+      }
+      setState('open');
+      emit({ type: 'session.created' });
+      return Promise.resolve();
+    },
+
+    send(event) {
+      sent.push(event);
+      for (const listener of sendListeners) listener(event);
+    },
+
+    close() {
+      setState('closed');
+      return Promise.resolve();
+    },
+
+    onEvent(listener) {
+      eventListeners.add(listener);
+      return () => eventListeners.delete(listener);
+    },
+
+    onStateChange(listener) {
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
+    },
+
+    // --- driving the fake ---
+
+    play(fixture) {
+      // Synchronously, and deliberately: a fixture that encoded wall-clock timing would make
+      // every test that reads it slow and flaky, and the ordering is what these tests assert.
+      for (const event of fixture.events) emit(event);
+      return Promise.resolve();
+    },
+
+    emit,
+
+    sent() {
+      return sent;
+    },
+
+    injectFault(fault: VoiceFault) {
+      emit({ type: 'error', code: fault.kind, message: fault.message });
+    },
+
+    dropConnection(during) {
+      // research §11.3 documents recurring "Realtime API not responding" periods. Mid-response is
+      // the one that matters: it leaves a turn with no ending, which is the hung-session shape.
+      if (during === 'response')
+        emit({ type: 'error', code: 'session_lost', message: 'Connection lost mid-response.' });
+      setState('closed');
+    },
+
+    expireCredential() {
+      credentialValid = false;
+    },
+
+    onSend(listener) {
+      sendListeners.add(listener);
+      return () => sendListeners.delete(listener);
+    },
+  };
+}
 
 /**
- * The corpus `fixtures/realtime/` needs, named here so an implementer adds them rather than
- * discovering later which ones are missing: a happy push-to-talk turn, a barge-in, a tool call
- * with a consent gate, a mid-response disconnect, a context-exhaustion sequence, and a 25-minute
- * session for the retention test.
+ * The corpus named in the contract, as constants so a test refers to a fixture by name rather
+ * than by a string literal that can drift from the filename.
  */
-export declare const REQUIRED_FIXTURES: readonly string[];
+export const REQUIRED_FIXTURES: readonly string[] = [
+  'ptt-turn.jsonl',
+  'barge-in.jsonl',
+  'tool-call-with-consent.jsonl',
+  'mid-response-disconnect.jsonl',
+  'context-exhaustion.jsonl',
+  'long-session-25min.jsonl',
+];
+
+/** A monotonic clock a test drives by hand. Nothing in this package reads a real one. */
+export class FakeClock {
+  #now: MonoMs;
+
+  constructor(start = 0) {
+    this.#now = start as MonoMs;
+  }
+
+  readonly now = (): MonoMs => this.#now;
+
+  advance(ms: number): MonoMs {
+    this.#now = (this.#now + ms) as MonoMs;
+    return this.#now;
+  }
+}

@@ -18,11 +18,18 @@
  *   the key press" (ui-design.md §3) possible at all. It costs `preRollMs` of latency on every
  *   utterance, by design, and it is allowed to be zero.
  *
- * See docs/design/voice-input-architecture.md §3.2–§3.5. Declarations only; the DOM-typed
- * constructor lands with the voice window (see types.ts).
+ * See docs/design/voice-input-architecture.md §3.2–§3.5.
+ *
+ * The graph is built through an injected `AudioGraphBackend` rather than against `AudioContext`
+ * directly. That is partly the `lib: ["ES2023"]` wall described in types.ts, and partly that the
+ * three properties above are the whole of what is worth testing here — the ramp, the gate's
+ * position relative to the track, and the delay — and all three are assertable against a fake
+ * backend that records what it was asked to do. A test against a real `AudioContext` would need
+ * a browser and would assert less.
  */
 
-import type { LevelSample, MicStream, OutboundTrack, Unsubscribe } from './types.js';
+import { envelope, isSilent, peak, rms } from './level.js';
+import type { Clock, LevelSample, MicStream, MonoMs, OutboundTrack, Unsubscribe } from './types.js';
 
 export interface CaptureGraphOptions {
   /** Default 200. Pure added latency against a ~1–1.5 s turnaround — architecture §3.3. */
@@ -62,4 +69,144 @@ export interface CaptureGraph {
   replaceStream(stream: MicStream): Promise<void>;
 
   dispose(): Promise<void>;
+}
+
+// -----------------------------------------------------------------------------------------------
+// Implementation
+// -----------------------------------------------------------------------------------------------
+
+export const DEFAULT_CAPTURE_OPTIONS: CaptureGraphOptions = {
+  preRollMs: 200,
+  gateRampMs: 8,
+  levelIntervalMs: 33,
+  silenceFloorDb: -50,
+};
+
+/**
+ * The Web Audio nodes this graph needs, and nothing else.
+ *
+ * `setGate` takes a ramp because a step change in gain is a click, and a click at the start of
+ * every utterance is both audible and something the server's VAD will occasionally read as
+ * speech (§3.2).
+ */
+export interface AudioGraphBackend {
+  /** The outbound track, created once and never replaced — swapping it would renegotiate SDP. */
+  readonly outbound: OutboundTrack;
+  /** Ramps the gate's gain to `value` over `rampMs`. 0 is shut, 1 is open. */
+  setGate(value: number, rampMs: number): void;
+  /** Pre-gate analyser frames, at roughly `levelIntervalMs`. Always running while open. */
+  onAnalyserFrame(listener: (frame: Float32Array, at: MonoMs) => void): Unsubscribe;
+  /** Swap the source node. Must not touch the gate, the delay or the track. */
+  replaceSource(stream: MicStream): Promise<void>;
+  setPreRoll(delayMs: number): void;
+  dispose(): Promise<void>;
+}
+
+export interface CaptureGraphDeps {
+  readonly backend: AudioGraphBackend;
+  readonly clock: Clock;
+  readonly options?: CaptureGraphOptions;
+}
+
+/**
+ * How long the level must stay under the floor before `speech.silence` fires.
+ *
+ * Debounce, not policy: the machine's own silence-nudge timer is the user-configurable one
+ * (ui-design §9.1). This only stops the gap between two words from firing it.
+ */
+const SILENCE_HOLD_MS = 250;
+
+export function createCaptureGraph(deps: CaptureGraphDeps): CaptureGraph {
+  const options = deps.options ?? DEFAULT_CAPTURE_OPTIONS;
+  const levelListeners = new Set<(sample: LevelSample) => void>();
+  const speechListeners = new Set<(event: 'silence' | 'resumed') => void>();
+
+  let open = false;
+  let level = 0;
+  let silent = false;
+  let quietSince: MonoMs | null = null;
+
+  deps.backend.setPreRoll(options.preRollMs);
+  deps.backend.setGate(0, 0);
+
+  const unsubscribe = deps.backend.onAnalyserFrame((frame, at) => {
+    const amplitude = rms(frame);
+    level = envelope(level, amplitude, {
+      attackMs: 10,
+      releaseMs: 180,
+      frameMs: options.levelIntervalMs,
+    });
+
+    const sample: LevelSample = { rms: level, peak: peak(frame), at };
+    for (const listener of levelListeners) listener(sample);
+
+    // Deliberately measured on the *raw* frame rather than the smoothed level: the release
+    // ballistics exist to make the bars readable, and inheriting them here would delay
+    // `speech.silence` by most of a release constant.
+    if (!isSilent({ rms: amplitude, peak: sample.peak, at }, options.silenceFloorDb)) {
+      quietSince = null;
+      if (silent) {
+        silent = false;
+        for (const listener of speechListeners) listener('resumed');
+      }
+      return;
+    }
+
+    quietSince ??= at;
+    if (!silent && at - quietSince >= SILENCE_HOLD_MS) {
+      silent = true;
+      for (const listener of speechListeners) listener('silence');
+    }
+  });
+
+  return {
+    outbound: deps.backend.outbound,
+
+    get isOpen() {
+      return open;
+    },
+
+    open() {
+      if (open) return;
+      open = true;
+      // A new turn starts as speaking, not as silence, or the chip dims on the first frame.
+      silent = false;
+      quietSince = null;
+      deps.backend.setGate(1, options.gateRampMs);
+    },
+
+    close() {
+      if (!open) return;
+      open = false;
+      deps.backend.setGate(0, options.gateRampMs);
+    },
+
+    onLevel(listener) {
+      levelListeners.add(listener);
+      return () => levelListeners.delete(listener);
+    },
+
+    onSpeech(listener) {
+      speechListeners.add(listener);
+      return () => speechListeners.delete(listener);
+    },
+
+    /**
+     * Swaps the microphone without touching the gate, the delay, the track identity or the peer
+     * connection — so unplugging a headset mid-match does not renegotiate SDP and does not
+     * interrupt a turn in flight (§3.5). The gate state is deliberately not reset: a swap during
+     * an open turn keeps the turn.
+     */
+    replaceStream(stream) {
+      return deps.backend.replaceSource(stream);
+    },
+
+    async dispose() {
+      unsubscribe();
+      levelListeners.clear();
+      speechListeners.clear();
+      open = false;
+      await deps.backend.dispose();
+    },
+  };
 }
