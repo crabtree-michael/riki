@@ -18,6 +18,9 @@ Docs are split by kind, because "design doc" was covering four different things:
 - [**dota2-state-capture-design.md**](design/dota2-state-capture-design.md) — how Riki observes a
   live match: GSI, the console log tailer, the capture/CV sidecar, fusion into a world model, and
   what the agent is shown.
+- [**state-capture-architecture.md**](design/state-capture-architecture.md) — the module and class
+  architecture that implements it: the fact envelope, the source interface, the fusion reducer and
+  its policies, and the read interface `context` and `events` consume.
 
 ## Research
 
@@ -38,6 +41,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0005](adr/0005-monorepo-and-protocol-package.md)         | Monorepo with a central protocol package | Accepted                                       |
 | [0006](adr/0006-env-var-api-key-for-alpha-beta.md)        | Env-var API key for alpha/beta           | Accepted, expected to be superseded            |
 | [0007](adr/0007-superpowers-plugin-enabled-by-default.md) | Superpowers plugin on by default         | Implemented (long-form; predates the template) |
+| [0008](adr/0008-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

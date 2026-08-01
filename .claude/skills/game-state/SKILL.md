@@ -48,11 +48,37 @@ you opened is not the file that is being written to ten minutes later.
 Riki may only reason about what the player can already see. If a fusion rule would surface
 something the player has no way to know, it is wrong regardless of how the data arrived.
 
+## Two clocks, and they are not interchangeable
+
+Wall time (local monotonic) and match time (`map.clock_time`) answer different questions, and the
+bug you will write is using one where the other belongs.
+
+**Tactical facts age in match time; pipeline facts age in wall time.** During a pause nothing on the
+map moves, so an enemy position from 10 s ago is still exactly true and must not expire — but a
+client that has not POSTed for 40 s of paused game is still gone. One `basis: 'wall' | 'game'` field
+on the age policy makes both correct through a pause without special-casing either.
+
 ## Learnings
 
-*(nothing yet — the first agent to learn something here adds the first entry)*
+**2026-08-01 — the class-level contract now exists, and it is a separate document.**
+`docs/design/dota2-state-capture-design.md` decides *what* is observed; **`docs/design/state-capture-architecture.md`**
+decides the module and class shape — the `Fact<T>` envelope, `ObservationSource`, the pure
+`FusionReducer`, the precedence matrix (§5.3, which is per *field class*, not global), and the read
+interface `context`/`events` get. Read it before writing anything in `gsi`, `log-tail` or
+`world-model`; the §5.3 table in particular answers "may CV write this field?" and the answer is not
+always the same for two fields in the same object. *Why:* the older doc's §4 is explicitly
+illustrative, and two agents reading it independently will not invent the same class boundaries.
+
+**2026-08-01 — "GSI beats CV" needs a freshness number to be implementable.** The rule as written in
+this skill is ambiguous about a *silent* GSI: if the client stopped POSTing 20 s ago, may a CV fact
+land on a GSI-owned field? The architecture answers it with a shadow window (2 s, tunable) rather
+than leaving it to each call site. *Why:* both readings are defensible, they produce opposite
+behaviour during a GSI dropout, and that dropout is exactly when Riki is most likely to say something
+wrong.
 
 ## See also
 
-`docs/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),
-§9 (failure modes); `REPO_SKELETON.md` §5.3 (tiers), §6.2 (module boundaries).
+`docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),
+§9 (failure modes); `docs/design/state-capture-architecture.md` (classes, method signatures, module
+boundaries); `docs/adr/0008-observation-reducer-seam.md`; `REPO_SKELETON.md` §5.3 (tiers),
+§6.2 (module boundaries).
