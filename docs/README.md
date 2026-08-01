@@ -15,6 +15,9 @@ Docs are split by kind, because "design doc" was covering four different things:
 
 - [**ui-design.md**](design/ui-design.md) — the overlay chip, its states and motion, the tray,
   hotkeys, accessibility, and the settings surface.
+- [**overlay-architecture.md**](design/overlay-architecture.md) — how that surface is built: the
+  interaction machine, the window, the preload bridge, and the seams between the overlay and the
+  voice system. Read it with `ui-design.md`, which is the *what* to its *how*.
 - [**dota2-state-capture-design.md**](design/dota2-state-capture-design.md) — how Riki observes a
   live match: GSI, the console log tailer, the capture/CV sidecar, fusion into a world model, and
   what the agent is shown.
@@ -42,9 +45,17 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0006](adr/0006-env-var-api-key-for-alpha-beta.md)        | Env-var API key for alpha/beta           | Accepted, expected to be superseded            |
 | [0007](adr/0007-superpowers-plugin-enabled-by-default.md) | Superpowers plugin on by default         | Implemented (long-form; predates the template) |
 | [0008](adr/0008-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
+| [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted — ⚠ number collides with the row above |
+| [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
+| [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
+
+Two agents landed an ADR-0008 in parallel and neither renumbered; both files are listed above so
+the second one is at least findable. Whoever next has reason to touch either should renumber one
+and fix its inbound links. **Claim the next free number by looking at `docs/adr/`, not at this
+table** — the table can lag by a commit.
 
 ## Runbooks
 
@@ -76,3 +87,5 @@ bottom of three separate documents where nobody found them. Full statements in
 | 4   | Rust vs. C++ for the sidecar — how mature are the WGC / ScreenCaptureKit bindings really?                              | During the CV spike                                       |
 | 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests | With `packages/context`                                   |
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
+| 7   | Does the Realtime session get its own hidden window, or does the overlay host it? ([ADR-0010](adr/0010-dedicated-voice-window.md), Proposed) | With `packages/realtime`                                  |
+| 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |

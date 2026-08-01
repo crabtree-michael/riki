@@ -610,3 +610,11 @@ Recorded so they do not get re-proposed:
 6. **Does Riki have anything to say unprompted?** Every state here is user-initiated. Proactive
    notifications would be a significant departure from principle 1 and should be designed
    separately, if at all.
+
+**1, 5 and 6 have since been answered** — see
+[overlay-architecture.md](overlay-architecture.md) §14, which records where and why. In short:
+1 is a narrow keyboard path scoped to Confirming, because a click-through window can take no
+pointer input at all; 5 needs no new state, since Speaking → trigger → Listening is already one
+edge; and 6 is *yes* — `dota2-state-capture-design.md` §6.4 has Riki speaking unprompted when the
+trigger policy fires, which adds a Hidden → Speaking transition this document does not have.
+2, 3 and 4 are still open, and **3 is still blocking**.
