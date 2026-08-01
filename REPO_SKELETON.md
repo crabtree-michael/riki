@@ -23,7 +23,7 @@ than from existing code. Sections marked ⚑ change if an assumption is wrong.
 | A1 | Riki is a desktop app: overlay chip + tray + voice, running alongside Dota 2 | `ui-design.md` §2 | ⚑ §1 Stack |
 | A2 | WebRTC is the Realtime transport, which means a Chromium-class renderer owns the mic | `openai-realtime-research.md` §2, §11.5 (AEC is mandatory) | ⚑ §1 Stack |
 | A3 | Capture + CV must be a **separate process**, perf-budgeted, and must not take the app down when it crashes | `dota2-state-capture-design.md` §3, §9 | ⚑ §2 `crates/` |
-| A4 | The OpenAI API key cannot ship in the binary, so a token-minting service exists | `openai-realtime-research.md` §9 | ⚑ §2 `services/` |
+| A4 | During alpha/beta, each developer supplies their own OpenAI API key via `RIKI_OPENAI_API_KEY` in a local `.env`. No minting service, no backend. | this document, §7 | ⚑ §7 config, §11.2 |
 | A5 | Multiple agents work in parallel and commit directly to `main` | `AGENTS.md` | ⚑ §2 ownership, §8 CI |
 | A6 | Agents cannot run Dota 2, cannot use a real microphone, and should not spend money on live Realtime sessions | — | ⚑ §5 (fixtures/replay are load-bearing) |
 
@@ -31,21 +31,27 @@ than from existing code. Sections marked ⚑ change if an assumption is wrong.
 cannot verify their own work, and every task ends with "untested, please check." The whole
 fixture-and-replay apparatus in §5.2 exists to make that impossible.
 
+**A4 is deliberately temporary.** `openai-realtime-research.md` §9 is right that an API key cannot
+ship inside a distributed binary — but nothing is being distributed yet. For alpha and beta the
+audience is the people building Riki, who need direct key access anyway, so the key comes from the
+developer's own environment. What replaces it at distribution time is an open question (§11.2), not
+a solved one; the code just has to keep that swap cheap. See §7.
+
 ---
 
 ## 1. Stack
 
 One decision up front, because the directory layout is downstream of it.
 
-**Electron (TypeScript) for the shell, voice, and world model; Rust for the capture/CV sidecar;
-a small Node service for token minting.**
+**Electron (TypeScript) for the shell, voice, and world model; Rust for the capture/CV sidecar.
+No backend** — per A4 the API key comes from the developer's environment.
 
 | Layer | Choice | Why |
 |---|---|---|
 | Shell / overlay / tray / hotkeys | **Electron + TypeScript** | The overlay is a click-through layered window with per-pixel alpha (`ui-design.md` §6.5) — a normal desktop window concern. Electron bundles Chromium, which is the only route that gives us WebRTC *and* known-good acoustic echo cancellation. AEC is not optional: `openai-realtime-research.md` §11.5 documents self-interruption loops as a reliable failure without it. Tauri's webview-per-OS AEC variance (§9 of the same doc) is exactly the risk we cannot absorb. |
 | GSI server, world model, context, events | **TypeScript, in the Electron main process** | `dota2-state-capture-design.md` §3: "the GSI server and world model are lightweight enough to share the main process." Inputs arrive at 2–8 Hz. This is not hot code. |
 | Capture + CV | **Rust, separate process** | Budget is ≤3% of one core, ≤200 MB RSS, ≤50 MB GPU memory, no measurable FPS delta (§9). That rules out Node and Python for the shipping path. Rust also gives clean bindings to WGC / PipeWire / ScreenCaptureKit. |
-| Token broker | **TypeScript (Node)** | Tiny. Shares the protocol and config packages. |
+| API credentials | **`RIKI_OPENAI_API_KEY` from the environment** | Alpha/beta only (A4). Resolved by `packages/config` in the Electron **main** process and injected into `packages/realtime`; it never crosses the preload bridge into the renderer. No service to run, deploy, or authenticate against. |
 
 ### Known tension, recorded rather than hidden
 
@@ -79,7 +85,7 @@ riki/
 ├── Cargo.toml                       Rust workspace
 ├── rustfmt.toml  clippy.toml  deny.toml
 ├── lefthook.yml                     git hooks
-├── .env.example                     every var, documented, no real values
+├── .env.example                     every var, documented, no real values (§7)
 ├── .gitattributes                   LFS rules for fixture frames
 ├── .gitignore
 │
@@ -109,7 +115,7 @@ riki/
 │   │                                message + generated JSON Schema + generated Rust types.
 │   │                                Changing this changes two languages — see §4.
 │   ├── config/                      layered config resolution + validation. The ONLY place
-│   │                                that reads process.env (§6.2, §7)
+│   │                                that reads process.env — including the API key (§6.2, §7)
 │   ├── gsi/                         GSI HTTP listener, auth, parsing, liveness/heartbeat
 │   ├── log-tail/                    console.log tailer: chat, kill feed, rotation handling
 │   ├── world-model/                 the model, fusion, provenance, staleness, confidence,
@@ -131,10 +137,6 @@ riki/
 │   ├── riki-cv/                     calibration, digit/icon template matching, minimap
 │   │                                detection, confidence scoring
 │   └── riki-ipc/                    sidecar side of packages/protocol (generated + handwritten)
-│
-├── services/
-│   └── token-broker/                mints ephemeral Realtime client secrets; rate limited;
-│                                    the real API key lives here and nowhere else
 │
 ├── fixtures/                        ⭐ what makes the repo workable without a game running
 │   ├── gsi/                         recorded GSI sessions, JSONL, one line per POST + ts
@@ -199,7 +201,8 @@ languages, and the dev tools all read from it.
 | Realtime session, barge-in, truncation | `packages/realtime` | realtime §2, §4, §5 |
 | Mic level, earcons, ducking, resampling | `packages/audio` | ui-design §7, realtime §3 |
 | Screen capture, calibration, minimap CV | `crates/riki-*` | dota2 §2.2 |
-| Ephemeral tokens | `services/token-broker` | realtime §6 |
+| API key resolution, `.env` handling | `packages/config` | §7 |
+| Authenticating a Realtime session with the key | `packages/realtime` | realtime §6 |
 | Anything crossing TS↔Rust | `packages/protocol` **first** | §4 |
 
 ---
@@ -216,7 +219,9 @@ reasoning. Three changes:
    documents. An ADR is one page: context, decision, consequences, status. Agents get a
    scannable list of what is already settled instead of re-litigating it. Seed with:
    ADR-0001 Electron shell · ADR-0002 WebRTC transport · ADR-0003 read-only observation only ·
-   ADR-0004 push-to-talk default · ADR-0005 monorepo + protocol package.
+   ADR-0004 push-to-talk default · ADR-0005 monorepo + protocol package ·
+   ADR-0006 env-var API key for alpha/beta, no minting service (§7.1, superseded when §11.2 is
+   decided — an ADR with a `Status` field is how that gets recorded rather than silently reversed).
 3. **`docs/README.md` as the index** — what exists, what is decided, what is open. The open
    questions currently sit at the bottom of three separate documents where nobody finds them.
 
@@ -228,7 +233,7 @@ mark the ones that are load-bearing, record rejected alternatives so they are no
 ## 4. The protocol package — rules
 
 `packages/protocol` defines every message crossing a process or language boundary: Electron main
-↔ renderer, Electron ↔ Rust sidecar, app ↔ token broker.
+↔ renderer, and Electron ↔ Rust sidecar.
 
 - **zod is the source of truth.** JSON Schema is generated from it; Rust types are generated from
   that JSON Schema into `crates/riki-ipc`. Generation runs in `pnpm codegen` and CI fails if the
@@ -331,7 +336,10 @@ not optional extras; each one guards something a doc flags as high-risk.
 | Colour as the only channel (ui-design §4.3) | Every state has a distinct glyph and motion signature; assert exhaustively over the state enum. |
 | Chat text leaving the machine by default (dota2 §7) | Egress test: with default config, assert chat text never reaches the outbound payload. |
 | Voice chat captured (dota2 §7) | Assert no capture path exists for game audio output. |
-| API key in the shipped bundle (realtime §9) | Build-artifact scan for key-shaped strings; `packages/realtime` must not read the key at all. |
+| API key baked into a build artifact (realtime §9) | Build-artifact scan for key-shaped strings. The key is only ever read from the environment at runtime by `packages/config`, so a key in a bundle means someone hardcoded one. |
+| API key reaching the renderer, a log, or a crash report (§7) | Assert the key is absent from the preload bridge surface and from anything `packages/telemetry` emits — the redaction rules cover it like chat text. Assert `packages/realtime` receives it injected and never reads `process.env` itself. |
+| A developer commits their `.env` | gitleaks (§6.1) plus an explicit `.gitignore` entry; a test asserts `.env` is ignored, since the whole scheme rests on that one line. |
+| Missing key degrades badly instead of cleanly (§7.1) | With `RIKI_OPENAI_API_KEY` unset, assert the app boots, reports voice as unavailable, and `pnpm dev:replay` still runs end to end. This is the state CI itself runs in, so a regression shows up immediately. |
 
 ### 5.5 What is genuinely hard to test, and what we do instead
 
@@ -398,13 +406,15 @@ must not happen, and they are worth the setup cost because they hold without any
 
 - **Module boundaries** (`eslint-plugin-boundaries`):
   - `packages/*` may not import from `apps/*`. Business logic stays testable.
-  - The `openai` SDK may only be imported by `packages/realtime` and `services/token-broker`.
+  - The `openai` SDK may only be imported by `packages/realtime`.
   - `packages/world-model` may not import `packages/realtime` — the model must not know it is
     feeding an LLM (`dota2-state-capture-design.md` §1: state and conversation rates are
     decoupled by design).
   - Renderer code may not import from `main/`; the preload bridge is the only path.
 - **`process.env` is readable only in `packages/config`.** Everything else takes injected config.
-  This is what makes config testable and keeps secrets traceable to one file.
+  This is what makes config testable and keeps secrets traceable to one file. It matters more now
+  that the API key arrives by environment variable (§7): one file to audit, and one file to change
+  when the key stops coming from `.env`.
 - **No `console.*` outside `packages/telemetry`.** Logs pass through redaction (chat text and
   Steam IDs, per `dota2-state-capture-design.md` §7) before they reach a sink.
 - **No raw colour literals in renderer code** — accents come from the token module in
@@ -425,12 +435,51 @@ Invalid config fails at startup with a readable message naming the offending key
 half-boots — a Riki that runs with a broken microphone setting and no error is exactly the
 failure `ui-design.md` §1.6 says to avoid.
 
-`.env.example` is committed with every variable documented and no real values:
+### 7.1 The API key
+
+**Alpha and beta use a plain environment variable.** Every developer brings their own OpenAI key:
 
 ```bash
-# --- Token broker (server-side only; never in a client build) ---
-RIKI_OPENAI_API_KEY=            # real key. Only services/token-broker reads this.
-RIKI_TOKEN_BROKER_URL=http://localhost:8787
+cp .env.example .env
+# then edit .env and set RIKI_OPENAI_API_KEY=sk-...
+```
+
+That is the whole setup. `pnpm setup` (§8.1) creates `.env` from the example if it is missing and
+prints the one line you still have to fill in. `packages/config` loads `.env` at startup.
+
+The key is **conditionally required**: absent, the app boots fine with voice disabled and says so
+in the UI — that is the mode fixtures, tests, and CI run in. Present but malformed, or absent when
+something asks for a live session, fails loudly with a message naming the variable and pointing at
+this section. What must not happen is discovering it on the first Realtime connection attempt, ten
+minutes into a game.
+
+Rules that come with it, all of them cheap:
+
+- **`.env` is gitignored, `.env.example` is committed.** The example carries every variable with
+  documentation and no real values. gitleaks (§6.1) is the backstop, but the `.gitignore` line is
+  the actual protection and §5.4 tests that it is there.
+- **The key is read in exactly one place** — `packages/config`, in the Electron **main** process —
+  and injected into `packages/realtime`. It does not cross the preload bridge, so the renderer
+  never sees it, and it is redacted by `packages/telemetry` alongside chat text and Steam IDs.
+- **Anything that costs money needs a real key, so it is not in CI.** Per §5.2 no test may require
+  a live OpenAI session; `FakeRealtimeTransport` covers the rest. CI runs with the variable unset,
+  which means an agent's `pnpm check` passes on a machine with no key at all.
+- **`pnpm dev:replay` needs no key either.** Fixtures drive the whole app. A key is only needed to
+  talk to a live model.
+
+This is a development-time arrangement, and it stops being adequate the moment Riki is distributed
+to someone who is not building it — see §11.2. Keeping the key confined to `packages/config` is
+what makes that later swap a one-file change.
+
+### 7.2 `.env.example`
+
+Committed with every variable documented and no real values:
+
+```bash
+# --- OpenAI (alpha/beta: your own key, your own .env — see §7.1) ---
+RIKI_OPENAI_API_KEY=            # your own key. Required only for live voice; leave blank to
+                                # run fixtures-only. Read by packages/config in the main
+                                # process and nowhere else. Never commit a filled-in .env.
 
 # --- Realtime ---
 RIKI_REALTIME_MODEL=gpt-realtime-2.1-mini   # mini by default; cost lever, realtime §10
@@ -456,8 +505,9 @@ RIKI_FAKE_VISION=0              # 1 → FakeVisionSidecar instead of the Rust pr
 
 Three rules:
 
-1. **Secrets never enter the desktop app's config surface.** `RIKI_OPENAI_API_KEY` is read by
-   `services/token-broker` only; a lint boundary and a build-artifact scan enforce it (§5.4).
+1. **Secrets stay in `.env` and in one module.** `RIKI_OPENAI_API_KEY` is read by
+   `packages/config` only, never hardcoded and never committed; a lint boundary, gitleaks, and a
+   build-artifact scan enforce it (§5.4, §6.2).
 2. **Privacy-relevant defaults are off**, and their defaults are asserted by tests, not just
    written down: captions off, unprompted speech off, chat egress off, debug frame capture off.
 3. **The GSI token is generated per install**, matching the cfg template in
@@ -474,11 +524,10 @@ One name per action, from the repo root. If a command is not here, it should be.
 | Command | Does |
 |---|---|
 | `pnpm install` | Node deps. `cargo build` is invoked by the dev/build scripts. |
-| `pnpm setup` | Install deps, fetch LFS fixtures, generate protocol types, install hooks. **One command for a fresh clone.** |
-| `pnpm dev` | Electron + Vite HMR + `cargo watch` on the sidecar |
-| `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota required.** |
-| `pnpm dev:broker` | Token broker locally on :8787 |
-| `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU. |
+| `pnpm setup` | Install deps, fetch LFS fixtures, generate protocol types, install hooks, create `.env` from `.env.example` if absent. **One command for a fresh clone.** |
+| `pnpm dev` | Electron + Vite HMR + `cargo watch` on the sidecar. Needs `RIKI_OPENAI_API_KEY` in `.env` for live voice (§7.1). |
+| `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota and no API key required.** |
+| `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU, no API key. |
 | `pnpm test:e2e` | Playwright against a built Electron app |
 | `pnpm lint` | ESLint + clippy + markdownlint + gitleaks |
 | `pnpm format` / `pnpm format:check` | Prettier + rustfmt |
@@ -555,11 +604,11 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 |---|---|---|
 | 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, CI | Everything. Nothing else should land before the gates exist. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
-| 3 | `packages/config` + `.env.example` | Every package that needs a setting |
+| 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The §12.1 milestone, and `pnpm dev:replay` |
 | 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration |
 | 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work |
-| 7 | `packages/realtime` + `FakeRealtimeTransport` + `services/token-broker` | Voice |
+| 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice |
 | 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in §12.3 |
 | 9 | `bench/` + `docs/adr/` seeded + runbooks | Release gating |
 
@@ -576,11 +625,21 @@ Flagged rather than assumed. Each needs a human call or a spike.
    memory. If the frame-time harness says Electron is too heavy on a median Dota machine, this
    inverts — and it inverts cheaply only if it happens before `apps/desktop` has real depth.
    **Decide before step 6.**
-2. **Does the token broker ship in v1?** It implies hosting, an account system, and rate limiting
-   for a product that otherwise has no backend (`openai-realtime-research.md` §9). The
-   alternative — a user-supplied API key in local config — removes the backend entirely at the
-   cost of a worse onboarding flow. This is a product decision with a real architectural
-   footprint.
+2. **How does a non-developer user get a key?** Settled for alpha and beta: the developer's own
+   `RIKI_OPENAI_API_KEY` in `.env` (A4, §7.1). Unsettled beyond that, and it is a product decision
+   with a real architectural footprint. Three options, none free:
+   - **User-supplied key in settings** — the env-var scheme with a UI on top. No backend, no
+     hosting, no account system; a bad onboarding flow and a user who has to hold an OpenAI
+     account and their own bill.
+   - **A token-minting service** — ephemeral client secrets, the shape
+     `openai-realtime-research.md` §9 argues for. Correct for a distributed binary, but it means
+     hosting, accounts, rate limiting (§12 of that doc: the mint endpoint becomes the abuse vector),
+     and billing for a product that otherwise has no server at all.
+   - **Bring-your-own-key with a hosted option later** — ship the first, add the second if the
+     audience widens.
+
+   **Decide before the first build goes to anyone outside the team.** Until then the cost of being
+   wrong is one file (`packages/config`), which is exactly why the key is confined there.
 3. **git-lfs for `fixtures/frames/`.** Correct technically; adds a setup step and a bandwidth
    cost. The alternative is a scripted download from object storage.
 4. **Rust vs. C++ for the sidecar.** Proposed Rust. Worth confirming against whatever WGC and
@@ -609,3 +668,5 @@ Recorded so they are not re-proposed.
 | A blanket coverage threshold | Pushes effort toward wiring code and away from `world-model` / `context` / `events`, where bugs become wrong advice in a player's ear |
 | Tests that drive a real Dota 2 client | Non-deterministic, impossible in CI, and impossible for the agents doing the work (A6) |
 | Mock-heavy unit tests over shared fakes | Divergent mocks per package drift from reality; shared fakes stay honest because `pnpm dev:replay` uses them too |
+| A token-minting service for alpha/beta | Hosting, accounts, and rate limiting to solve a distribution problem that does not exist while the only users are the people building Riki. `RIKI_OPENAI_API_KEY` in a local `.env` costs one line (§7.1). Revisit at distribution, not before (§11.2) |
+| The API key in the committed user config file or in `packages/realtime` directly | `.env` is gitignored and `packages/config` is the one module that reads the environment (§6.2). Both alternatives put a live key somewhere a lint rule cannot see it |
