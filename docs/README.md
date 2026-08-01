@@ -29,6 +29,15 @@ Docs are split by kind, because "design doc" was covering four different things:
   what happens when the agent asks Riki something: parsing and validating a tool call, the four
   ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it
   with `state-capture-architecture.md` §7, whose read interface it consumes.
+  **⚠ Slated for deletion** by [ADR-0023](adr/0023-coaching-replaces-command-execution.md) — read
+  `coaching-architecture.md` first, which says what replaces it and why.
+- [**coaching-architecture.md**](design/coaching-architecture.md) — the deletion plan for the
+  command execution system above, and the proactive coaching path that replaces it: what gets
+  removed and what must be salvaged first, how state capture and the memory layer feed a coaching
+  brief, how proactive triggering works, and where voice intents and the overlay route now that
+  there is nothing to execute. Spec and architecture only — §16 is the follow-up ticket list. The
+  trigger half has a sibling document, `coaching-trigger-architecture.md`, landing separately;
+  §6.6 records where the two designs meet.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -78,6 +87,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0020](adr/0020-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API             |
 | [0021](adr/0021-speech-occupies-the-window-as-audio.md)   | Speech is costed as audio, not as its transcript | Accepted, on one estimated constant    |
 | [0022](adr/0022-the-api-key-is-an-opaque-type.md)         | The API key is an opaque type            | Accepted — closes the accidental-log class     |
+| [0023](adr/0023-coaching-replaces-command-execution.md)   | Proactive coaching replaces command execution | **Proposed** — supersedes 0011, 0018, 0019 on acceptance |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -119,8 +129,8 @@ bottom of three separate documents where nobody found them. Full statements in
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
 | 7   | ~~Does the Realtime session get its own hidden window?~~ **Settled** — yes ([ADR-0010](adr/0010-dedicated-voice-window.md), now Accepted) | — |
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
-| 9   | May consent for `read_screen` be remembered for a match, or is it per call? Per call is the default until someone decides otherwise | Before `read_screen` ships                                |
-| 10  | Can the Realtime API emit more than one function call per response? It decides whether the command queue needs to exist at all | Before `packages/context/src/tools/queue.ts` is written   |
+| 9   | ~~May consent for `read_screen` be remembered for a match, or is it per call?~~ **Moot if [ADR-0023](adr/0023-coaching-replaces-command-execution.md) is accepted** — `read_screen` is deleted and nothing Riki does needs consent | — |
+| 10  | ~~Can the Realtime API emit more than one function call per response?~~ **Moot if [ADR-0023](adr/0023-coaching-replaces-command-execution.md) is accepted** — the command queue does not exist | — |
 | 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)) | Before `RetentionPolicy` numbers are load-bearing          |
 | 12  | Should durable player memory be on by default? [ADR-0013](adr/0013-durable-memory-is-typed-observations.md) says yes on structural grounds; REPO_SKELETON §7.2 says privacy-relevant defaults are off | With the first-run consent flow                           |
 | 13  | Does post-match review ship, and does the conversation ledger therefore persist? It holds the player's own voice transcript | Before post-match review is built                          |
@@ -128,3 +138,5 @@ bottom of three separate documents where nobody found them. Full statements in
 | 15  | Is `input_audio_buffer.commit` honoured on WebRTC with VAD on? If yes, every turn gets up to 400 ms faster ([voice-input §5.4](design/voice-input-architecture.md)) | Before the release→speaking budget is tuned                |
 | 16  | Does `turn_detection: 'none'` really disable server-side barge-in truncation? [ADR-0017](adr/0017-server-vad-on-with-response-creation-ours.md) assumes yes from the shape of the API, not from a documented statement | Before that ADR is treated as settled                      |
 | 17  | Is Riki's TTS intelligible over **un-ducked** Dota audio, and does output-side compression fix it? [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) removes ducking on the primary platform, which makes ui-design §7.2's "the player will just stop using the feature" unmitigated. A listening test, not a spike | Before voice ships to anyone outside the team |
+| 18  | Does a ~150-token focused coaching brief carry as much useful signal as a tool call did? The core bet of [ADR-0023](adr/0023-coaching-replaces-command-execution.md); if it is false, either the brief grows or some pull mechanism comes back ([coaching §12](design/coaching-architecture.md)) | Before the coaching brief's budget is load-bearing |
+| 19  | Is proactive coaching at the default thresholds welcome rather than irritating? dota2 §6.4 calls unprompted speech the feature most likely to make Riki annoying enough to uninstall, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md) makes it the primary path. Needs a person playing a real match, not a fixture | Before coaching ships to anyone outside the team |
