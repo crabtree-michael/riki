@@ -15,7 +15,7 @@ any are wrong, the sections marked ⚑ are the ones that change.
 |---|---|---|
 | A1 | Riki is a desktop companion app that runs alongside full-screen / borderless games | ⚑ §2 Surfaces |
 | A2 | Interaction is voice-in → voice-out, and the agent can also *take actions* (not just answer) | ⚑ §3 State model |
-| A3 | Windows is the primary target for players; Linux is the dev platform and a secondary target | ⚑ §6.4 Hotkey capture |
+| A3 | macOS is the primary target for players; Linux is the dev platform; Windows is a later target | ⚑ §6.4 Hotkey capture |
 | A4 | Speech recognition and/or inference may be remote, so multi-second latency is possible | ⚑ §8 Timing |
 | A5 | A meaningful share of users stream or record their gameplay | ⚑ §9.3 Streamers |
 
@@ -428,24 +428,51 @@ so the mitigation matters more than the choice:
 
 This is the highest-risk implementation area and it differs sharply by platform.
 
-- **Windows:** low-level keyboard hook (`WH_KEYBOARD_LL`) or Raw Input. Works with
-  borderless-windowed reliably; exclusive full-screen needs verification per title. Anti-cheat
-  interaction must be validated early — a global hook plus an always-on-top overlay is exactly
-  the shape anti-cheat systems flag. **This needs a spike before the UI is built on top of it.**
-- **Linux / X11:** `XGrabKey`, or evdev with the user in the `input` group.
-- **Linux / Wayland:** no global hotkey API by design. Requires the
+**Push-to-talk needs both key edges**, which rules out the obvious cross-platform answer before
+the platform split even starts: Electron's `globalShortcut` fires on key-*down* only, so it can
+open the mic and never close it. Every platform below therefore needs a lower-level path than
+the one Electron hands us. Per A3, macOS is the one that has to work.
+
+- **macOS (primary):** a `CGEventTap` on `keyDown`/`keyUp`/`flagsChanged`, or
+  `NSEvent.addGlobalMonitorForEvents`. Both are gated on the user granting **Accessibility**
+  (Input Monitoring for the tap, depending on placement) in System Settings › Privacy & Security.
+  This is the headline risk on the primary platform, and it fails in a specific, ugly way: the
+  tap installs successfully and simply delivers no events, so a denied permission is
+  indistinguishable from a broken app unless we check for it. Call
+  `AXIsProcessTrustedWithOptions` at startup, make the grant an explicit onboarding step, and
+  re-check on resume — the permission is revocable at any time and is dropped when the app
+  bundle's signature changes, which includes every unsigned dev build. **This needs a spike
+  before the UI is built on top of it.**
+- **Linux / X11 (dev platform):** `XGrabKey`, or evdev with the user in the `input` group.
+- **Linux / Wayland (dev platform):** no global hotkey API by design. Requires the
   `xdg-desktop-portal` `GlobalShortcuts` interface, which is not available on every compositor.
   Where it is missing, fall back to a tray-click or a bound mouse button, and say so plainly in
   onboarding rather than shipping a key that silently does nothing.
+- **Windows (later):** low-level keyboard hook (`WH_KEYBOARD_LL`) or Raw Input. Works with
+  borderless-windowed reliably; exclusive full-screen needs verification per title. No
+  permission gate, but the global hook is the shape anti-cheat systems flag — see §13.3.
 
 ### 6.5 Overlay rendering ⚑
 
-Same platform split. In preference order: a click-through layered window
-(`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`) which works for borderless-windowed
-and costs nothing; graphics-API hooking (Vulkan layer / DXGI present hook) only if exclusive
-full-screen support proves necessary — it is substantially more invasive and carries the same
-anti-cheat risk. Recommend shipping v1 as layered-window-only and documenting
-"use borderless windowed mode".
+Same platform split, and the same preference order everywhere: a click-through, non-activating
+desktop window, which costs nothing and needs no hook.
+
+- **macOS (primary):** a transparent, frameless `NSWindow` with `ignoresMouseEvents`, raised to
+  the `screen-saver` level. The macOS-specific trap is Spaces: a game in *native* full-screen
+  gets its own Space, and an always-on-top window will not be composited over it unless the
+  window opts in. In Electron terms that is
+  `setAlwaysOnTop(true, 'screen-saver')` **plus**
+  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` — the second call is the one
+  that is easy to omit and produces a chip that works perfectly in windowed mode and is invisible
+  in the only mode that matters. Assert it in the overlay e2e.
+- **Windows (later):** a layered window
+  (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`), which works for borderless-windowed.
+
+Graphics-API hooking (Metal layer / Vulkan layer / DXGI present hook) only if exclusive
+full-screen support proves necessary — it is substantially more invasive and carries the
+anti-cheat risk that §13.3 wants kept off the table. Recommend shipping v1 as
+desktop-window-only and documenting "use borderless windowed mode", which is also what the
+capture layer requires (`dota2-state-capture-design.md` §2.2).
 
 ---
 
@@ -600,10 +627,15 @@ Recorded so they do not get re-proposed:
    sufficiently deliberate.
 2. **Exclusive full-screen: required for v1?** Drives the §6.5 layered-window vs. API-hooking
    decision, and with it the anti-cheat risk profile. Recommend deferring the hook.
-3. **Anti-cheat clearance.** A global keyboard hook plus an always-on-top overlay needs testing
-   against EAC/BattlEye/Vanguard before this design is built on. **Blocking risk — spike first.**
-4. **Wayland coverage.** If Linux is a first-class target, the `GlobalShortcuts` portal gap
-   (§6.4) needs a decided fallback, not a runtime surprise.
+3. **Anti-cheat clearance.** A global key tap plus an always-on-top overlay needs testing against
+   VAC on the primary platform before this design is built on. **Blocking risk — spike first**;
+   see [the runbook](../runbooks/anticheat-validation.md).
+4. **macOS permission grants (§6.4, §6.5).** Push-to-talk needs Accessibility and capture needs
+   Screen Recording, both revocable and both silent when denied. The open question is not whether
+   we can request them but what Riki does when a user says no — degrade to tray-click and
+   GSI-only, or refuse to start? Needed before onboarding is designed. Wayland's
+   `GlobalShortcuts` portal gap is the same shape of problem but now only on the dev platform,
+   so it costs developer ergonomics rather than users.
 5. **Multi-turn conversation.** This design covers single request → response. Sustained
    back-and-forth may need a persistent "session active" affordance that the current state
    model does not have.

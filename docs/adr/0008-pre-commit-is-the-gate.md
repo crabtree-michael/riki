@@ -39,13 +39,16 @@ with a warm cargo cache.
 
 ## Consequences
 
-**The Windows matrix is gone, and that is the real cost.** §8.2 called it load-bearing: Linux is
-the dev platform, Windows is the shipping target, and `dota2-state-capture-design.md` §2.1 flags
-Linux/Proton GSI as historically buggy. Divergence will now surface in a bug report rather than a
-red build. Nothing in this repo currently compiles per-platform, so the loss is theoretical
-today, but it becomes real the moment `crates/riki-capture` grows a WGC backend. **A future CI
-should be reinstated for the platform matrix specifically** — not to re-run what pre-commit
-already covers.
+**The platform matrix is gone, and that is the real cost.** §8.2 called it load-bearing: Linux is
+the dev platform, macOS is the shipping target (`ui-design.md` A3), and
+`dota2-state-capture-design.md` §2.1 flags Linux/Proton GSI as historically buggy. Divergence
+will now surface in a bug report rather than a red build. Nothing in this repo currently compiles
+per-platform, so the loss is theoretical today, but it becomes real the moment
+`crates/riki-capture` grows a ScreenCaptureKit backend — and that is a sharper problem than the
+one this ADR was written against, because the shipping platform's capture backend cannot be
+compiled on the dev box *at all*. A `macos-latest` runner is the only thing that would type-check
+it. **A future CI should be reinstated for the platform matrix specifically** — not to re-run
+what pre-commit already covers.
 
 Also lost: the e2e and bench jobs have no home. They were never wired (the code does not exist —
 §10 step 6), so nothing regresses, but they now need a deliberate decision rather than an

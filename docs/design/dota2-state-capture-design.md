@@ -35,6 +35,11 @@ Valve's officially sanctioned integration. The client POSTs JSON to a local HTTP
 <steam>/steamapps/common/dota 2 beta/game/dota/cfg/gamestate_integration/gamestate_integration_riki.cfg
 ```
 
+`<steam>` is `~/Library/Application Support/Steam` on macOS (the primary target) and
+`~/.steam/steam` on Linux (the dev platform). `tools/setup-gsi-cfg/` resolves it rather than
+hardcoding either, because a library on an external volume is common enough on macOS to be worth
+handling — resolve through `libraryfolders.vdf` instead of assuming the default library.
+
 ```
 "Riki"
 {
@@ -73,7 +78,7 @@ What we get (player mode):
 
 **Rate.** `throttle` is the floor on inter-update spacing; `buffer` coalesces changes within a window. `0.1`/`0.1` targets ~10 Hz, but observed delivery is closer to **2–8 Hz and irregular**, and it varies with client load. Treat the rate as *unreliable* — never derive timing from update count, always from `map.clock_time` and a local monotonic clock. `heartbeat` guarantees a POST at least every 30 s even when nothing changes, which doubles as our liveness check.
 
-> **Verify before building:** exact throttle behaviour, and whether `buffer` can reorder. Linux/Proton has a history of GSI bugs (ValveSoftware/Dota-2 #2333, #1023) — validate the target platform early rather than assuming parity.
+> **Verify before building:** exact throttle behaviour, and whether `buffer` can reorder. Measure on macOS, which is the platform that has to be right — Dota 2 ships a native macOS client, so GSI there is on Valve's supported path rather than translated. Note that this inverts the usual dev-versus-ship risk: the *dev* platform is now the unreliable one, because Linux/Proton has a history of GSI bugs (ValveSoftware/Dota-2 #2333, #1023). A GSI oddity seen on the dev box is a Proton artefact until proven otherwise, and the fixture corpus — not the local client — is what the world model is developed against.
 
 ### 2.2 Screen capture + CV — secondary, probabilistic
 
@@ -90,11 +95,13 @@ Everything GSI won't tell us, and that the player can nonetheless see on screen:
 
 **Capture stack.** Per-platform, always **window-scoped, never full-desktop**:
 
-- **Windows:** `Windows.Graphics.Capture` (WGC) against the Dota 2 window handle. Frames stay on the GPU as D3D11 textures.
-- **Linux:** PipeWire via the `org.freedesktop.portal.ScreenCast` portal, window-restricted. (Note the GSI-on-Linux caveat above; Linux may end up vision-primary.)
-- **macOS:** ScreenCaptureKit with a window filter.
+- **macOS (primary):** ScreenCaptureKit, with an `SCContentFilter` restricted to the Dota 2 `SCWindow`. Frames arrive as `CVPixelBuffer`s backed by `IOSurface`, so they are already GPU-resident and the crop-first pipeline below holds — the crop is a Metal pass, not a readback. Requires macOS 12.3+ and the **Screen Recording** permission, which is the gating constraint: until it is granted the API returns black frames rather than an error, so the sidecar must detect black-frame output and surface it as a permission problem instead of a CV failure. Like Accessibility (`ui-design.md` §6.4) the grant is revocable and is invalidated when the app bundle's signature changes.
+- **Linux (dev platform):** PipeWire via the `org.freedesktop.portal.ScreenCast` portal, window-restricted. Needed so the sidecar can be developed and profiled on the dev box at all — see the note below.
+- **Windows (later):** `Windows.Graphics.Capture` (WGC) against the Dota 2 window handle. Frames stay on the GPU as D3D11 textures.
 
-Requires **borderless windowed** mode — exclusive fullscreen breaks or degrades window capture on all three platforms. Detect it and prompt the user once.
+Requires **borderless windowed** mode — exclusive fullscreen breaks or degrades window capture on all three platforms, and on macOS native fullscreen additionally moves the game to its own Space, which is what `ui-design.md` §6.5 has to work around for the overlay. Detect it and prompt the user once.
+
+> **The primary backend cannot be built or run on the dev platform.** ScreenCaptureKit needs macOS hardware; the dev box is Linux. This is the single biggest structural cost of the platform choice, and it has two consequences worth stating rather than discovering: the PipeWire backend earns its place as the one that keeps the pipeline developable day to day, and the `CaptureBackend` seam has to be genuinely narrow — frames in, cropped regions out — because everything above it (`riki-cv`, hashing, the whole budget in §1) must be exercisable against recorded frames with no backend at all. Anything that leaks a platform type above that seam is untestable for whoever does not own a Mac. Per-platform compilation is also exactly what [ADR-0008](../adr/0008-pre-commit-is-the-gate.md) gave up when CI was deleted.
 
 **Pipeline.** Crop-first is the whole performance story:
 
@@ -383,13 +390,14 @@ Cross-cutting principle: **degrade loudly to the developer, quietly to the user,
 
 ## 10. Open questions
 
-1. **GSI rate in practice** — measure real delivery rates and jitter across a full match on each platform before committing to the 5 Hz minimap budget.
-2. **Linux/Proton GSI viability** — known-buggy historically. May force vision-primary on Linux.
+1. **GSI rate in practice** — measure real delivery rates and jitter across a full match on macOS before committing to the 5 Hz minimap budget, then on the other platforms. The primary platform is the one the budget has to hold on.
+2. **Linux/Proton GSI viability** — known-buggy historically. Now a dev-platform question rather than a shipping one: if GSI is unreliable under Proton, the dev loop leans harder on fixtures and `pnpm dev:replay`, which is where it should have been anyway.
 3. **Minimap detection accuracy** — what F1 is actually achievable on 12 px icons during a chaotic teamfight? This is the load-bearing assumption of the whole CV layer and should be prototyped *first*, before any of the surrounding architecture.
 4. **Ward and creep-wave detection** — probably worth it, but needs a value/accuracy check.
 5. **Trigger threshold tuning** — needs real users. Start conservative.
 6. **Is a VLM fallback worth having at all**, or does the latency plus privacy cost exceed its value versus just saying "I can't see that"?
 7. **Valve's position** on this product category — worth asking directly rather than inferring.
+8. **macOS capture headroom** — the ≤3% of one core budget (§1) was reasoned about generically. ScreenCaptureKit on Apple Silicon and on Intel are different performance stories, and Dota 2 on macOS runs Vulkan through MoltenVK, so the GPU is already doing translation work Riki is now sharing. Measure on both before treating §1 as settled.
 
 ---
 

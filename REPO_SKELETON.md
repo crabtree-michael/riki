@@ -53,7 +53,7 @@ No backend** — per A4 the API key comes from the developer's environment.
 |---|---|---|
 | Shell / overlay / tray / hotkeys | **Electron + TypeScript** | The overlay is a click-through layered window with per-pixel alpha (`ui-design.md` §6.5) — a normal desktop window concern. Electron bundles Chromium, which is the only route that gives us WebRTC *and* known-good acoustic echo cancellation. AEC is not optional: `openai-realtime-research.md` §11.5 documents self-interruption loops as a reliable failure without it. Tauri's webview-per-OS AEC variance (§9 of the same doc) is exactly the risk we cannot absorb. |
 | GSI server, world model, context, events | **TypeScript, in the Electron main process** | `dota2-state-capture-design.md` §3: "the GSI server and world model are lightweight enough to share the main process." Inputs arrive at 2–8 Hz. This is not hot code. |
-| Capture + CV | **Rust, separate process** | Budget is ≤3% of one core with no measurable FPS delta (`dota2-state-capture-design.md` §1). That rules out Node and Python for the shipping path. Rust also gives clean bindings to WGC / PipeWire / ScreenCaptureKit. |
+| Capture + CV | **Rust, separate process** | Budget is ≤3% of one core with no measurable FPS delta (`dota2-state-capture-design.md` §1). That rules out Node and Python for the shipping path. Rust also gives clean bindings to ScreenCaptureKit / PipeWire / WGC — ScreenCaptureKit first, since macOS is the primary target (`ui-design.md` A3). |
 | API credentials | **`RIKI_OPENAI_API_KEY` from the environment** | Alpha/beta only (A4). Resolved by `packages/config` in the Electron **main** process and injected into `packages/realtime`; it never crosses the preload bridge into the renderer. No service to run, deploy, or authenticate against. |
 
 Alternatives and why not: pure Python (cannot meet the CV budget, no good overlay story); pure
@@ -127,7 +127,7 @@ riki/
 │
 ├── crates/                          Rust — the sidecar
 │   ├── riki-vision/                 the sidecar binary: supervisor-friendly, stdio protocol
-│   ├── riki-capture/                WGC (win) · PipeWire portal (linux) · ScreenCaptureKit (mac)
+│   ├── riki-capture/                ScreenCaptureKit (mac) · PipeWire portal (linux) · WGC (win)
 │   │                                GPU crop, downscale, region hashing
 │   ├── riki-cv/                     calibration, digit/icon template matching, minimap
 │   │                                detection, confidence scoring
@@ -587,12 +587,15 @@ and refuses `--no-verify`, `git commit -n`, `core.hooksPath` overrides and `LEFT
 covers agents, which is the point; it cannot bind a human at a terminal, and no client-side hook
 can.
 
-**What this gives up.** The deleted `ci.yml` ran a `ubuntu-latest` + `windows-latest` matrix, and
-§2.1 of `dota2-state-capture-design.md` flags Linux/Proton GSI as historically buggy — so
-platform divergence will now surface in a bug report rather than a red build. Nothing compiles
-per-platform yet, so the loss is theoretical until `crates/riki-capture` grows a WGC backend. **If
-CI comes back, it should come back for the platform matrix specifically**, plus the e2e and bench
-jobs that cannot run per-commit — not to duplicate what pre-commit already covers.
+**What this gives up.** The deleted `ci.yml` ran a `ubuntu-latest` + `windows-latest` matrix —
+which was already aimed at the wrong platform, since macOS is the shipping target
+(`ui-design.md` A3) and §2.1 of `dota2-state-capture-design.md` flags Linux/Proton GSI as
+historically buggy. Platform divergence will now surface in a bug report rather than a red build.
+Nothing compiles per-platform yet, so the loss is theoretical until `crates/riki-capture` grows a
+ScreenCaptureKit backend — at which point it stops being theoretical fast, because that backend
+cannot be compiled on the Linux dev box at all. **If CI comes back, it should come back for a
+`macos-latest` job specifically**, plus the e2e and bench jobs that cannot run per-commit — not
+to duplicate what pre-commit already covers.
 
 ### 8.3 Fixture management
 
@@ -691,8 +694,11 @@ Flagged rather than assumed. Each needs a human call or a spike.
    wrong is one file (`packages/config`), which is exactly why the key is confined there.
 3. **git-lfs for `fixtures/frames/`.** Correct technically; adds a setup step and a bandwidth
    cost. The alternative is a scripted download from object storage.
-4. **Rust vs. C++ for the sidecar.** Proposed Rust. Worth confirming against whatever WGC and
-   ScreenCaptureKit binding maturity actually looks like when someone builds the dota2 §11.3 spike.
+4. **Rust vs. C++ for the sidecar.** Proposed Rust. Worth confirming against whatever
+   ScreenCaptureKit binding maturity actually looks like when someone builds the dota2 §11.3
+   spike — that is the binding that decides it, since macOS is the primary target and
+   ScreenCaptureKit is an Objective-C API reached through `objc2`-style bindings rather than a
+   C ABI.
 5. **Where does the agent's prompt/persona live?** It is neither code nor doc exactly. Proposal:
    versioned prompt files in `packages/context/prompts/` with golden tests, so a persona change
    shows up as a reviewable diff.

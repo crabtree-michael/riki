@@ -1,6 +1,6 @@
 ---
 name: vision-sidecar
-description: The Rust capture and computer-vision sidecar in `crates/` — window-scoped capture on WGC/PipeWire/ScreenCaptureKit, GPU crop-first pipeline, region hashing, template matching, and the performance budget. Also covers the read-only observation rule that keeps Riki VAC-safe. Use when working on capture, CV, the sidecar process or its benchmarks.
+description: The Rust capture and computer-vision sidecar in `crates/` — window-scoped capture on ScreenCaptureKit/PipeWire/WGC, GPU crop-first pipeline, region hashing, template matching, and the performance budget. Also covers the read-only observation rule that keeps Riki VAC-safe. Use when working on capture, CV, the sidecar process or its benchmarks.
 ---
 
 # The capture and CV sidecar
@@ -18,6 +18,15 @@ Capture is **window-scoped, never full-desktop**, on all three platforms. That i
 rule as much as a technical one — the player's other windows are not ours to see. Borderless
 windowed mode is required; exclusive fullscreen degrades or breaks window capture
 everywhere, so detect it and prompt once.
+
+**The primary backend is ScreenCaptureKit, and you probably cannot run it.** macOS is the
+shipping target (`ui-design.md` A3) but the dev box is Linux, so PipeWire is what keeps the
+pipeline developable and ScreenCaptureKit is what has to be correct. Two working rules
+follow: keep the `CaptureBackend` seam narrow — frames in, cropped regions out — so nothing
+platform-specific leaks up into `riki-cv`, and make every layer above it exercisable against
+recorded frames with no backend at all. macOS also gates capture behind the **Screen
+Recording** permission, which returns black frames rather than an error when denied; detect
+that and report it as a permission problem, not a CV failure.
 
 ## 2. The performance budget is the feature
 

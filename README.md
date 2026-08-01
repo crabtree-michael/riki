@@ -20,6 +20,21 @@ pnpm check     # lint + format + typecheck + test + codegen — the whole gate
 No Dota 2, microphone, GPU, or OpenAI API key required. That is enforced, not aspirational: no
 test may depend on any of them.
 
+## Platforms
+
+**macOS is the primary target.** Dota 2 ships a native macOS client, so Game State Integration
+runs on Valve's supported path there, and capture uses ScreenCaptureKit.
+
+**Linux is the development platform, not a shipping target.** Everything above the capture
+backend is built and tested there; the pieces that cannot be — ScreenCaptureKit, the global key
+tap, `setContentProtection` — are the pieces that need a Mac and a
+[spike](docs/runbooks/anticheat-validation.md) before anything is built on them. **Windows is a
+later target.** Its capture backend (WGC) is designed for but not started.
+
+Two macOS permissions gate the product and both fail silently when denied — Screen Recording
+returns black frames, Accessibility delivers no key events. Detecting and reporting them is a
+requirement, not polish. See [ui-design.md](docs/design/ui-design.md) §6.4–6.5.
+
 ## Layout
 
 | Directory       | What lives there                                                                                                     |

@@ -22,8 +22,11 @@ auth token.
 - **In a live game GSI exposes only the local player.** Full ten-player data, `minimap`,
   `roshan` and `couriers` are gated to spectators. Valve did that deliberately, and it is
   the entire justification for the vision layer. Do not look for a way around it.
-- **Linux/Proton GSI has a history of bugs.** Validate on the target platform early rather
-  than assuming parity with Windows.
+- **macOS is the primary target; Linux is only the dev platform.** Dota 2 ships a native
+  macOS client, so GSI there is on Valve's supported path — but Linux/Proton GSI has a
+  history of bugs, which means the *dev box* is the unreliable one. Treat a GSI oddity seen
+  locally as a Proton artefact until proven otherwise, and develop against the fixture
+  corpus rather than a local client.
 
 ## Console log (`packages/log-tail`)
 

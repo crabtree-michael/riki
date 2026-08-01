@@ -19,8 +19,11 @@ install does.
 - The mic is closed except while the key is held, which makes the privacy story explainable in
   one sentence rather than a paragraph of qualifications.
 - Zero false triggers from teammates on voice comms or from game audio.
-- It makes the global hotkey layer load-bearing, and Linux/Wayland has no global hotkey API by
-  design. The anti-cheat and hotkey-capture spike must land before UI is built on top of it.
+- It makes the global hotkey layer load-bearing, and holding a key needs both edges — which
+  Electron's `globalShortcut` does not deliver on any platform. On macOS, the primary target,
+  that means a `CGEventTap` behind a user-granted Accessibility permission that is revocable and
+  silent when denied; on the Linux dev platform, Wayland has no global hotkey API by design. The
+  anti-cheat and hotkey-capture spike must land before UI is built on top of it.
 - The ≤100 ms key-down → chip-visible budget becomes a product requirement, tested end to end.
 
 ## Alternatives rejected

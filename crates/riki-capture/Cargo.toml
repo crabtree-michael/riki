@@ -1,6 +1,6 @@
 [package]
 name = "riki-capture"
-description = "Screen capture: WGC (Windows), PipeWire portal (Linux), ScreenCaptureKit (macOS); GPU crop, downscale, region hashing"
+description = "Screen capture: ScreenCaptureKit (macOS), PipeWire portal (Linux), WGC (Windows); GPU crop, downscale, region hashing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

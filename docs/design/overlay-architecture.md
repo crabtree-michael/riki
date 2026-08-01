@@ -190,10 +190,12 @@ Four properties of this configuration carry design decisions rather than taste:
   after `show()`, which spends the entire budget on something invisible in a profile.
 - **`focusable: false` + `setIgnoreMouseEvents(true)`.** The overlay must never steal focus from
   the game; combined they also mean the chip can carry no clickable affordance (§1.1).
-- **`setContentProtection(true)` is not portable.** It maps to window-affinity on Windows and to
-  a sharing exclusion on macOS; on Linux/X11 there is no equivalent. The setting must report what
-  it actually achieved rather than claiming an exclusion it did not get — a streamer discovering
-  the chip in their VOD is exactly the failure ui-design §9.3 is trying to avoid.
+- **`setContentProtection(true)` is not portable.** On macOS — the primary target, per ui-design
+  A3 — it maps to `NSWindowSharingType.none`, so the feature does work where it matters most; on
+  Windows it maps to window-affinity; on Linux/X11 there is no equivalent, which means the dev
+  platform is the one where this cannot be exercised. The setting must report what it actually
+  achieved rather than claiming an exclusion it did not get — a streamer discovering the chip in
+  their VOD is exactly the failure ui-design §9.3 is trying to avoid.
 
 ### 3.4 One window size, not one per state
 
@@ -876,8 +878,9 @@ has been measured against a game on this project's hardware. Before step 6 depen
 |---|---|---|
 | A warmed, hidden window shows in ≤100 ms including first paint | Instrument `showFast()` → `intent: paint` on a real build | The chip needs a persistent 1×1 window or a pre-rendered bitmap path |
 | `backgroundThrottling: false` keeps a hidden renderer's rAF alive | Frame counter while hidden | Warm the renderer with a periodic no-op instead |
-| `setContentProtection` excludes the overlay from OBS on Windows | Capture with OBS, both game-capture and display-capture | Say so plainly in settings; do not claim an exclusion we do not have |
+| `setContentProtection` excludes the overlay from OBS on macOS | Capture with OBS, both game-capture and display-capture | Say so plainly in settings; do not claim an exclusion we do not have |
 | `setIgnoreMouseEvents` + `alwaysOnTop` survive borderless-windowed Dota | Manual, with the anti-cheat spike (B1) | The whole surface changes — see ui-design §6.5 |
+| The chip renders over Dota in macOS *native* fullscreen, given `screen-saver` level plus `visibleOnFullScreen` | Manual, on a Mac, both fullscreen modes | Borderless-windowed becomes a hard requirement rather than a recommendation, and onboarding has to enforce it |
 | 30 Hz IPC of level frames costs nothing measurable | `bench/frametime` with the chip visible | Move levels to a `SharedArrayBuffer` ring |
 
 ---

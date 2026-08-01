@@ -104,7 +104,7 @@ bottom of three separate documents where nobody found them. Full statements in
 | 1   | Electron vs. Tauri — does Electron's memory footprint survive the frame-time harness on a median machine?              | Before `apps/desktop` gains real depth                    |
 | 2   | How does a non-developer user get an API key?                                                                          | Before the first build goes to anyone outside the team    |
 | 3   | git-lfs for `fixtures/frames/`, or a scripted download from object storage?                                            | Before the frame corpus grows                             |
-| 4   | Rust vs. C++ for the sidecar — how mature are the WGC / ScreenCaptureKit bindings really?                              | During the CV spike                                       |
+| 4   | Rust vs. C++ for the sidecar — how mature are the ScreenCaptureKit bindings really?                                    | During the CV spike                                       |
 | 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests | With `packages/context`                                   |
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
 | 7   | ~~Does the Realtime session get its own hidden window?~~ **Settled** — yes ([ADR-0010](adr/0010-dedicated-voice-window.md), now Accepted) | — |
