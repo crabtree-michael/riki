@@ -1,6 +1,6 @@
 # ADR-0010: A dedicated hidden window owns the microphone, not the overlay
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-01
 
 ## Context
@@ -34,9 +34,12 @@ overlay window.
   Electron's footprint is already the open question in REPO_SKELETON §11.1.
 - Level frames take one extra hop. At 30 Hz against a 250 ms budget this is not measurable, but
   it is one more thing between the mic and the bars.
-- It constrains `packages/realtime`'s host, which is why this is Proposed rather than Accepted:
-  the agent who builds that package owns the decision and may have a reason to fold the two
-  windows together.
+- It constrains `packages/realtime`'s host, which is why this was raised as Proposed. **Accepted
+  on 2026-08-01 by [voice-input-architecture.md](../design/voice-input-architecture.md)**, which
+  found a second reason to want it: under ADR-0016 the capture device is open for the whole match,
+  so the audio graph has a lifetime measured in tens of minutes while the overlay window's is
+  measured in key presses. Folding them together would put a 40-minute object inside a window
+  designed to be cheap to destroy.
 
 ## Alternatives rejected
 

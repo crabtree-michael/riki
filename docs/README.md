@@ -33,6 +33,11 @@ Docs are split by kind, because "design doc" was covering four different things:
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
   ledger, coaching memory, the context-window retention policy, and durable cross-match player
   memory. The other half of `packages/context`, alongside the command architecture above.
+- [**voice-input-architecture.md**](design/voice-input-architecture.md) — the voice path end to
+  end: microphone capture and gating, the real-time audio pipeline, the Realtime session and its
+  turn-taking, transcription and local command parsing, and the class structure of
+  `packages/audio` and `packages/realtime`. Read it with `openai-realtime-research.md`, which is
+  what the API does to its what-we-do-about-it.
 
 ## Research
 
@@ -55,11 +60,14 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0007](adr/0007-superpowers-plugin-enabled-by-default.md) | Superpowers plugin on by default         | Implemented (long-form; predates the template) |
 | [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted                                       |
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
-| [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
+| [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Accepted (by `packages/realtime`, 2026-08-01)  |
 | [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
 | [0012](adr/0012-conversation-ledger-is-ours.md)           | Riki keeps its own conversation ledger   | Accepted                                       |
 | [0013](adr/0013-durable-memory-is-typed-observations.md)  | Durable memory is typed, local, no free text | Accepted, one default needs a human call   |
 | [0014](adr/0014-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
+| [0015](adr/0015-ephemeral-client-secret-minted-in-main.md) | Main mints the ephemeral client secret  | Accepted                                       |
+| [0016](adr/0016-mic-open-for-the-match-gate-in-the-graph.md) | Mic open per match; the gate is ours  | Accepted                                       |
+| [0017](adr/0017-server-vad-on-with-response-creation-ours.md) | Server VAD on, response creation ours | Accepted, on one unverified claim              |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -99,10 +107,13 @@ bottom of three separate documents where nobody found them. Full statements in
 | 4   | Rust vs. C++ for the sidecar — how mature are the WGC / ScreenCaptureKit bindings really?                              | During the CV spike                                       |
 | 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests | With `packages/context`                                   |
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
-| 7   | Does the Realtime session get its own hidden window, or does the overlay host it? ([ADR-0010](adr/0010-dedicated-voice-window.md), Proposed) | With `packages/realtime`                                  |
+| 7   | ~~Does the Realtime session get its own hidden window?~~ **Settled** — yes ([ADR-0010](adr/0010-dedicated-voice-window.md), now Accepted) | — |
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
 | 9   | May consent for `read_screen` be remembered for a match, or is it per call? Per call is the default until someone decides otherwise | Before `read_screen` ships                                |
 | 10  | Can the Realtime API emit more than one function call per response? It decides whether the command queue needs to exist at all | Before `packages/context/src/tools/queue.ts` is written   |
 | 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)) | Before `RetentionPolicy` numbers are load-bearing          |
 | 12  | Should durable player memory be on by default? [ADR-0013](adr/0013-durable-memory-is-typed-observations.md) says yes on structural grounds; REPO_SKELETON §7.2 says privacy-relevant defaults are off | With the first-run consent flow                           |
 | 13  | Does post-match review ship, and does the conversation ledger therefore persist? It holds the player's own voice transcript | Before post-match review is built                          |
+| 14  | Does Chromium's echo cancellation survive a `getUserMedia` stream routed through Web Audio? A tone and an analyser answer it ([voice-input §3.4](design/voice-input-architecture.md)) | **Blocking** — before the capture graph or its pre-roll is built |
+| 15  | Is `input_audio_buffer.commit` honoured on WebRTC with VAD on? If yes, every turn gets up to 400 ms faster ([voice-input §5.4](design/voice-input-architecture.md)) | Before the release→speaking budget is tuned                |
+| 16  | Does `turn_detection: 'none'` really disable server-side barge-in truncation? [ADR-0017](adr/0017-server-vad-on-with-response-creation-ours.md) assumes yes from the shape of the API, not from a documented statement | Before that ADR is treated as settled                      |
