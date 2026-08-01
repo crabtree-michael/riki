@@ -53,17 +53,6 @@ export const models = {
     bars: 'sweep',
   }),
 
-  confirming: (): ChipViewModel => ({
-    ...BASE,
-    state: 'confirming',
-    glyph: 'query',
-    accent: 'confirm',
-    motion: 'none',
-    bars: 'none',
-    text: { primary: 'Look at your screen?', hint: '[Y] yes   [N] no' },
-    affordances: ['confirm'],
-  }),
-
   speaking: (): ChipViewModel => ({
     ...BASE,
     state: 'speaking',

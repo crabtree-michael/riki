@@ -14,7 +14,6 @@
 
 import type { ChipViewModel, Millis, TrayGlyph, Unsubscribe } from '../../shared/overlay.js';
 import type {
-  ConfirmKey,
   EarconId,
   MachineEnvironment,
   MachineInput,
@@ -40,7 +39,7 @@ export interface Clock {
   cancelAll(): void;
 }
 
-/** Effects leave the runtime through these four sinks and nowhere else. */
+/** Effects leave the runtime through these three sinks and nowhere else. */
 export interface VoiceCommandSink {
   send(command: VoiceCommand): void;
 }
@@ -48,12 +47,6 @@ export interface VoiceCommandSink {
 export interface AudioEffectSink {
   earcon(sound: EarconId): void;
   duck(on: boolean): void;
-}
-
-export interface ConfirmKeyGrabber {
-  /** Scoped to Confirming. A permanently grabbed `Y` would eat a game binding mid-match (§4.4). */
-  grab(keys: readonly ConfirmKey[]): void;
-  release(): void;
 }
 
 export interface TelemetrySink {
@@ -70,7 +63,6 @@ export interface SessionRuntimeDeps {
   readonly tray: TrayEffectSink;
   readonly voice: VoiceCommandSink;
   readonly audio: AudioEffectSink;
-  readonly keys: ConfirmKeyGrabber;
   readonly telemetry: TelemetrySink;
 }
 

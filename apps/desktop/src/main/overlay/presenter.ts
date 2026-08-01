@@ -62,7 +62,6 @@ export function createOverlayPresenter(deps: OverlayPresenterDeps): OverlayPrese
         return;
 
       case 'cancel':
-      case 'confirm':
         for (const listener of [...intentListeners]) listener(intent);
         return;
     }

@@ -30,9 +30,7 @@ import {
   HIDE_HOLD_MS,
 } from './timing.js';
 import type {
-  ActingVerb,
   CaptureMode,
-  ConfirmKey,
   Effect,
   EarconId,
   Fault,
@@ -145,10 +143,6 @@ function duck(d: Draft, on: boolean): void {
   d.effects.push({ kind: 'duck', on });
 }
 
-function keys(d: Draft, grab: readonly ConfirmKey[]): void {
-  d.effects.push({ kind: 'keys', grab });
-}
-
 function voice(d: Draft, command: VoiceCommand): void {
   d.effects.push({ kind: 'voice', command });
 }
@@ -170,8 +164,8 @@ function forget(d: Draft, id: TimerId): void {
 
 /**
  * Enter a phase. Cancels every pending timer except those explicitly kept, and runs the exit and
- * entry work that belongs to a phase rather than to any one edge — releasing the confirm keys,
- * and turning ducking on and off with Speaking.
+ * entry work that belongs to a phase rather than to any one edge — which is now only ducking,
+ * turned on and off with Speaking.
  */
 function enter(d: Draft, next: Phase, now: Millis, keep: readonly TimerId[] = []): void {
   const previous = d.phase;
@@ -180,14 +174,11 @@ function enter(d: Draft, next: Phase, now: Millis, keep: readonly TimerId[] = []
     if (!keep.includes(timer.id)) cancel(d, timer.id);
   }
 
-  if (previous.kind === 'confirming' && next.kind !== 'confirming') keys(d, []);
   if (previous.kind === 'speaking' && next.kind !== 'speaking') duck(d, false);
 
   d.phase = next;
   d.since = now;
 
-  if (next.kind === 'confirming' && previous.kind !== 'confirming')
-    keys(d, ['yes', 'no', 'escape']);
   if (next.kind === 'speaking' && previous.kind !== 'speaking') duck(d, true);
 }
 
@@ -270,26 +261,8 @@ function raiseFault(d: Draft, fault: Fault, now: Millis): void {
   project(d);
 }
 
-function resolveConsent(d: Draft, granted: boolean, now: Millis): void {
-  if (d.phase.kind !== 'confirming') return;
-  voice(d, { kind: 'consent', promptId: d.phase.prompt.id, granted });
-  // Either answer returns to Processing. Granted does not go straight to Acting: the tool's own
-  // `tool.started` input owns that edge, so Acting has exactly one source (§4.4).
-  enter(d, { kind: 'processing', startedAt: now }, now);
-  schedule(d, 'elapsed-hint', ELAPSED_HINT_MS, now);
-  schedule(d, 'cancel-hint', CANCEL_HINT_MS, now);
-  project(d);
-}
-
 function cancelInteraction(d: Draft, now: Millis): void {
   if (d.phase.kind === 'idle') return;
-  if (d.phase.kind === 'confirming') {
-    // Esc is one of the grabbed confirm keys, so it denies — but it is also Esc, which
-    // ui-design.md §3.1 defines as "return to Hidden without executing". Both, in that order: the
-    // voice side is told the answer so it is not left waiting, and then the turn goes away. `N`
-    // is the other answer, and it is deliberately different — it means "no, but carry on".
-    voice(d, { kind: 'consent', promptId: d.phase.prompt.id, granted: false });
-  }
   voice(d, { kind: 'abort' });
   toIdle(d, now);
 }
@@ -331,26 +304,13 @@ function apply(d: Draft, input: MachineInput, now: Millis): void {
       applyTurn(d, input.event, now);
       return;
 
-    case 'tool':
-      if (input.event === 'started') toActing(d, input.verb, now);
-      else if (d.phase.kind === 'acting') toProcessing(d, now, { earcon: false });
-      return;
-
-    case 'consent':
-      if (input.event === 'requested') toConfirming(d, input.prompt, now);
-      else if (d.phase.kind === 'confirming') {
-        // Resolved somewhere else — by voice, or by the session ending. No consent command: we
-        // are being told the outcome, not deciding it.
-        enter(d, { kind: 'processing', startedAt: now }, now);
-        schedule(d, 'elapsed-hint', ELAPSED_HINT_MS, now);
-        schedule(d, 'cancel-hint', CANCEL_HINT_MS, now);
-        project(d);
-      }
-      return;
-
     case 'unprompted':
       // Idle → Speaking with no gesture behind it (§9.3). No Armed, and no earcon: the voice
       // starting is its own cue. Never while muted, and never on top of an active interaction.
+      //
+      // Under ADR-0023 this is the *primary* path rather than one of two, which is why §7.1's
+      // local `quiet-mode` parser matters more than it used to: it is the off switch, and it must
+      // work with the model down.
       if (d.muted || d.phase.kind !== 'idle') return;
       enter(d, { kind: 'speaking', unprompted: true }, now);
       show(d);
@@ -384,13 +344,8 @@ function applyTrigger(d: Draft, event: TriggerEvent, now: Millis): void {
     cancelInteraction(d, now);
     return;
   }
-  if (event.kind === 'confirm') {
-    resolveConsent(d, event.answer, now);
-    return;
-  }
-
-  // Muted suppresses every capture gesture. Cancel and confirm above still work, because they end
-  // things rather than start them.
+  // Muted suppresses every capture gesture. Cancel above still works, because it ends things
+  // rather than starting them.
   if (d.muted) return;
 
   const gesture: CaptureMode = event.kind === 'tap' ? 'latch' : 'push';
@@ -417,17 +372,12 @@ function applyTrigger(d: Draft, event: TriggerEvent, now: Millis): void {
       return;
 
     case 'processing':
-    case 'acting':
       // The player has something else to say. Drop the turn in flight rather than queueing behind
       // an answer they have stopped waiting for.
       if (event.kind === 'down' || event.kind === 'tap') {
         voice(d, { kind: 'abort' });
         beginCapture(d, gesture, now);
       }
-      return;
-
-    case 'confirming':
-      // The only state that blocks. Y, N and Esc are the way out, and they are handled above.
       return;
 
     case 'error':
@@ -522,30 +472,6 @@ function applyTurn(
   }
 }
 
-function toActing(d: Draft, verb: ActingVerb, now: Millis): void {
-  if (d.phase.kind === 'idle' || d.phase.kind === 'confirming') return;
-  enter(d, { kind: 'acting', verb }, now);
-  show(d);
-  // A tool call can outlast the hints Processing scheduled, so Acting re-arms them: a slow
-  // `read_screen` must still grow an elapsed counter and surface `Esc ✕`.
-  schedule(d, 'elapsed-hint', ELAPSED_HINT_MS, now);
-  schedule(d, 'cancel-hint', CANCEL_HINT_MS, now);
-  project(d);
-}
-
-function toConfirming(
-  d: Draft,
-  prompt: { readonly id: string; readonly question: string; readonly action: 'read-screen' },
-  now: Millis,
-): void {
-  enter(d, { kind: 'confirming', prompt }, now);
-  show(d);
-  levels(d, false, 'input');
-  // A consent prompt that waits forever is a consent prompt the player answers by alt-tabbing.
-  schedule(d, 'confirm-timeout', d.env.confirmTimeoutMs, now);
-  project(d);
-}
-
 function applyMute(d: Draft, muted: boolean, now: Millis): void {
   if (d.muted === muted) return;
   d.muted = muted;
@@ -583,15 +509,11 @@ function applyTimer(d: Draft, id: TimerId, now: Millis): void {
 
     case 'elapsed-hint':
     case 'cancel-hint':
-      if (d.phase.kind === 'processing' || d.phase.kind === 'acting') project(d);
+      if (d.phase.kind === 'processing') project(d);
       return;
 
     case 'error-dismiss':
       if (d.phase.kind === 'error' && !d.phase.fault.persistent) toIdle(d, now);
-      return;
-
-    case 'confirm-timeout':
-      resolveConsent(d, false, now);
       return;
 
     case 'hide-hold':
@@ -626,8 +548,6 @@ export const GLYPHS: Readonly<Record<ChipState, GlyphId>> = {
   armed: 'dot-outline',
   listening: 'dot',
   processing: 'dot-segmented',
-  acting: 'gear',
-  confirming: 'query',
   speaking: 'dot-ringed',
   error: 'bang',
   muted: 'slashed',
@@ -639,25 +559,22 @@ export const ACCENTS: Readonly<Record<ChipState, AccentToken>> = {
   armed: 'listening',
   listening: 'listening',
   processing: 'working',
-  acting: 'working',
-  confirming: 'confirm',
   speaking: 'speaking',
   error: 'error',
   muted: 'muted',
 };
 
 /**
- * ui-design.md §4.3. Acting shares Processing's signature on purpose — it is "as Processing, plus
- * a verb" — so motion alone does not separate all nine states. The pair (glyph, motion) does, and
- * that is what the exhaustive test asserts.
+ * ui-design.md §4.3. Motion alone still does not separate all seven — Hidden, Armed and Muted all
+ * hold still — so the pair (glyph, motion) is what the exhaustive test asserts. Losing Acting and
+ * Confirming removed the *only* two states that shared a signature with another live state, which
+ * makes that assertion stronger than it was rather than weaker.
  */
 export const MOTIONS: Readonly<Record<ChipState, MotionSignature>> = {
   hidden: 'none',
   armed: 'none',
   listening: 'amplitude',
   processing: 'sweep',
-  acting: 'sweep',
-  confirming: 'none',
   speaking: 'envelope',
   error: 'double-pulse-then-static',
   muted: 'none',
@@ -668,17 +585,9 @@ const BARS: Readonly<Record<ChipState, BarMode>> = {
   armed: 'none',
   listening: 'input',
   processing: 'sweep',
-  acting: 'sweep',
-  confirming: 'none',
   speaking: 'output',
   error: 'none',
   muted: 'none',
-};
-
-const ACTING_LABELS: Readonly<Record<ActingVerb, string>> = {
-  reading: 'reading screen…',
-  'looking-up': 'looking up…',
-  checking: 'checking…',
 };
 
 export function projectChip(state: Readonly<MachineState>, now: Millis): ChipViewModel {
@@ -714,12 +623,6 @@ function isDimmed(state: Readonly<MachineState>, now: Millis): boolean {
 
 function chipText(state: Readonly<MachineState>, now: Millis): ChipText | null {
   switch (state.phase.kind) {
-    case 'acting':
-      return { primary: ACTING_LABELS[state.phase.verb] };
-
-    case 'confirming':
-      return { primary: state.phase.prompt.question, hint: '[Y] yes   [N] no' };
-
     case 'error':
       return state.phase.fault.persistent
         ? { primary: state.phase.fault.message, hint: 'Fix ▸' }
@@ -743,21 +646,17 @@ function chipText(state: Readonly<MachineState>, now: Millis): ChipText | null {
 
 function affordancesOf(state: Readonly<MachineState>, now: Millis): readonly Affordance[] {
   switch (state.phase.kind) {
-    case 'confirming':
-      return ['confirm'];
     case 'error':
       return state.phase.fault.persistent ? ['fix'] : [];
     case 'processing':
       return now - state.phase.startedAt >= CANCEL_HINT_MS ? ['cancel'] : [];
-    case 'acting':
-      return now - state.since >= CANCEL_HINT_MS ? ['cancel'] : [];
     default:
       return [];
   }
 }
 
 /**
- * Nine states collapse to four (ui-design.md §2.3).
+ * Seven states collapse to four (ui-design.md §2.3).
  *
  * Attention is read off `reported`, not off the current phase, and that is the point: a revoked
  * microphone outlives the four seconds of Error chip, and the tray is the surface that has to keep

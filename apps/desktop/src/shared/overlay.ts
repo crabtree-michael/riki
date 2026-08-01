@@ -23,26 +23,26 @@ export type Unsubscribe = () => void;
 // What the chip can be (ui-design.md §3)
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Seven, where there were nine.
+ *
+ * `acting` and `confirming` existed for exactly one producer each — a tool call slow enough to need
+ * its own pixels, and the consent gate in front of `read_screen` — and ADR-0023 deleted both.
+ * Nothing in the coaching path is slow enough to need pixels (brief assembly is in-process and
+ * under 5 ms) and nothing needs consent. A state with no producer keeps its tests, keeps its colour
+ * token and is never entered, so both went with their producers (coaching-architecture.md §7.2).
+ */
 export type ChipState =
-  | 'hidden'
-  | 'armed'
-  | 'listening'
-  | 'processing'
-  | 'acting'
-  | 'confirming'
-  | 'speaking'
-  | 'error'
-  | 'muted';
+  'hidden' | 'armed' | 'listening' | 'processing' | 'speaking' | 'error' | 'muted';
 
 /** The four tray states (ui-design.md §2.3) — a coarser projection of the same machine. */
 export type TrayGlyph = 'idle' | 'active' | 'muted' | 'attention';
 
 /** Distinct per state, so colour is never the only channel (ui-design.md §4.3). */
-export type GlyphId =
-  'dot' | 'dot-outline' | 'dot-segmented' | 'dot-ringed' | 'gear' | 'query' | 'bang' | 'slashed';
+export type GlyphId = 'dot' | 'dot-outline' | 'dot-segmented' | 'dot-ringed' | 'bang' | 'slashed';
 
 /** Token *names*, never values. Values live in the renderer's tokens.css (§7.5). */
-export type AccentToken = 'listening' | 'working' | 'speaking' | 'confirm' | 'error' | 'muted';
+export type AccentToken = 'listening' | 'working' | 'speaking' | 'error' | 'muted';
 
 /** Distinct per state, and independently sufficient to tell them apart (ui-design.md §4.3). */
 export type MotionSignature =
@@ -51,12 +51,12 @@ export type MotionSignature =
 export type BarMode = 'none' | 'input' | 'output' | 'sweep' | 'static';
 
 /** Rendered as text, never as a control — the window is click-through (§1.1). */
-export type Affordance = 'cancel' | 'confirm' | 'fix';
+export type Affordance = 'cancel' | 'fix';
 
 export type ChipPhase = 'entering' | 'settled' | 'leaving';
 
 export interface ChipText {
-  /** Short. A verb in Acting, a question in Confirming, a fault in Error. Never a sentence. */
+  /** Short. A fault in Error, an elapsed hint in Processing. Never a sentence. */
   readonly primary: string;
   /** Faded after the first two uses, then never shown again (ui-design.md §5.1). */
   readonly hint?: string;
@@ -140,7 +140,6 @@ export type OverlayIntent =
   /** Mounted, or remounted after a crash: main re-projects the current model. */
   | { readonly kind: 'ready' }
   | { readonly kind: 'cancel' }
-  | { readonly kind: 'confirm'; readonly answer: boolean }
   /** First paint of a model revision. This is how the ≤100 ms budget is measured (§6.1). */
   | { readonly kind: 'paint'; readonly revision: number }
   /** The renderer has no logger and may not import @riki/telemetry; it reports through here. */

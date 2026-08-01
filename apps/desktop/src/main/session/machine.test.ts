@@ -18,15 +18,9 @@ import {
   ERROR_DISMISS_MS,
   HIDE_HOLD_MS,
 } from './timing.js';
-import type { ConfirmPrompt, Effect, Fault, MachineInput, MachineState, TimerId } from './types.js';
+import type { Effect, Fault, MachineInput, MachineState, TimerId } from './types.js';
 
 const ENV = DEFAULT_ENVIRONMENT;
-
-const PROMPT: ConfirmPrompt = {
-  id: 'c1',
-  question: 'Look at your screen?',
-  action: 'read-screen',
-};
 
 const MIC_DENIED: Fault = {
   kind: 'mic-denied',
@@ -82,18 +76,6 @@ const REACH = {
   armed: [down(0)],
   listening: [down(0), audio(10)],
   processing: [down(0), audio(10), up(500)],
-  acting: [
-    down(0),
-    audio(10),
-    up(500),
-    [{ kind: 'tool', event: 'started', verb: 'reading' }, 600] as const,
-  ],
-  confirming: [
-    down(0),
-    audio(10),
-    up(500),
-    [{ kind: 'consent', event: 'requested', prompt: PROMPT }, 600] as const,
-  ],
   speaking: [
     down(0),
     audio(10),
@@ -289,26 +271,6 @@ describe('reduce — Esc from every phase', () => {
     expect(has(effects, { kind: 'window', visible: false })).toBe(true);
   });
 
-  it('is a denial *and* a cancel while Confirming — unlike answering N', () => {
-    const escaped = drive([
-      ...REACH.confirming,
-      [{ kind: 'trigger', event: { kind: 'cancel' } }, 5_000],
-    ]);
-    expect(escaped.effects).toContainEqual({
-      kind: 'voice',
-      command: { kind: 'consent', promptId: 'c1', granted: false },
-    });
-    expect(escaped.effects).toContainEqual({ kind: 'voice', command: { kind: 'abort' } });
-    expect(escaped.state.phase.kind).toBe('idle');
-
-    // N is "no, but carry on", so the turn survives it.
-    const answered = drive([
-      ...REACH.confirming,
-      [{ kind: 'trigger', event: { kind: 'confirm', answer: false } }, 5_000],
-    ]);
-    expect(answered.state.phase.kind).toBe('processing');
-  });
-
   it('does nothing at rest', () => {
     const { effects } = drive([[{ kind: 'trigger', event: { kind: 'cancel' } }, 100]]);
     expect(effects).toEqual([]);
@@ -454,57 +416,73 @@ describe('reduce — faults', () => {
   });
 });
 
-describe('reduce — consent', () => {
-  it('grabs the confirm keys on entry and releases them on exit', () => {
-    const entering = drive(REACH.confirming);
-    expect(entering.effects).toContainEqual({ kind: 'keys', grab: ['yes', 'no', 'escape'] });
+describe('reduce — the deleted states stay deleted', () => {
+  // coaching-architecture.md §13's regression row. `acting` and `confirming` had one producer
+  // each — a slow tool call and the consent gate in front of `read_screen` — and ADR-0023 deleted
+  // both. A state with no producer keeps its tests and its colour token and is never entered,
+  // which is indistinguishable from a state that works until someone looks. These assertions are
+  // what make "never entered" checkable.
 
-    const leaving = drive([
-      ...REACH.confirming,
-      [{ kind: 'trigger', event: { kind: 'confirm', answer: true } }, 700],
-    ]);
-    expect(leaving.effects).toContainEqual({ kind: 'keys', grab: [] });
+  it('has no phase, glyph, accent or motion for either', () => {
+    const named: readonly string[] = [
+      ...Object.keys(GLYPHS),
+      ...Object.keys(ACCENTS),
+      ...Object.keys(MOTIONS),
+    ];
+    expect(named).not.toContain('acting');
+    expect(named).not.toContain('confirming');
   });
 
-  it('sends the answer and returns to Processing', () => {
-    const { state, effects } = drive([
-      ...REACH.confirming,
-      [{ kind: 'trigger', event: { kind: 'confirm', answer: true } }, 700],
-    ]);
-    expect(effects).toContainEqual({
-      kind: 'voice',
-      command: { kind: 'consent', promptId: 'c1', granted: true },
-    });
-    expect(state.phase).toEqual({ kind: 'processing', startedAt: 700 });
+  it('reaches neither from any input, from any phase', () => {
+    // Every input the machine accepts, applied to every phase it can be in. Nothing lands there,
+    // and nothing grabs a key: `Effect` has no `keys` arm to emit.
+    const inputs: readonly MachineInput[] = [
+      { kind: 'trigger', event: { kind: 'down' } },
+      { kind: 'trigger', event: { kind: 'up' } },
+      { kind: 'trigger', event: { kind: 'tap' } },
+      { kind: 'trigger', event: { kind: 'cancel' } },
+      { kind: 'intent', intent: { kind: 'cancel' } },
+      { kind: 'capture', event: 'opened' },
+      { kind: 'capture', event: 'firstAudio' },
+      { kind: 'capture', event: 'closed' },
+      { kind: 'speech', event: 'silence' },
+      { kind: 'speech', event: 'resumed' },
+      { kind: 'turn', event: 'submitted' },
+      { kind: 'turn', event: 'responseStarted' },
+      { kind: 'turn', event: 'responseEnded' },
+      { kind: 'unprompted', event: 'speechStarted' },
+      { kind: 'fault', fault: OFFLINE },
+      { kind: 'mute', muted: true },
+      { kind: 'mute', muted: false },
+      { kind: 'settings', env: ENV },
+      ...(
+        [
+          'silence-nudge',
+          'listen-timeout',
+          'elapsed-hint',
+          'cancel-hint',
+          'error-dismiss',
+          'hide-hold',
+        ] as const
+      ).map((id): MachineInput => ({ kind: 'timer', id })),
+    ];
+
+    for (const phase of PHASES) {
+      const from = drive(REACH[phase]).state;
+      for (const input of inputs) {
+        const { state, effects } = reduce(from, input, 9_000);
+        expect(['acting', 'confirming']).not.toContain(state.phase.kind);
+        expect(effects.map((e) => e.kind)).not.toContain('keys');
+      }
+    }
   });
 
-  it('resolves to denied when the prompt times out', () => {
-    const { state, effects } = drive([
-      ...REACH.confirming,
-      timer('confirm-timeout', 600 + ENV.confirmTimeoutMs),
-    ]);
-    expect(effects).toContainEqual({
-      kind: 'voice',
-      command: { kind: 'consent', promptId: 'c1', granted: false },
-    });
-    expect(state.phase.kind).toBe('processing');
-  });
-
-  it('blocks the capture gesture while it waits', () => {
-    const { state, effects } = drive([...REACH.confirming, down(700)]);
-    expect(state.phase.kind).toBe('confirming');
-    expect(effects).toEqual([]);
-  });
-
-  it('accepts the same answer from the renderer as from the keyboard', () => {
-    const { effects } = drive([
-      ...REACH.confirming,
-      [{ kind: 'intent', intent: { kind: 'confirm', answer: false } }, 700],
-    ]);
-    expect(effects).toContainEqual({
-      kind: 'voice',
-      command: { kind: 'consent', promptId: 'c1', granted: false },
-    });
+  it('offers no confirm affordance and no confirm accent anywhere', () => {
+    for (const phase of PHASES) {
+      const model = projectChip(drive(REACH[phase]).state, 20_000);
+      expect(model.affordances).not.toContain('confirm');
+      expect(['confirm']).not.toContain(model.accent);
+    }
   });
 });
 
@@ -570,12 +548,6 @@ describe('reduce — timers', () => {
     expect(at(CANCEL_HINT_MS).affordances).toEqual(['cancel']);
   });
 
-  it('re-arms the hints when a tool call takes over', () => {
-    const { effects } = drive(REACH.acting);
-    expect(has(effects, { kind: 'schedule', id: 'elapsed-hint' })).toBe(true);
-    expect(has(effects, { kind: 'schedule', id: 'cancel-hint' })).toBe(true);
-  });
-
   it('ignores a timer whose phase has moved on', () => {
     const { effects } = drive([...REACH.processing, timer('silence-nudge', 600)]);
     expect(effects).toEqual([]);
@@ -589,24 +561,6 @@ describe('reduce — timers', () => {
   it('leaves hide-hold to the window controller', () => {
     const { state } = drive(REACH.listening);
     expect(state.pending.some((t) => t.id === 'hide-hold')).toBe(false);
-  });
-});
-
-describe('reduce — tools', () => {
-  it('promotes a tool call to Acting and returns to Processing when it ends', () => {
-    const acting = drive(REACH.acting);
-    expect(acting.state.phase).toEqual({ kind: 'acting', verb: 'reading' });
-
-    const ended = drive([[{ kind: 'tool', event: 'ended', verb: 'reading' }, 1_500]], acting.state);
-    expect(ended.state.phase).toEqual({ kind: 'processing', startedAt: 1_500 });
-  });
-
-  it('never promotes one while a consent prompt is on screen', () => {
-    const { state } = drive([
-      ...REACH.confirming,
-      [{ kind: 'tool', event: 'started', verb: 'reading' }, 700],
-    ]);
-    expect(state.phase.kind).toBe('confirming');
   });
 });
 
@@ -638,8 +592,6 @@ const VISIBLE_STATES: readonly ChipState[] = [
   'armed',
   'listening',
   'processing',
-  'acting',
-  'confirming',
   'speaking',
   'error',
   'muted',
@@ -657,10 +609,10 @@ describe('projectChip — colour is never the only channel', () => {
   });
 
   it('shares an accent between states that the spec says look alike', () => {
-    // Armed and Listening are both cyan, Processing and Acting both violet (ui-design.md §4.2).
-    // This is why the two assertions above exist, and it is asserted rather than assumed.
+    // Armed and Listening are both cyan (ui-design.md §4.2) — the last surviving pair, now that
+    // Processing and Acting's shared violet has gone with Acting. This is why the two assertions
+    // above exist, and it is asserted rather than assumed.
     expect(ACCENTS.armed).toBe(ACCENTS.listening);
-    expect(ACCENTS.processing).toBe(ACCENTS.acting);
   });
 
   it('never lands on an unnamed token', () => {
@@ -691,14 +643,6 @@ describe('projectChip — states', () => {
   it('carries the latched flag so the two capture modes are never confused', () => {
     expect(projectChip(drive([tap(0)]).state, 0).latched).toBe(true);
     expect(projectChip(drive([down(0)]).state, 0).latched).toBe(false);
-  });
-
-  it('renders a verb while Acting and a question while Confirming', () => {
-    expect(projectChip(drive(REACH.acting).state, 600).text?.primary).toBe('reading screen…');
-    expect(projectChip(drive(REACH.confirming).state, 600).text).toEqual({
-      primary: 'Look at your screen?',
-      hint: '[Y] yes   [N] no',
-    });
   });
 
   it('offers Fix only on a fault that will not clear itself', () => {

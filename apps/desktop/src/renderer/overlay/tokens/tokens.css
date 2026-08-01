@@ -24,12 +24,11 @@
   --riki-chip-border: rgba(255, 255, 255, 0.14);
   --riki-chip-shadow: rgba(0, 0, 0, 0.45);
 
-  /* Accents. Armed shares Listening's cyan, and Acting shares Processing's violet — which is why
-     the glyph and the motion signature, not the colour, are what tell the states apart. */
+  /* Accents. Armed shares Listening's cyan — which is why the glyph and the motion signature, not
+     the colour, are what tell the states apart. */
   --riki-accent-listening: #6fd3ff;
   --riki-accent-working: #b9a8ff;
   --riki-accent-speaking: #7ee8b0;
-  --riki-accent-confirm: #ffd37e;
   --riki-accent-error: #ff8a7a;
   --riki-accent-muted: #8a93a6;
 

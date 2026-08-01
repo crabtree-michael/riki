@@ -66,7 +66,7 @@ describe('createChipView — update', () => {
   });
 
   it('hides the bars in a state that has none', () => {
-    chip.update(models.confirming());
+    chip.update(models.error());
     expect(root.querySelector<HTMLElement>('.riki-chip__bars')?.hidden).toBe(true);
 
     chip.update(models.listening());
@@ -74,16 +74,16 @@ describe('createChipView — update', () => {
   });
 
   it('renders affordances as text, never as controls', () => {
-    chip.update(models.confirming());
-    expect(chipElement().dataset.affordances).toBe('confirm');
+    chip.update(models.error());
+    expect(chipElement().dataset.affordances).toBe('fix');
     // The window is click-through: a chip that grew a button would be a chip nobody could press.
     expect(root.querySelectorAll('button, a, input')).toHaveLength(0);
   });
 
-  it('renders a question and its keyboard hint while Confirming', () => {
-    chip.update(models.confirming());
-    expect(root.querySelector('.riki-chip__primary')?.textContent).toBe('Look at your screen?');
-    expect(root.querySelector('.riki-chip__hint')?.textContent).toBe('[Y] yes   [N] no');
+  it('renders a fault and its recovery hint while Error', () => {
+    chip.update(models.error());
+    expect(root.querySelector('.riki-chip__primary')?.textContent).toBe('Microphone blocked');
+    expect(root.querySelector('.riki-chip__hint')?.textContent).toBe('Fix ▸');
   });
 
   it('collapses the text slot when there is nothing to say', () => {

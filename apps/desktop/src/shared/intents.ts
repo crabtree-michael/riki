@@ -26,11 +26,6 @@ export function parseOverlayIntent(payload: unknown): OverlayIntent | null {
     case 'cancel':
       return { kind: 'cancel' };
 
-    case 'confirm':
-      return typeof candidate.answer === 'boolean'
-        ? { kind: 'confirm', answer: candidate.answer }
-        : null;
-
     case 'paint':
       return typeof candidate.revision === 'number' && Number.isFinite(candidate.revision)
         ? { kind: 'paint', revision: candidate.revision }

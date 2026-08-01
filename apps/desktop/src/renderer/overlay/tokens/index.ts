@@ -13,7 +13,6 @@ const ACCENT_VARIABLES: Readonly<Record<AccentToken, string>> = {
   listening: '--riki-accent-listening',
   working: '--riki-accent-working',
   speaking: '--riki-accent-speaking',
-  confirm: '--riki-accent-confirm',
   error: '--riki-accent-error',
   muted: '--riki-accent-muted',
 };

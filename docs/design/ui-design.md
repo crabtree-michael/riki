@@ -132,7 +132,7 @@ Detected game → profile mapping is a convenience only; the manual override alw
 
 ## 3. State model
 
-Nine states. Seven are session states, two are persistent conditions.
+Seven states. Five are session states, two are persistent conditions.
 
 | State | Trigger | Motion | Colour | Text |
 |---|---|---|---|---|
@@ -140,11 +140,19 @@ Nine states. Seven are session states, two are persistent conditions.
 | **Armed** | Hotkey down, pre-roll buffer filling | none | cyan, outline only | — |
 | **Listening** | Capturing speech | live amplitude bars | cyan | — |
 | **Processing** | Utterance sent, awaiting response | indeterminate loop | violet | — |
-| **Acting** | Executing a tool / side-effecting action | indeterminate loop + icon | violet | short verb |
-| **Confirming** | Needs yes/no before a consequential action | **none — static** | amber | required |
 | **Speaking** | TTS playing | output envelope bars | mint | — |
 | **Error** | Mic denied, offline, ASR/model failure | one double-pulse, then static | coral | required |
 | **Muted** | User disabled Riki | none | grey | — |
+
+> **There were nine, and ADR-0023 removed two.** **Acting** existed for a tool call slow enough to
+> need its own pixels and **Confirming** for the consent gate in front of `read_screen`. Command
+> execution is deleted: the facts a turn needs are assembled in-process, under 5 ms, before the
+> model is asked to speak, so nothing is slow enough to need pixels and nothing needs permission.
+> A state with no producer keeps its tests, keeps its colour token and is never entered, which is
+> the worst of both — so both went with their producers. See coaching-architecture.md §7.2.
+>
+> What replaces them is nothing. A coaching turn is **Speaking** with `unprompted: true` (§9.3 of
+> overlay-architecture.md), which is now the most common thing the chip does.
 
 Notes on the non-obvious entries:
 
@@ -152,10 +160,6 @@ Notes on the non-obvious entries:
   Without it, the overlay appears *after* the user has started talking, and the first word gets
   clipped with no indication of why. Pre-roll buffering means audio from before the key press
   is retained; Armed tells the user the chip is alive even though the bars have not moved yet.
-- **Acting** is separated from **Processing** because it can be far slower and it has real
-  consequences. "Thinking about your question" and "sending an email" deserve different pixels.
-- **Confirming** is deliberately the only state with a hard requirement for text and a hard
-  prohibition on motion. Per principle 2, stillness signals *the ball is in your court*.
 - **Muted** is the sole exception to "zero pixels at rest": if the user disabled Riki and we
   render nothing, the next PTT press produces silence indistinguishable from a crash. Muted
   renders a small static grey dot, at 40 % opacity, in the anchor position.
@@ -163,21 +167,23 @@ Notes on the non-obvious entries:
 ### 3.1 Transitions
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │                                         │
+                    ┌────────────────────────────────────┐
+                    │                                    │
    Hidden ──PTT──► Armed ──audio──► Listening ──release──► Processing
       ▲                │                 │                     │
-      │                │             timeout(8s)               ├──► Acting ──┐
-      │                │                 │                     │            │
-      │                └──cancel─────────┴──► Cancelled        ├──► Confirming
-      │                                        │               │      │  ▲
-      │                                        │               │      │  │ no
-      │                                        ▼               ▼      ▼  │
-      └───────── fade-out(400ms hold) ◄──── Speaking ◄──────────────yes───┘
-                          ▲                     │
-                          │                barge-in
-                          └──── Error ◄────── (any state, on failure)
+      │                │             timeout(8s)               │
+      │                │                 │                     │
+      │                └──cancel─────────┴──► Cancelled        │
+      │                                        │               │
+      │                                        ▼               ▼
+      └───────── fade-out(400ms hold) ◄──── Speaking ◄──────────┘
+                          ▲     ▲              │
+                          │     │         barge-in
+       coaching trigger ──┘     └── Error ◄─── (any state, on failure)
 ```
+
+The one entry with no gesture behind it is the coaching trigger: Hidden → Speaking directly, no
+Armed and no earcon (ADR-0023, overlay-architecture.md §9.3).
 
 - **Barge-in:** speaking on the hotkey while Riki is in **Speaking** cancels TTS and returns to
   **Listening** in a single gesture. This is the most important interaction in the whole design —
@@ -216,9 +222,8 @@ scaling. All values above are logical pixels at 1×.
   chip.shadow      rgba(  0,   0,   0, 0.45)   0 2 8, keeps it off bright scenes
 
   accent.listening #6FD3FF   cyan
-  accent.working   #B9A8FF   violet     (Processing + Acting)
+  accent.working   #B9A8FF   violet
   accent.speaking  #7EE8B0   mint
-  accent.confirm   #FFD37E   amber
   accent.error     #FF8A7A   coral
   accent.muted     #8A93A6   grey
 ```
@@ -241,8 +246,6 @@ Every state is distinguishable without colour vision, by motion signature and gl
 |---|---|---|
 | Listening | bars, amplitude-driven, irregular | `●` filled dot |
 | Processing | bars, sweeping, regular 1.2 s loop | `◍` segmented dot |
-| Acting | as Processing + verb text | `⚙` |
-| Confirming | static | `?` |
 | Speaking | bars, envelope-driven, irregular | `◉` ringed dot |
 | Error | double-pulse then static | `!` |
 | Muted | static, 40 % opacity | `⊘` |
@@ -577,7 +580,7 @@ The overlay shares a GPU with a game that is trying to hold a frame budget. Non-
   needs 144 Hz.
 - **Composite-only animation.** Opacity and transform. No per-frame layout, no per-frame
   text shaping.
-- **Stop the animation timer when the state is static** (Confirming, Muted, settled Error).
+- **Stop the animation timer when the state is static** (Muted, settled Error).
 - **Backdrop blur is off by default.** It is the single most expensive effect here and it is a
   polish item, not a legibility requirement — the hairline border already solves legibility.
 - **Target: < 0.3 ms GPU per frame while visible, 0 while hidden.**
@@ -615,7 +618,7 @@ Recorded so they do not get re-proposed:
 | Screen-edge glow / border pulse | Reads as a damage or low-health indicator in almost every game |
 | Full transcript always on screen | Foveal attention cost per §1.5; privacy hazard for streamers |
 | Red for errors | Misread as game damage feedback (§4.2) |
-| Centre-screen modal for confirmations | Covers the crosshair; unacceptable mid-match |
+| Centre-screen modal for confirmations | Covers the crosshair; unacceptable mid-match. Moot since ADR-0023 — nothing needs confirming |
 | Voice-only, no visual at all | Fails silently when the mic is dead — the one case feedback matters most |
 
 ---
@@ -644,9 +647,19 @@ Recorded so they do not get re-proposed:
    separately, if at all.
 
 **1, 5 and 6 have since been answered** — see
-[overlay-architecture.md](overlay-architecture.md) §14, which records where and why. In short:
-1 is a narrow keyboard path scoped to Confirming, because a click-through window can take no
-pointer input at all; 5 needs no new state, since Speaking → trigger → Listening is already one
-edge; and 6 is *yes* — `dota2-state-capture-design.md` §6.4 has Riki speaking unprompted when the
-trigger policy fires, which adds a Hidden → Speaking transition this document does not have.
+[overlay-architecture.md](overlay-architecture.md) §14, which records where and why, and
+[ADR-0023](../adr/0023-coaching-replaces-command-execution.md), which answered 1 a second time by
+removing the question. In short:
+
+- **1 is moot.** It was answered with a narrow keyboard path scoped to Confirming, because a
+  click-through window can take no pointer input at all. ADR-0023 then deleted the only
+  consequential action Riki had, so there is nothing left to confirm and no keyboard path to
+  scope. Riki is voice-and-hotkey only.
+- **5** needs no new state, since Speaking → trigger → Listening is already one edge.
+- **6 is *yes*, and it is now the primary path rather than an addition.** `dota2` §6.4 and
+  [coaching-architecture.md](coaching-architecture.md) have Riki speaking unprompted when the
+  trigger policy fires — a Hidden → Speaking transition this document originally did not have and
+  §3.1 now draws. What makes that safe is not a state: it is the gates (coaching §6.3) and the
+  local `quiet-mode` phrase, which must work with the model down.
+
 2, 3 and 4 are still open, and **3 is still blocking**.

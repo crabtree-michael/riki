@@ -127,7 +127,7 @@ describe('mountOverlay — the animation clock', () => {
 
   it('stops on a static state rather than rendering identical frames', () => {
     const app = harness();
-    app.command({ kind: 'model', model: models.confirming() });
+    app.command({ kind: 'model', model: models.muted() });
     app.run(10);
     expect(app.pendingFrames()).toBe(0);
   });

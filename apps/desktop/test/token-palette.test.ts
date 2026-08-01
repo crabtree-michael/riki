@@ -22,7 +22,6 @@ const EXPECTED = {
   '--riki-accent-listening': '#6fd3ff',
   '--riki-accent-working': '#b9a8ff',
   '--riki-accent-speaking': '#7ee8b0',
-  '--riki-accent-confirm': '#ffd37e',
   '--riki-accent-error': '#ff8a7a',
   '--riki-accent-muted': '#8a93a6',
 } as const;
@@ -88,7 +87,7 @@ describe('the token palette', () => {
   });
 
   it('names an accent for every state the chip can be in', () => {
-    for (const accent of ['listening', 'working', 'speaking', 'confirm', 'error', 'muted']) {
+    for (const accent of ['listening', 'working', 'speaking', 'error', 'muted']) {
       expect(found.has(`--riki-accent-${accent}`)).toBe(true);
     }
   });

@@ -40,9 +40,15 @@ Hidden must render **no window at all** — idle costs nothing, and a test asser
   design doc is still unverified. `index.html` expects a compiled `index.js` beside it; the build
   that produces one belongs to the `apps/desktop` shell.
 - **The chip can carry no clickable affordance.** `setIgnoreMouseEvents(true)` means the window
-  receives no pointer event at all, so `Esc ✕`, `Fix ▸` and `[Y] yes` in `ui-design.md` §5.1 are
-  keyboard hints rendered as text, not buttons. Confirming gets scoped `Y`/`N` accelerators that
-  are released the moment it exits — a permanently grabbed `Y` eats a game binding.
+  receives no pointer event at all, so `Esc ✕` and `Fix ▸` in `ui-design.md` §5.1 are keyboard
+  hints rendered as text, not buttons.
+- **Seven states, not nine.** ADR-0023 deleted `Acting` and `Confirming` along with command
+  execution, and with them `ActingVerb`, `ConfirmPrompt`, the amber `confirm` accent, the `confirm`
+  affordance and intent, the `confirm-timeout` timer, and the `keys` effect and its scoped
+  `Y`/`N`/`Esc` grab. **Riki now has no state that needs the keyboard for anything but the
+  push-to-talk binding, and no permission prompt anywhere.** A coaching turn is `Speaking` with
+  `unprompted: true`, which is the most common thing the chip does. If you find a reference to
+  either state in a doc, it predates ADR-0023 — fix it.
 - The overlay is a click-through layered window with per-pixel alpha. Always-on-top plus a
   global hook is exactly the combination anti-cheat systems scrutinise — the anti-cheat
   spike is a blocking risk and must precede real depth here.
@@ -135,10 +141,25 @@ looks like a timestamp is probably a bug — send durations.
 
 **2026-08-01 — "every state has a distinct motion signature" is not achievable, and should not be.**
 Both `REPO_SKELETON.md` §5.4 and this design ask for a distinct glyph *and* motion per state. But
-ui-design §4.3 defines Acting as "as Processing, plus a verb", and Confirming, Muted and a settled
-Error are all static — so the signatures collide by design. The glyphs are pairwise distinct, and
-the assertion that means what §4.3 intends is over the **(glyph, motion) pair**. Design doc updated;
-don't re-derive this.
+Armed, Muted and a settled Error are all static, so the signatures collide by design. The glyphs
+are pairwise distinct, and the assertion that means what §4.3 intends is over the **(glyph,
+motion) pair**. Design doc updated; don't re-derive this.
+
+*Update, same day:* ADR-0023's deletion of Acting removed the only collision between two states
+that actually **animate** — Acting was "as Processing, plus a verb" and shared its sweep. The
+remaining collisions are all `'none'`. The pair assertion is still the right one, and it is now
+stronger than when it was written.
+
+**2026-08-01 — deleting a chip state means deleting a *producer*, and the test that matters proves
+nothing produces it.** Removing `Acting` and `Confirming` touched fourteen files across main,
+preload, renderer and shared, and the compiler found all but one class of thing: a state whose
+union arm is gone still leaves an orphan colour token, an orphan glyph in `overlay.css`, and an
+orphan row in a `Record<ChipState, …>` in the *renderer* that duplicates main's. Grep for the
+state name across `.ts`, `.css` and `.md` — the CSS and the docs do not typecheck. Then write the
+assertion in the form that survives: `machine.test.ts` now drives **every input against every
+reachable phase** and asserts the deleted phases are never entered and no `keys` effect is ever
+emitted. *Why:* a deleted state that something can still reach is indistinguishable from a working
+one until a player finds it, and "I removed the type" is not evidence that nothing produces it.
 
 **2026-08-01 — `isStatic(signature)` cannot stop the clock on its own.** A settled Error is static;
 the same signature 10 ms after entry is not. The motion module exports `settlesAtMs(signature)`

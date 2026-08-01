@@ -1,10 +1,10 @@
 /**
- * The chip's text: a verb while Acting, a question while Confirming, a fault while Error, and the
- * elapsed counter while Processing.
+ * The chip's text: a fault while Error, and the elapsed counter while Processing.
  *
  * Text is a last resort (ui-design.md §1.5) — reading costs foveal attention — so this slot is
- * empty most of the time and collapses when it is. Nothing here is a control: the window is
- * click-through, so `[Y] yes` and `Fix ▸` are keyboard hints rendered as text (§1.1).
+ * empty most of the time and collapses when it is. It is emptier than it was: the Acting verb and
+ * the Confirming question were two of its four callers, and ADR-0023 deleted both. Nothing here is
+ * a control either: the window is click-through, so `Fix ▸` is a hint rendered as text (§1.1).
  */
 
 import type { ChipText } from '../../../shared/overlay.js';

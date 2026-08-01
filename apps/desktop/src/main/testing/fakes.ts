@@ -18,13 +18,12 @@ import type {
 import type {
   AudioEffectSink,
   Clock,
-  ConfirmKeyGrabber,
   OverlayEffectSink,
   TelemetrySink,
   TrayEffectSink,
   VoiceCommandSink,
 } from '../session/contracts.js';
-import type { ConfirmKey, EarconId, TimerId, VoiceCommand } from '../session/types.js';
+import type { EarconId, TimerId, VoiceCommand } from '../session/types.js';
 import type { Rectangle } from '../overlay/contracts.js';
 import type { OverlayWindow, OverlayWindowFactory } from '../overlay/window-port.js';
 
@@ -141,36 +140,6 @@ export function recordAudio(): RecordedAudio {
     ducking,
     earcon: (sound) => void earcons.push(sound),
     duck: (on) => void ducking.push(on),
-  };
-}
-
-export interface RecordedKeys extends ConfirmKeyGrabber {
-  readonly grabs: readonly (readonly ConfirmKey[])[];
-  readonly releases: number;
-  readonly held: readonly ConfirmKey[];
-}
-
-export function recordKeys(): RecordedKeys {
-  const grabs: (readonly ConfirmKey[])[] = [];
-  let releases = 0;
-  let held: readonly ConfirmKey[] = [];
-
-  return {
-    grabs,
-    get releases() {
-      return releases;
-    },
-    get held() {
-      return held;
-    },
-    grab(keys) {
-      grabs.push(keys);
-      held = keys;
-    },
-    release() {
-      releases += 1;
-      held = [];
-    },
   };
 }
 

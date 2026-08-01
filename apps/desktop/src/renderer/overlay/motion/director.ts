@@ -11,14 +11,17 @@
 import type { ChipState, Millis, MotionSignature } from '../../../shared/overlay.js';
 import type { MotionDirector, MotionPreferences, MotionSample } from '../contracts.js';
 
-/** ui-design.md §4.3. Acting is "as Processing, plus a verb", so it shares the sweep. */
+/**
+ * ui-design.md §4.3. The same table as `machine.ts`'s `MOTIONS`, on the renderer side.
+ *
+ * Every live state now has a signature no other live state shares except the three that hold still
+ * — Acting was the one that duplicated Processing's sweep, and ADR-0023 deleted it.
+ */
 const SIGNATURES: Readonly<Record<ChipState, MotionSignature>> = {
   hidden: 'none',
   armed: 'none',
   listening: 'amplitude',
   processing: 'sweep',
-  acting: 'sweep',
-  confirming: 'none',
   speaking: 'envelope',
   error: 'double-pulse-then-static',
   muted: 'none',

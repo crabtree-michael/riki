@@ -17,7 +17,7 @@ export function createSessionRuntime(
   deps: SessionRuntimeDeps,
   env: MachineEnvironment,
 ): SessionRuntime {
-  const { machine, clock, overlay, tray, voice, audio, keys, telemetry } = deps;
+  const { machine, clock, overlay, tray, voice, audio, telemetry } = deps;
 
   let state = machine.initial(env, clock.now());
   let disposed = false;
@@ -99,11 +99,6 @@ export function createSessionRuntime(
         audio.duck(effect.on);
         return;
 
-      case 'keys':
-        if (effect.grab.length > 0) keys.grab(effect.grab);
-        else keys.release();
-        return;
-
       case 'voice':
         voice.send(effect.command);
         return;
@@ -132,7 +127,6 @@ export function createSessionRuntime(
       disposed = true;
       clock.cancelAll();
       subscribers.clear();
-      keys.release();
     },
   };
 }

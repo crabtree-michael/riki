@@ -28,7 +28,7 @@ marked ⚑ are what changes if one is wrong.
 | B1 | The anti-cheat spike passes: a global hook plus an always-on-top click-through window is viable | ui-design §13.3, REPO_SKELETON §11.6 | ⚑ everything below. **This is still unrun** — `docs/runbooks/anticheat-validation.md` |
 | B2 | Electron survives the frame-time harness and stays the shell | ADR-0001, REPO_SKELETON §11.1 | ⚑ §3, §6 (process shape) |
 | B3 | Riki speaks unprompted when the trigger policy fires | dota2 §6.4, `RIKI_UNPROMPTED` | ⚑ §4.3 (a chip that appears with no gesture) |
-| B4 | Riki takes no action inside the game; its only consequential act is a screenshot to a VLM | ADR-0003, dota2 §6.3 `read_screen`, §7 | ⚑ §4.4 (what Acting and Confirming *mean* here) |
+| B4 | Riki takes no action inside the game **and has no consequential act at all** — ADR-0023 deleted `read_screen`, the only one there was | ADR-0003, ADR-0023 | §4.4 (Acting and Confirming, and why they are gone) |
 | B5 | The mic is owned by a Chromium renderer, because WebRTC and AEC are why the shell is Electron | ADR-0002, REPO_SKELETON A2 | ⚑ §3.2, ADR-0010 |
 
 **B1 is the one that can invalidate this whole document.** Nothing here should be built before
@@ -252,8 +252,6 @@ export type Phase =
   | { readonly kind: 'armed';      readonly gesture: CaptureMode }
   | { readonly kind: 'listening';  readonly gesture: CaptureMode; readonly silentSince: Millis | null }
   | { readonly kind: 'processing'; readonly startedAt: Millis }
-  | { readonly kind: 'acting';     readonly verb: ActingVerb }
-  | { readonly kind: 'confirming'; readonly prompt: ConfirmPrompt }
   | { readonly kind: 'speaking';   readonly unprompted: boolean }
   | { readonly kind: 'error';      readonly fault: Fault };
 
@@ -281,9 +279,7 @@ export type MachineInput =
   | { readonly kind: 'capture';   readonly event: 'opened' | 'firstAudio' | 'closed' }
   | { readonly kind: 'speech';    readonly event: 'silence' | 'resumed' }
   | { readonly kind: 'turn';      readonly event: 'submitted' | 'responseStarted' | 'responseEnded' }
-  | { readonly kind: 'tool';      readonly event: 'started' | 'ended'; readonly verb: ActingVerb }
-  | { readonly kind: 'consent';   readonly event: 'requested' | 'resolved'; readonly prompt: ConfirmPrompt }
-  | { readonly kind: 'unprompted'; readonly event: 'speechStarted' }    // B3
+  | { readonly kind: 'unprompted'; readonly event: 'speechStarted' }    // B3, and now the main path
   | { readonly kind: 'fault';     readonly fault: Fault }
   | { readonly kind: 'mute';      readonly muted: boolean }
   | { readonly kind: 'settings';  readonly env: MachineEnvironment }
@@ -292,8 +288,7 @@ export type MachineInput =
 
 export type TriggerEvent =
   | { readonly kind: 'down' } | { readonly kind: 'up' }
-  | { readonly kind: 'tap' }  | { readonly kind: 'cancel' }             // Esc
-  | { readonly kind: 'confirm'; readonly answer: boolean };             // Y / N while Confirming
+  | { readonly kind: 'tap' }  | { readonly kind: 'cancel' };            // Esc
 ```
 
 **`unprompted.speechStarted` is the input ui-design does not have.** Its §13.6 asks whether Riki
@@ -303,28 +298,37 @@ must fade in on a state the user did not cause, and barge-in has to work from it
 trigger during unprompted speech cancels it and starts listening — the same edge, no special
 case). Recorded in §14 as resolving that open question.
 
-### 4.4 Acting and Confirming in a read-only product
+### 4.4 Acting and Confirming: deleted, and why they were here
 
-B4 says Riki does nothing inside Dota. Read naively, that makes Acting and Confirming dead
-states. They are not — they belong to the one consequential thing Riki does do:
+**This section used to argue that Acting and Confirming were not dead states in a read-only
+product.** The argument was sound and its premise is gone:
 
-| State | What it means here | Source |
+| State | What it meant here | Its only producer |
 |---|---|---|
-| **Acting** | A tool call slow enough to need its own pixels — `read_screen` (a VLM round trip), `get_matchup_advice` on a cold cache | dota2 §6.3 |
-| **Confirming** | The consent gate in front of `read_screen`: a screenshot is about to leave the machine | dota2 §7 |
+| **Acting** | A tool call slow enough to need its own pixels | `read_screen` (a VLM round trip), `get_matchup_advice` on a cold cache |
+| **Confirming** | The consent gate in front of `read_screen` | dota2 §7's requirement that a frame leaving the machine be unmistakable |
 
-That mapping is worth stating because it also satisfies dota2 §7's requirement for "an
-unmistakable indicator" while a frame is sent to a VLM: the indicator is the chip, in Acting,
-with the verb — not a second bespoke surface. A tool call faster than ~600 ms stays in Processing;
-promoting every tool call to Acting would make the chip flicker between two violet states for no
-information gain.
+[ADR-0023](../adr/0023-coaching-replaces-command-execution.md) deleted command execution. Nothing
+in the coaching path is slow enough to need pixels — brief assembly is pure, in-process and inside
+the snapshot's <5 ms budget — and nothing sends anything off the machine that is not audio, so
+nothing needs permission. Both states, both their glyphs, the amber `confirm` accent, the
+`confirm` affordance, the `confirm-timeout` timer, the `keys` effect and the scoped `Y`/`N`/`Esc`
+accelerators are removed. `ActingVerb` and `ConfirmPrompt` go with them.
 
-Confirming has consequences for input, because the window is click-through and takes no focus:
-while Confirming, main registers scoped accelerators for the confirm keys (default `Y`/`N`, plus
-`Esc`) and releases them on exit. They are never held outside that state — a permanently grabbed
-`Y` would eat a chat-wheel key mid-match. The state also carries a hard timeout (default 20 s)
-that resolves to *denied*, because a consent prompt that waits forever is a consent prompt the
-player will answer by alt-tabbing.
+**Two consequences worth stating rather than leaving implicit.**
+
+B4 becomes structurally true rather than true by policy: with `read_screen` gone, Riki has no
+consequential act at all and the product has no permission prompt anywhere. That is a stronger
+position than the one this section used to defend.
+
+And the scoped-accelerator problem disappears with the state that had it. A click-through window
+takes no pointer input, which is why Confirming needed a keyboard grab in the first place, and a
+permanently grabbed `Y` would eat a chat-wheel key mid-match. There is now no state in this design
+that needs the keyboard for anything but the push-to-talk binding.
+
+**What replaces them: nothing.** A coaching turn is Speaking with `unprompted: true` (§9.3) — no
+Armed, no earcon, an 80 ms fade-in, and barge-in from it costs exactly one key press. That path
+already existed and is now the most common thing the chip does.
 
 ### 4.5 Effects
 
@@ -339,13 +343,11 @@ export type Effect =
   | { readonly kind: 'levels';   readonly running: boolean; readonly source: LevelSource }
   | { readonly kind: 'earcon';   readonly sound: EarconId }
   | { readonly kind: 'duck';     readonly on: boolean }
-  | { readonly kind: 'keys';     readonly grab: readonly ConfirmKey[] }
-  | { readonly kind: 'voice';    readonly command: VoiceCommand };      // interrupt | abort | consent
+  | { readonly kind: 'voice';    readonly command: VoiceCommand };      // interrupt | abort
 
 export type VoiceCommand =
   | { readonly kind: 'interrupt'; readonly at: Millis }                 // barge-in → truncate
-  | { readonly kind: 'abort' }                                          // Esc
-  | { readonly kind: 'consent'; readonly granted: boolean };
+  | { readonly kind: 'abort' };                                         // Esc
 ```
 
 Two things fall out of this that are worth the indirection:
@@ -370,7 +372,6 @@ scattered through view code:
 | `elapsed-hint` | 2.5 s in Processing | chip grows an elapsed counter |
 | `cancel-hint` | 10 s in Processing | chip surfaces `Esc ✕` |
 | `error-dismiss` | 4 s in Error | → Idle, unless the fault is persistent |
-| `confirm-timeout` | 20 s in Confirming | resolve denied |
 | `hide-hold` | 400 ms after entering Idle | window hidden after the renderer's 200 ms fade |
 
 `hide-hold` is the one timer the machine does **not** schedule. The hold travels on the `window`
@@ -407,7 +408,6 @@ export interface SessionRuntimeDeps {
   readonly tray: TrayPresenter;
   readonly voice: VoiceCommandSink;
   readonly audio: AudioEffectSink;          // earcons, ducking
-  readonly keys: ConfirmKeyGrabber;
   readonly telemetry: TelemetrySink;
 }
 
@@ -506,7 +506,7 @@ into 144 IPC messages per second.
 ```ts
 export interface VoiceBridge {                 // @riki/realtime + @riki/audio → inputs
   attach(session: RealtimeSessionHandle, sink: (input: MachineInput) => void): Unsubscribe;
-  commands(): VoiceCommandSink;                // effects → session.interrupt / abort / consent
+  commands(): VoiceCommandSink;                // effects → session.interrupt / abort
 }
 
 export interface PolicyBridge {                // @riki/events → unprompted speech
@@ -562,7 +562,6 @@ export type OverlayCommand =
 export type OverlayIntent =
   | { readonly kind: 'ready' }                                  // renderer mounted; re-project
   | { readonly kind: 'cancel' }                                 // Esc reached the renderer first
-  | { readonly kind: 'confirm'; readonly answer: boolean }
   | { readonly kind: 'paint';   readonly revision: number }     // first paint of that model
   | { readonly kind: 'fault';   readonly message: string };     // the renderer's only log path
 ```
@@ -675,7 +674,7 @@ export interface MotionDirector {
 }
 ```
 
-`isStatic` is what stops the clock. Confirming, Muted and a settled Error have no animation, and
+`isStatic` is what stops the clock. Muted and a settled Error have no animation, and
 ui-design §10 requires the timer to stop, not merely to render identical frames.
 
 `isStatic` alone turned out not to be enough, and the gap is the word *settled*: an Error that has
@@ -689,10 +688,12 @@ is genuinely zero work.
 
 `sample` is pure and gets the exhaustive test that §5.4 asks for, with one correction that only
 appeared when the assertion was written: motion signatures are **not** pairwise distinct, and
-cannot be. ui-design §4.3 defines Acting as "as Processing, plus a verb", and Confirming, Muted and
-a settled Error are all static. What is distinct is the *glyph*, and what the test asserts is the
-pair — eight visible states, eight glyphs, eight (glyph, motion) pairs. That still delivers what
-§4.3 actually asks for, which is that no state is told apart by colour alone. Reduced motion is a variant of each state, not a global off switch —
+cannot be — Armed, Muted and a settled Error are all static. What is distinct is the *glyph*, and
+what the test asserts is the pair — six visible states, six glyphs, six (glyph, motion) pairs.
+That still delivers what §4.3 actually asks for, which is that no state is told apart by colour
+alone. (Before ADR-0023 it was eight of each, and the pair mattered more: Acting duplicated
+Processing's sweep. Deleting Acting removed the only *live* signature collision, so the assertion
+is stronger now than when it was written.) Reduced motion is a variant of each state, not a global off switch —
 the amplitude bars carry real information and become a single static filled bar rather than
 disappearing.
 
@@ -716,7 +717,7 @@ halves are pure and cheap to test; the split follows who would want to change th
 ### 7.5 Tokens
 
 ```ts
-export type AccentToken = 'listening' | 'working' | 'speaking' | 'confirm' | 'error' | 'muted';
+export type AccentToken = 'listening' | 'working' | 'speaking' | 'error' | 'muted';
 export interface TokenModule {
   cssVariable(token: AccentToken | ChipToken): string;    // '--riki-accent-listening'
   contrastVariant(): 'normal' | 'high';
@@ -744,9 +745,9 @@ overlay does not talk to it.
 
 | Counterpart | Direction | Carried by | What flows |
 |---|---|---|---|
-| `trigger/` (hotkey) | in | `MachineInput.trigger` | down / up / tap / cancel / confirm |
+| `trigger/` (hotkey) | in | `MachineInput.trigger` | down / up / tap / cancel |
 | `@riki/realtime` | in | `VoiceBridge` | turn submitted, response started/ended, tool started/ended, faults |
-| `@riki/realtime` | out | `VoiceCommandSink` | interrupt (barge-in → truncate), abort, consent granted/denied |
+| `@riki/realtime` | out | `VoiceCommandSink` | interrupt (barge-in → truncate), abort |
 | `@riki/audio` | in | `VoiceBridge` | device faults, VAD silence/resume, level frames |
 | `@riki/audio` | out | `AudioEffectSink` | earcons (capture start/end, error), ducking on/off |
 | `@riki/events` | in | `PolicyBridge` | `unprompted.speechStarted` |
@@ -955,10 +956,11 @@ Tier 5 is the only tier that launches a window, and per the `overlay-ui` skill i
 
 Closed, with the answer recorded here rather than in three documents:
 
-- **ui-design §13.1 — "does Riki need an input path beyond voice?"** Yes, and it is narrow:
-  scoped `Y`/`N`/`Esc` accelerators registered only while Confirming (§4.4), because a
-  click-through window can take no pointer input at all. Still open for the case where a
-  confirmation is *consequential* — with B4 in force, Riki has exactly one such action.
+- **ui-design §13.1 — "does Riki need an input path beyond voice?"** Answered twice, and the
+  second answer is *no*. It was yes-and-narrow: scoped `Y`/`N`/`Esc` accelerators registered only
+  while Confirming, because a click-through window can take no pointer input at all. ADR-0023 then
+  deleted the only consequential action Riki had, so there is nothing to confirm and no
+  accelerator to scope (§4.4). Voice and the push-to-talk binding are the whole input surface.
 - **ui-design §13.5 — multi-turn conversation.** The machine already models it: Speaking →
   trigger → Listening is one edge, and nothing in the state model assumes a turn is the last one.
   The "session active" affordance the question asks about is the latched-mode border (§4.2).
@@ -983,13 +985,11 @@ The design left these open by omission; recorded here rather than only in code c
 
 | Question | Decision | Why |
 |---|---|---|
-| Esc while Confirming | Denies the consent **and** cancels the turn → Idle | ui-design §3.1 says Esc from any active state returns to Hidden; §4.4 grabs Esc as a confirm key. Both, in that order. `N` is deliberately different — "no, but carry on" — and stays in Processing |
 | A persistent fault blocking the trigger | It does not: the key re-arms from Error | The window is click-through, so `Fix ▸` is a hint, not a button. Refusing the key would leave the chip with no recovery path at all. The second identical fault is deduped, so a failed retry costs one silent return to Idle |
 | Tray `attention` | Read off `reported`, not off the Error phase | A revoked microphone outlives the four seconds of Error chip, and the tray is the surface that must keep saying so |
 | Fault dedupe scope | Persistent faults only | "Fail loudly but only once" (§1.6) is about a broken mic. A second "didn't catch that" is news, not nagging |
-| Trigger during Processing or Acting | Aborts the turn and starts a new capture | The player has something else to say; queueing behind an answer they have stopped waiting for is worse than dropping it |
+| Trigger during Processing | Aborts the turn and starts a new capture | The player has something else to say; queueing behind an answer they have stopped waiting for is worse than dropping it |
 | `responseEnded` in a latched session | Returns to Listening, not to Idle | That is what latching means, and it is the "session active" affordance §14 promised |
-| Consent granted | → Processing, and `tool.started` owns the edge into Acting | One source for Acting rather than two that can disagree |
 | Speaking's `⌥Space ✕` hint | Not rendered | Rendering it means naming the bound key, which the machine does not know — `trigger/` owns the binding and is a sibling task. Still open |
 
 ## 15. Build order

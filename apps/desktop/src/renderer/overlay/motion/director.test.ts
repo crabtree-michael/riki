@@ -9,8 +9,6 @@ const VISIBLE_STATES: readonly ChipState[] = [
   'armed',
   'listening',
   'processing',
-  'acting',
-  'confirming',
   'speaking',
   'error',
   'muted',
@@ -31,10 +29,8 @@ describe('signatureFor', () => {
   it('matches the signature the machine projects, so the two never disagree', () => {
     expect(director.signatureFor('listening', NORMAL)).toBe('amplitude');
     expect(director.signatureFor('processing', NORMAL)).toBe('sweep');
-    expect(director.signatureFor('acting', NORMAL)).toBe('sweep');
     expect(director.signatureFor('speaking', NORMAL)).toBe('envelope');
     expect(director.signatureFor('error', NORMAL)).toBe('double-pulse-then-static');
-    expect(director.signatureFor('confirming', NORMAL)).toBe('none');
     expect(director.signatureFor('muted', NORMAL)).toBe('none');
   });
 

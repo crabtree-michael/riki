@@ -3,13 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { isOverlayIntent, parseOverlayIntent } from './intents.js';
 
 describe('parseOverlayIntent — what the renderer is allowed to say', () => {
-  it('accepts the five intents and nothing more', () => {
+  it('accepts the four intents and nothing more', () => {
     expect(parseOverlayIntent({ kind: 'ready' })).toEqual({ kind: 'ready' });
     expect(parseOverlayIntent({ kind: 'cancel' })).toEqual({ kind: 'cancel' });
-    expect(parseOverlayIntent({ kind: 'confirm', answer: true })).toEqual({
-      kind: 'confirm',
-      answer: true,
-    });
     expect(parseOverlayIntent({ kind: 'paint', revision: 12 })).toEqual({
       kind: 'paint',
       revision: 12,
@@ -30,7 +26,9 @@ describe('parseOverlayIntent — what the renderer is allowed to say', () => {
       {},
       { kind: 'teardown' },
       { kind: 'dispatch', input: { kind: 'mute', muted: true } },
-      { kind: 'confirm' },
+      // The consent gate is gone (ADR-0023), so a renderer that still says `confirm` is a stale
+      // renderer, and the allow-list must not let it through.
+      { kind: 'confirm', answer: true },
       { kind: 'confirm', answer: 'yes' },
       { kind: 'paint' },
       { kind: 'paint', revision: Number.NaN },

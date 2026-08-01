@@ -12,9 +12,6 @@ import type { Millis } from '../../shared/overlay.js';
 
 export type CaptureMode = 'push' | 'latch';
 
-/** Short verbs only, because Acting renders one on the chip (ui-design.md §5.1). */
-export type ActingVerb = 'reading' | 'looking-up' | 'checking';
-
 export type FaultKind =
   'mic-denied' | 'no-input-device' | 'offline' | 'auth' | 'session-lost' | 'no-speech-detected';
 
@@ -25,20 +22,12 @@ export interface Fault {
   readonly message: string;
 }
 
-/** The one consequential thing Riki does: a frame leaving the machine for a VLM (§4.4). */
-export interface ConfirmPrompt {
-  readonly id: string;
-  readonly question: string;
-  readonly action: 'read-screen';
-}
-
 export type TimerId =
   | 'silence-nudge'
   | 'listen-timeout'
   | 'elapsed-hint'
   | 'cancel-hint'
   | 'error-dismiss'
-  | 'confirm-timeout'
   | 'hide-hold';
 
 export interface PendingTimer {
@@ -49,6 +38,11 @@ export interface PendingTimer {
 /**
  * Muted is deliberately absent: it is a condition, not a phase, and modelling it as one would
  * add eighteen impossible combinations to the reducer (§4.2).
+ *
+ * `acting` and `confirming` are absent because ADR-0023 deleted their only producers — a tool call
+ * slow enough to need its own pixels, and the consent gate in front of `read_screen`. A coaching
+ * turn is `speaking` with `unprompted: true`, which §9.3 already specifies end to end and which is
+ * now the most common thing the chip does.
  */
 export type Phase =
   | { readonly kind: 'idle' }
@@ -59,8 +53,6 @@ export type Phase =
       readonly silentSince: Millis | null;
     }
   | { readonly kind: 'processing'; readonly startedAt: Millis }
-  | { readonly kind: 'acting'; readonly verb: ActingVerb }
-  | { readonly kind: 'confirming'; readonly prompt: ConfirmPrompt }
   | { readonly kind: 'speaking'; readonly unprompted: boolean }
   | { readonly kind: 'error'; readonly fault: Fault };
 
@@ -69,7 +61,6 @@ export interface MachineEnvironment {
   readonly silenceNudgeMs: Millis;
   readonly listenTimeoutMs: Millis;
   readonly holdThresholdMs: Millis;
-  readonly confirmTimeoutMs: Millis;
   readonly captionsEnabled: boolean;
   readonly earconsEnabled: boolean;
   readonly duckingEnabled: boolean;
@@ -91,21 +82,14 @@ export type TriggerEvent =
   | { readonly kind: 'down' }
   | { readonly kind: 'up' }
   | { readonly kind: 'tap' }
-  | { readonly kind: 'cancel' }
-  | { readonly kind: 'confirm'; readonly answer: boolean };
+  | { readonly kind: 'cancel' };
 
 export type MachineInput =
   | { readonly kind: 'trigger'; readonly event: TriggerEvent }
   | { readonly kind: 'capture'; readonly event: 'opened' | 'firstAudio' | 'closed' }
   | { readonly kind: 'speech'; readonly event: 'silence' | 'resumed' }
   | { readonly kind: 'turn'; readonly event: 'submitted' | 'responseStarted' | 'responseEnded' }
-  | { readonly kind: 'tool'; readonly event: 'started' | 'ended'; readonly verb: ActingVerb }
-  | {
-      readonly kind: 'consent';
-      readonly event: 'requested' | 'resolved';
-      readonly prompt: ConfirmPrompt;
-    }
-  /** The chip appears with no gesture behind it (dota2 §6.4; ui-design §13.6 left this open). */
+  /** The chip appears with no gesture behind it — the primary path under ADR-0023 (§9.3). */
   | { readonly kind: 'unprompted'; readonly event: 'speechStarted' }
   | { readonly kind: 'fault'; readonly fault: Fault }
   | { readonly kind: 'mute'; readonly muted: boolean }
@@ -114,18 +98,15 @@ export type MachineInput =
   | { readonly kind: 'intent'; readonly intent: RendererIntent };
 
 /** The subset of OverlayIntent the machine acts on; `paint` and `fault` never reach it. */
-export type RendererIntent =
-  { readonly kind: 'cancel' } | { readonly kind: 'confirm'; readonly answer: boolean };
+export interface RendererIntent {
+  readonly kind: 'cancel';
+}
 
 export type EarconId = 'capture-start' | 'capture-end' | 'error';
 
-export type ConfirmKey = 'yes' | 'no' | 'escape';
-
 export type VoiceCommand =
   /** Barge-in. @riki/realtime turns this into conversation.item.truncate (voice-realtime skill). */
-  | { readonly kind: 'interrupt'; readonly at: Millis }
-  | { readonly kind: 'abort' }
-  | { readonly kind: 'consent'; readonly promptId: string; readonly granted: boolean };
+  { readonly kind: 'interrupt'; readonly at: Millis } | { readonly kind: 'abort' };
 
 /**
  * The reducer returns descriptions, never calls. A `window` effect that makes the overlay
@@ -139,7 +120,6 @@ export type Effect =
   | { readonly kind: 'levels'; readonly running: boolean; readonly source: 'input' | 'output' }
   | { readonly kind: 'earcon'; readonly sound: EarconId }
   | { readonly kind: 'duck'; readonly on: boolean }
-  | { readonly kind: 'keys'; readonly grab: readonly ConfirmKey[] }
   | { readonly kind: 'voice'; readonly command: VoiceCommand };
 
 export interface Transition {

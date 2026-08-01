@@ -164,10 +164,7 @@ body {
   transform: rotate(-45deg);
 }
 
-/* Acting, Confirming and Error are characters: a shape is not enough to say which verb, which
-   question, or which fault. */
-.riki-chip__glyph[data-glyph='gear'],
-.riki-chip__glyph[data-glyph='query'],
+/* Error is a character: a shape is not enough to say which fault. */
 .riki-chip__glyph[data-glyph='bang'] {
   display: grid;
   place-items: center;
@@ -176,18 +173,8 @@ body {
   font-weight: 700;
 }
 
-.riki-chip__glyph[data-glyph='gear']::before,
-.riki-chip__glyph[data-glyph='query']::before,
 .riki-chip__glyph[data-glyph='bang']::before {
   background: transparent;
-}
-
-.riki-chip__glyph[data-glyph='gear']::after {
-  content: '⚙';
-}
-
-.riki-chip__glyph[data-glyph='query']::after {
-  content: '?';
 }
 
 .riki-chip__glyph[data-glyph='bang']::after {

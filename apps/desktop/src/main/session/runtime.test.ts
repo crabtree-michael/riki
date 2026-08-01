@@ -3,14 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   createFakeClock,
   recordAudio,
-  recordKeys,
   recordOverlay,
   recordTelemetry,
   recordTray,
   recordVoice,
   type FakeClock,
   type RecordedAudio,
-  type RecordedKeys,
   type RecordedOverlay,
   type RecordedTelemetry,
   type RecordedTray,
@@ -20,7 +18,6 @@ import { machine } from './machine.js';
 import { createSessionRuntime } from './runtime.js';
 import { DEFAULT_ENVIRONMENT, ELAPSED_HINT_MS, HIDE_HOLD_MS } from './timing.js';
 import type { SessionRuntime } from './contracts.js';
-import type { ConfirmPrompt } from './types.js';
 
 interface Harness {
   readonly runtime: SessionRuntime;
@@ -29,7 +26,6 @@ interface Harness {
   readonly tray: RecordedTray;
   readonly voice: RecordedVoice;
   readonly audio: RecordedAudio;
-  readonly keys: RecordedKeys;
   readonly telemetry: RecordedTelemetry;
 }
 
@@ -39,18 +35,15 @@ function harness(): Harness {
   const tray = recordTray();
   const voice = recordVoice();
   const audio = recordAudio();
-  const keys = recordKeys();
   const telemetry = recordTelemetry();
 
   const runtime = createSessionRuntime(
-    { machine, clock, overlay, tray, voice, audio, keys, telemetry },
+    { machine, clock, overlay, tray, voice, audio, telemetry },
     DEFAULT_ENVIRONMENT,
   );
 
-  return { runtime, clock, overlay, tray, voice, audio, keys, telemetry };
+  return { runtime, clock, overlay, tray, voice, audio, telemetry };
 }
-
-const PROMPT: ConfirmPrompt = { id: 'c1', question: 'Look?', action: 'read-screen' };
 
 describe('createSessionRuntime', () => {
   it('projects one model at construction, so a reload has something to re-send', () => {
@@ -133,16 +126,6 @@ describe('createSessionRuntime', () => {
 
     runtime.dispatch({ kind: 'trigger', event: { kind: 'cancel' } });
     expect(clock.scheduled).toEqual([]);
-  });
-
-  it('grabs and releases the confirm keys with the phase', () => {
-    const { runtime, keys } = harness();
-    runtime.dispatch({ kind: 'consent', event: 'requested', prompt: PROMPT });
-    expect(keys.held).toEqual(['yes', 'no', 'escape']);
-
-    runtime.dispatch({ kind: 'trigger', event: { kind: 'confirm', answer: true } });
-    expect(keys.held).toEqual([]);
-    expect(keys.releases).toBe(1);
   });
 
   it('sends voice commands out through the voice sink and nowhere else', () => {

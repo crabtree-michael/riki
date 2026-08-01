@@ -37,7 +37,6 @@ export const DEFAULT_ENVIRONMENT: MachineEnvironment = {
   silenceNudgeMs: 1_200,
   listenTimeoutMs: 8_000,
   holdThresholdMs: 250,
-  confirmTimeoutMs: 20_000,
   captionsEnabled: false,
   earconsEnabled: true,
   duckingEnabled: true,

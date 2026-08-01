@@ -169,18 +169,18 @@ describe('createOverlayPresenter — levels', () => {
 });
 
 describe('createOverlayPresenter — intents', () => {
-  it('forwards only the two the machine acts on', async () => {
+  it('forwards only the one the machine acts on', async () => {
+    // One, where there were two: `confirm` went with the Confirming state (ADR-0023).
     const { presenter, window } = await harness();
     const seen: string[] = [];
     presenter.onIntent((intent) => seen.push(intent.kind));
 
     window.emitIntent({ kind: 'cancel' });
-    window.emitIntent({ kind: 'confirm', answer: true });
     window.emitIntent({ kind: 'ready' });
     window.emitIntent({ kind: 'paint', revision: 1 });
     window.emitIntent({ kind: 'fault', message: 'boom' });
 
-    expect(seen).toEqual(['cancel', 'confirm']);
+    expect(seen).toEqual(['cancel']);
   });
 
   it('routes a renderer fault to telemetry, which is its only log path', async () => {
