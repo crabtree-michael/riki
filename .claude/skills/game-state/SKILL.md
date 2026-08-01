@@ -80,5 +80,5 @@ wrong.
 
 `docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),
 §9 (failure modes); `docs/design/state-capture-architecture.md` (classes, method signatures, module
-boundaries); `docs/adr/0008-observation-reducer-seam.md`; `REPO_SKELETON.md` §5.3 (tiers),
+boundaries); `docs/adr/0014-observation-reducer-seam.md`; `REPO_SKELETON.md` §5.3 (tiers),
 §6.2 (module boundaries).

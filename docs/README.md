@@ -53,21 +53,21 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0005](adr/0005-monorepo-and-protocol-package.md)         | Monorepo with a central protocol package | Accepted                                       |
 | [0006](adr/0006-env-var-api-key-for-alpha-beta.md)        | Env-var API key for alpha/beta           | Accepted, expected to be superseded            |
 | [0007](adr/0007-superpowers-plugin-enabled-by-default.md) | Superpowers plugin on by default         | Implemented (long-form; predates the template) |
-| [0008](adr/0008-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
-| [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted — ⚠ number collides with the row above |
+| [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted                                       |
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
 | [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
 | [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
 | [0012](adr/0012-conversation-ledger-is-ours.md)           | Riki keeps its own conversation ledger   | Accepted                                       |
 | [0013](adr/0013-durable-memory-is-typed-observations.md)  | Durable memory is typed, local, no free text | Accepted, one default needs a human call   |
+| [0014](adr/0014-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
 
-Two agents landed an ADR-0008 in parallel and neither renumbered; both files are listed above so
-the second one is at least findable. Whoever next has reason to touch either should renumber one
-and fix its inbound links. **Claim the next free number by looking at `docs/adr/`, not at this
-table** — the table can lag by a commit.
+**Claim the next free number from `ls docs/adr/` immediately before you commit, not from this
+table and not at the start of your task** — the table lags by a commit, and the gap is long enough
+for another agent to take the number. Two ADR-0008s landed that way, then two ADR-0012s; the later
+of each pair was renumbered afterwards, which means moving a file and chasing its inbound links.
 
 ## Runbooks
 

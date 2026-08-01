@@ -7,8 +7,9 @@
  * Inputs arrive at 2–8 Hz. FakeGsiSource in `@riki/gsi/testing` replays fixtures/gsi/*.jsonl,
  * which is what lets every consumer be tested without Dota running (§5.2).
  *
- * Skeleton only — no implementation yet. See REPO_SKELETON.md §2.2 for what belongs here
- * and §10 for where this package sits in the scaffolding order.
+ * Contracts only — no behaviour yet. Signatures are
+ * docs/design/state-capture-architecture.md §4.1, waiting for REPO_SKELETON.md §10 step 4.
  */
 
-export {};
+export type * from './contracts.js';
+export type * from './payload.js';

@@ -22,9 +22,10 @@ Stated up front, house style, and flagged where load-bearing:
    it is the constraint most likely to be eroded by a convenient shortcut.
 3. **Sources and the model do not know about each other.** They meet at a protocol type. A source
    cannot import `@riki/world-model`; the model cannot import `@riki/gsi`. §2.3 gives the lint rule.
-4. **This document specifies interfaces, not implementations.** No runtime code lands with it. The
-   signatures here are the contract for the agents who implement REPO_SKELETON §10 step 4; treat a
-   disagreement with them as a reason to amend this file, not to diverge silently.
+4. **This document specifies interfaces, not implementations.** The declaration-only TypeScript
+   contracts it describes have landed (§12); no *behaviour* has. The signatures here are the
+   contract for the agents who implement REPO_SKELETON §10 step 4; treat a disagreement with them
+   as a reason to amend this file and the contracts together, not to diverge silently.
 5. Numbers marked *(tunable)* are starting points to be measured, not decisions. Numbers not so
    marked come from the companion design doc or from REPO_SKELETON and should not be changed here.
 
@@ -225,6 +226,12 @@ Three things fall out of this that are worth the ceremony:
   net-worth estimate is itself stale, and says so.
 - **Age is not stored.** It is computed at read time from `observedAt` and the `now` passed in. A
   stored age is an age that is wrong by the time anyone reads it.
+
+**Only fusion calls the factories.** A source emits a *payload*; the reducer decides what facts that
+payload implies and stamps them. This fell out of scaffolding §4 — `packages/gsi` and
+`packages/log-tail` turned out to need no part of this module, which is a good sign rather than an
+accident: it is what lets a source stay unaware that a world model exists at all (ADR-0014), and it
+means provenance is stamped in exactly one place instead of at every source that might forget.
 
 ### 3.3 Observations — what a source emits
 
@@ -1012,3 +1019,47 @@ sources, `pnpm dev:replay` drives the actual subsystem rather than a parallel te
 
 Items 5 and 6 are the two that should be resolved by measurement before `packages/world-model` is
 considered done, rather than by argument.
+
+---
+
+## 12. Where the contracts live
+
+Declaration-only TypeScript, landed with this document. No behaviour: every `declare`d function is
+a signature waiting for REPO_SKELETON §10 step 4.
+
+| This document | File |
+|---|---|
+| §3.1 clocks | `packages/world-model/src/time.ts` |
+| §3.2 fact envelope + factories | `packages/world-model/src/fact.ts` |
+| §3.3–§3.4 observations, source interface | `packages/world-model/src/observation.ts` |
+| §3.5 world state | `packages/world-model/src/state.ts` |
+| §5.1 store + read interface | `packages/world-model/src/store.ts` |
+| §5.2 reducer | `packages/world-model/src/fusion/reducer.ts` |
+| §5.3 precedence | `packages/world-model/src/fusion/precedence.ts` |
+| §5.4 confidence gate | `packages/world-model/src/fusion/confidence.ts` |
+| §5.5 staleness, two-clock rule | `packages/world-model/src/fusion/staleness.ts` |
+| §5.6 drift monitor | `packages/world-model/src/drift.ts` |
+| §5.7 derived state | `packages/world-model/src/derived/registry.ts` |
+| §5.8 history + deltas | `packages/world-model/src/history/{ring,delta}.ts` |
+| §7.1 snapshot | `packages/world-model/src/snapshot.ts` |
+| §4.1 GSI | `packages/gsi/src/{contracts,payload}.ts` |
+| §4.2 log tail | `packages/log-tail/src/contracts.ts` |
+
+Two things are deliberately **not** here:
+
+- **The composition root (§8) and the `CapturePort` (§4.3).** They belong to `apps/desktop`, which
+  is step 6. `packages/context` already declares the `CapturePort` shape it consumes.
+- **Anything in `packages/protocol`.** REPO_SKELETON §2.2 sends cross-boundary types there *first*,
+  but the package is step 2 and zod is its source of truth (§4) — hand-written types in it would be
+  the drift the `protocol` skill warns about. So the vocabulary sits in `world-model`, and the two
+  source packages mirror the ~20 lines of it they need, each marked ⚠ transitional. This matches
+  what `packages/context` and `apps/desktop/src/shared` already do. The copies collapse when step 2
+  lands, and `Observation` itself never crosses to Rust — the sidecar speaks protocol messages and
+  the adapter in §4.3 wraps them, which is what keeps the wire format and this vocabulary free to
+  diverge.
+
+`packages/context/src/common/ports.ts` declares its own structural copies of `WorldModelReader`,
+`WorldSnapshot` and `WorldDelta`, with a note to delete them when this package lands. They are
+checked compatible: that `WorldModelReader` is method-for-method identical to `store.ts`'s, and its
+`WorldSnapshot` is a strict subset of `snapshot.ts`'s, so the real types satisfy the declarations
+without either side changing. Deleting the copies is that package's call to make, not this one's.

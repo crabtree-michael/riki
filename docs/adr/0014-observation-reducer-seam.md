@@ -1,4 +1,4 @@
-# ADR-0008: Sources emit observations; fusion is a pure reducer
+# ADR-0014: Sources emit observations; fusion is a pure reducer
 
 **Status:** Accepted
 **Date:** 2026-08-01

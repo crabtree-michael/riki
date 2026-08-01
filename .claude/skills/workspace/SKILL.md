@@ -54,6 +54,12 @@ the next agent is how a repo stalls.
 Write the commit message for someone whose only context is `git log`. If you left part of
 the task undone, say what and why in the message.
 
+**Claim an ADR number from `ls docs/adr/`, immediately before you commit — not from the
+table in `docs/README.md`, and not at the start of your task.** The table lags by a commit,
+and the gap between reading it and pushing is long enough for another agent to take the
+number. Re-check after your final `git pull --rebase`; renumbering afterwards means moving a
+file and chasing its inbound links.
+
 ## Updating a skill
 
 Every area has a skill in `.claude/skills/`. When you finish a task, ask: *did I learn

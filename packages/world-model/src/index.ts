@@ -9,8 +9,22 @@
  * It must not know it is feeding an LLM — state and conversation rates are decoupled by
  * design, and a lint boundary stops it importing @riki/realtime (§6.2).
  *
- * Skeleton only — no implementation yet. See REPO_SKELETON.md §2.2 for what belongs here
- * and §10 for where this package sits in the scaffolding order.
+ * Contracts only — no behaviour yet. Every `declare`d function is a signature waiting for
+ * REPO_SKELETON.md §10 step 4; the shapes are docs/design/state-capture-architecture.md §3 and §5,
+ * and the seam they all serve is ADR-0014.
  */
 
-export {};
+export type * from './time.js';
+export type * from './fact.js';
+export type * from './observation.js';
+export type * from './state.js';
+export type * from './snapshot.js';
+export type * from './store.js';
+export type * from './drift.js';
+export type * from './fusion/reducer.js';
+export type * from './fusion/precedence.js';
+export type * from './fusion/confidence.js';
+export type * from './fusion/staleness.js';
+export type * from './derived/registry.js';
+export type * from './history/ring.js';
+export type * from './history/delta.js';

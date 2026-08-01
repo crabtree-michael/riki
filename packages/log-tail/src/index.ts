@@ -5,8 +5,8 @@
  * log rotation. Chat text is privacy-sensitive: it never leaves the machine by default
  * (state capture design §7) and is redacted by @riki/telemetry.
  *
- * Skeleton only — no implementation yet. See REPO_SKELETON.md §2.2 for what belongs here
- * and §10 for where this package sits in the scaffolding order.
+ * Contracts only — no behaviour yet. Signatures are
+ * docs/design/state-capture-architecture.md §4.2, waiting for REPO_SKELETON.md §10 step 4.
  */
 
-export {};
+export type * from './contracts.js';
