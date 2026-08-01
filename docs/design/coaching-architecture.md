@@ -1,10 +1,12 @@
 # Proactive Coaching — Deletion Plan & Module Architecture
 
 **Status:** Accepted ([ADR-0023](../adr/0023-coaching-replaces-command-execution.md)), and
-**§16 steps 1–5 are built**. The deletion is done: `packages/context/src/tools/`, the
-`packages/realtime` seam, and the overlay's `Acting` and `Confirming` states are gone, and
-`packages/context/src/coaching/` exists with a golden corpus. Steps 6–8 remain — `packages/events`,
-the composition root, and tuning. §16 marks each.
+**§16 steps 1–7 are built**. The deletion is done: `packages/context/src/tools/`, the
+`packages/realtime` seam, and the overlay's `Acting` and `Confirming` states are gone;
+`packages/context/src/coaching/` exists with a golden corpus; and `packages/events` and the
+composition root in `apps/desktop/src/main/agent/` now exist against
+[`coaching-trigger-architecture.md`](coaching-trigger-architecture.md). Step 8, tuning, remains.
+§16 marks each.
 **Scope:** Two halves of one decision. First, the complete removal of the agent command execution
 system — Tier 3 of [`dota2-state-capture-design.md`](dota2-state-capture-design.md) §6.3, the
 `packages/context/src/tools/` pipeline, its seam in `packages/realtime`, and the two overlay states
@@ -25,15 +27,20 @@ deliberately does not give its coefficients.
 
 > **⚠ Read this first: the trigger half is somebody else's.**
 >
-> While this document was being written, another agent began implementing `packages/events` — the
-> trigger half of coaching — against a sibling document, `coaching-trigger-architecture.md`. That
-> work is more detailed than §6 here, and **where the two disagree, it wins.**
+> `packages/events` — the trigger half of coaching — is specified by a sibling document,
+> [`coaching-trigger-architecture.md`](coaching-trigger-architecture.md). That document is more
+> detailed than §6 here, and **where the two disagree, it wins.**
 >
-> **As of the deletion landing, `packages/events` is still an empty stub with a doc comment**, so
-> §4.4's independence is doing real work rather than being a nicety: `BRIEF_PLAN` keys on event ids
-> written as string literals, so the content half compiled, shipped and golden-tested without the
-> trigger half existing. §6.6 row 4 — the one open seam — is **closed**: `TurnBrief.topic` carries
-> `CoachEvent.topic` through `openTurn`.
+> **Update, and it is the reason to re-read §6.6.** When this document was written that sibling was
+> described as in flight; it had in fact never been committed, and `packages/events` stayed an empty
+> stub through the whole deletion. It was written and implemented afterwards, from the constraints
+> §6 and ADR-0023 quote — the eight-member union, the salience decomposition, the thirteen
+> suppression reasons — so every quotation below is now load-bearing rather than descriptive. All
+> four rows of §6.6 are closed.
+>
+> That gap is also the evidence for §4.4's independence being real rather than a nicety:
+> `BRIEF_PLAN` keys on event ids written as string literals, so the content half compiled, shipped
+> and golden-tested against a package that did not exist.
 >
 > The split of ownership that results is clean, and it is the one §4.1 argues for on independent
 > grounds:
@@ -41,13 +48,13 @@ deliberately does not give its coefficients.
 > | Half | Owner | Spec |
 > |---|---|---|
 > | **Deletion** — what goes, in what order, and what must be salvaged first | This document, §2–§3 | Here. Unclaimed elsewhere |
-> | **Trigger** — detection, salience, the gates, suppression accounting | `packages/events`, in flight | `coaching-trigger-architecture.md` |
+> | **Trigger** — detection, salience, the gates, suppression accounting | `packages/events` | [`coaching-trigger-architecture.md`](coaching-trigger-architecture.md) |
 > | **Content** — the coaching brief: what the model is shown for a given moment | `packages/context/src/coaching/` | This document, §4–§5. Unclaimed elsewhere |
 > | **Routing** — voice intents and the overlay after the deletion | This document, §7 | Here |
 >
-> §6 is therefore kept deliberately thin and defers throughout; §6.6 lists the four places the
-> in-flight design is ahead of it, including one seam gap that needs closing before the two halves
-> meet. Every trigger-side interface named below is *theirs*, quoted for context, not proposed here.
+> §6 is therefore kept deliberately thin and defers throughout; §6.6 lists the four places the two
+> designs met. Every trigger-side interface named below is *theirs*, quoted for context, not
+> proposed here.
 
 ---
 
@@ -83,11 +90,12 @@ the same direction.
 
 `packages/world-model` knows what is true. `packages/context` knows what the model should see and
 what Riki has already said. `packages/realtime` knows how to hold a conversation. Between them
-there has always been a gap that `packages/events` was supposed to fill — *is now a moment worth
-speaking about, and about what* — and it has never been built. `packages/events` is an empty stub
-with a doc comment.
+there was a gap that `packages/events` was supposed to fill — *is now a moment worth speaking about,
+and about what* — and at the time this was written it had never been built: `packages/events` was an
+empty stub with a doc comment. It exists now, against
+[`coaching-trigger-architecture.md`](coaching-trigger-architecture.md).
 
-That is worth naming plainly, because it changes how large this work looks:
+That was worth naming plainly, because it changed how large this work looked:
 
 > **Most of the "new coaching module" is the package that was always going to exist and never got
 > built.** dota2 §6.4 already specifies event detection, salience, cooldowns, the novelty gate and
@@ -365,7 +373,7 @@ Coaching splits cleanly along a line the repo has already drawn:
 
 | Half | Question | Package | Specified in |
 |---|---|---|---|
-| **Trigger** | Is now a moment worth speaking about, and about what? | `packages/events` | dota2 §6.4, and `coaching-trigger-architecture.md` — **in flight** |
+| **Trigger** | Is now a moment worth speaking about, and about what? | `packages/events` | dota2 §6.4, and [`coaching-trigger-architecture.md`](coaching-trigger-architecture.md) |
 | **Content** | Given that moment, what should the model be shown? | `packages/context/src/coaching/` | This document, §4–§5 |
 
 Putting the content half in `packages/context` rather than in a new `packages/coach` is the
@@ -409,13 +417,17 @@ packages/context/src/
 │   └── sections/         one file per brief section (§5.4)
 └── testing/index.ts      now the home of FakeWorldModel, observed, FakeReferenceData, ManualTimers
 
-packages/events/src/        ← owned by coaching-trigger-architecture.md; shape as it stands in flight
+packages/events/src/        ← owned by coaching-trigger-architecture.md, and as built
 ├── types.ts                CoachEventKind, Detection, CoachEvent, SuppressionReason, TriggerDecision
-├── contracts.ts            EventDetector, SalienceScorer, TriggerPolicy, EventTape
-├── config.ts               thresholds and cooldowns, injected from @riki/config
+├── contracts.ts            EventDetector, SalienceScorer, TriggerPolicy, EventTape, EventEngine
+├── config.ts               every number that changes behaviour, in one file (trigger §4.5)
 ├── detect/                 combat · economy · map · timings — one detector per CoachEventKind
-├── salience.ts             kind weight × instance magnitude × urgency (§6.2)
-└── intensity.ts            the mid-fight suppression signal
+├── salience.ts             kind weight × magnitude × urgency × confidence × tendency (§6.2)
+├── gates/                  the thirteen refusals, in the order they are asked (§6.3)
+├── policy.ts               rank, ask the gates about the winner, return a value
+├── tape.ts                 the `recent:` line — detections, not utterances
+├── intensity.ts            the mid-fight suppression signal
+└── engine.ts               the one stateful object: latches, cooldowns, counters, subscription
 ```
 
 The one thing that directory needs from this document is `BriefSectionId`, and §4.4 concludes it
@@ -746,7 +758,7 @@ in-flight design; the fourth is a real gap and belongs to whoever wires the comp
 | 1 | This document proposed a `CoachingCause` union; `packages/events` reuses `TurnCause`'s existing trigger arm | **Theirs.** §4.3 — no type changes, and the adapter stays a field copy |
 | 2 | This document put the brief-section table in the catalogue in `packages/events` | **Neither, as first written.** §4.4 moves it to `packages/context`, so the salience path never acquires a reason to know about tokens |
 | 3 | This document listed `tower_diveable` among the starting topics | **Theirs.** It cannot be detected without the enemy's health, which the fairness rule puts out of reach. §4.4 |
-| 4 | **`TurnCause` carries `EventId` and salience but not `AdviceTopic`. The brief planner and the novelty gate both key on topic** | **Open.** See below |
+| 4 | **`TurnCause` carries `EventId` and salience but not `AdviceTopic`. The brief planner and the novelty gate both key on topic** | **Closed**, as proposed below. `TurnBrief.topic` carries it, the composition root passes `CoachEvent.topic` into `openTurn`, and `agent_said.topics` is populated from the same field |
 
 Row 4 is the gap. `CoachEvent` carries `topic: AdviceTopic`; `CoachingTrigger.cause` does not,
 because it mirrors a `TurnCause` that predates coaching. The composition root holds the whole
@@ -756,9 +768,9 @@ but it has to be *decided*, because the alternative is `packages/context` derivi
 uses. Two tables that must agree about what "the same advice" means is precisely what
 `AdviceTopic` being a closed union exists to prevent (ADR-0013).
 
-The cheapest correct answer, proposed here and not settled: **the composition root passes
-`CoachEvent.topic` into `openTurn`**, `BriefRequest.topic` carries it, and `agent_said.topics` is
-populated from the same field. One value, one origin, three consumers.
+The cheapest correct answer, proposed here and **since settled exactly this way**: the composition
+root passes `CoachEvent.topic` into `openTurn`, `BriefRequest.topic` carries it, and
+`agent_said.topics` is populated from the same field. One value, one origin, three consumers.
 
 ---
 
@@ -987,9 +999,9 @@ silently into wrongness.
 | `packages/context` → `packages/realtime`, `events`, `gsi`, `log-tail`, `electron` | Forbidden | Existing lint (context-and-memory §2.3) — unchanged |
 | `packages/context` → `node:fs`, `node:path` | Forbidden | Existing lint — unchanged |
 | `packages/events` → `packages/context` | **Allowed**, types only: `CoachingMemoryReader`, `AdviceTopic`, `TapeEvent` | The edge that already exists. §4.4 keeps `BriefSectionId` off it — the plan table lives on the context side |
-| `packages/events` → `packages/realtime`, `apps/*`, `electron` | Forbidden | **Lint to add** with the implementation, not before |
+| `packages/events` → `packages/realtime`, `apps/*`, `electron`, `node:fs` | Forbidden | **Added** with the implementation, and each proven by a violating file that failed `pnpm exec eslint` |
 | `packages/events` → `packages/world-model` | Allowed | Detection reads deltas through the reader |
-| A brief section → another brief section | Forbidden | **Lint to add** — sections are leaves, exactly as handlers were |
+| A brief section → another brief section | Forbidden | Lint, added with the sections — leaves, exactly as handlers were |
 | `process.env` | Only `packages/config` | Existing rule |
 | `console.*` | Only `packages/telemetry` | Existing rule — hence `ContextTelemetry` as a port |
 
@@ -1034,8 +1046,8 @@ fakes, with no game, no session and no network.
 | `BriefRenderer` | 1 | Age and confidence on every CV-derived field; below-threshold dropped; truncation priority; `omitted` complete |
 | Empty brief | 1 | A cause whose sections are all empty produces no turn (§6.5) |
 | Brief privacy gate | 1 | **Egress test**: with default config, chat text never appears in a brief. Inherited from the deleted design's best test |
-| Detectors, salience, gates, novelty | 1 | **`coaching-trigger-architecture.md`'s map, not this one.** The rows below are what this document asks of it |
-| Suppression accounting | 1 | Every refusal appends `turn_closed: 'silent'` and increments its own `SuppressionReason` counter (§6.3) — the input to §12 row 2 |
+| Detectors, salience, gates, novelty | 1 | **[`coaching-trigger-architecture.md`](coaching-trigger-architecture.md) §13's map, not this one.** The rows below are what this document asks of it |
+| Suppression accounting | 1 | Every refusal increments its own `SuppressionReason` counter (§6.3) — the input to §12 row 2. ⚠ *"and appends `turn_closed: 'silent'`"* was this row as written and is corrected by [ADR-0024](../adr/0024-suppression-is-counted-the-ledger-records-transitions.md): the ledger records the transition, not the instant, because the gates run on every version bump |
 | Salience carries confidence | 1 | A 0.55-confidence detection scores below the same detection from GSI (§6.2) |
 | `BRIEF_PLAN` totality | 1 | Every `EventId` the trigger side can emit has a plan row. A missing row is a coaching turn with an empty brief, which §6.5 turns into silence |
 | One trigger, one utterance | 1 | Property test: a trigger arriving while a turn is open never opens a second |
@@ -1156,15 +1168,27 @@ Each step is a ticket. Each leaves `main` green, and no step depends on a step a
    a section, which §5.5 forbids and which would yield a number carrying neither age nor confidence.
    The sections render absolute clock times; the snapshot's header carries `T mm:ss` every turn. If
    relative reads better, the fix is a `derived.*In` field in `packages/world-model`.
-6. **`packages/events`** — against `coaching-trigger-architecture.md`. Not a ticket to dispatch from
-   this document. What this document owed it — row 4 of §6.6 — is **paid**: `TurnBrief.topic`
-   exists and `openTurn` threads it to the planner. What it owes this document is nothing.
-   `BRIEF_PLAN`'s eight rows are keyed on the ids that union names; a ninth id with no row falls to
-   the widest row rather than to nothing, and `plan.test.ts` asserts the table is total.
-7. **The composition root** in `apps/desktop/src/main/agent/` — wire events → context → realtime and
-   the `EventTapeReader` port, and close §6.6 row 4 by passing `CoachEvent.topic` through
-   `openTurn`. The first point at which anything here touches a session, and the first at which the
-   two halves are in the same process.
+6. ✅ **`packages/events`** — against
+   [`coaching-trigger-architecture.md`](coaching-trigger-architecture.md), which had to be written
+   first: it had never been committed. Eight detectors, the salience decomposition, thirteen gates
+   and their counters, the intensity signal, the tape and the engine.
+
+   *One thing this document assumed and the build did not.* §5.1 says `packages/events` "reads
+   deltas rather than snapshots", and the trigger document's §3.1 splits that: a delta decides
+   *when* to evaluate, and a detector is a pure function of the snapshot. A delta shows an *edge*,
+   and an edge is not a condition being newly worth mentioning — a hero glimpsed on a ward for one
+   frame produces two edges and one situation. What turns "continuously true" into "said once" is
+   the `latched` gate this document's own §6.3 named.
+7. ✅ **The composition root** in `apps/desktop/src/main/agent/` — events → context → realtime, the
+   `EventTapeReader` port, and §6.6 row 4 closed by passing `CoachEvent.topic` through `openTurn`.
+   The first point at which anything here touches a session.
+
+   *What it found, and §5.1's read path did not anticipate.* `packages/context`'s renderers read
+   about forty field paths they invented and `packages/world-model` supplies roughly half of them
+   under other names, so the root also holds a projection table. Its rule is that it **renames and
+   reshapes but computes nothing the world model could not already answer** — so `self.hpPct` is a
+   projection and `derived.threats` is not, and the sections that read the latter are omitted and
+   recorded. That is this document's own §10 row 1 arriving from an unexpected direction.
 8. **Tuning**, with a replay harness and a person. §12 rows 1 and 2, and every number in §15. Last,
    because it is the only step that cannot be done against a fixture.
 
@@ -1172,7 +1196,9 @@ Steps 1–5 landed in that order, one commit each, `pnpm check` green at every s
 step 5 shipped with step 6 not yet started, because the seam is a lookup table keyed on string
 literals rather than a shared type, so neither package had to wait for the other to compile.
 
-**Sequencing note for whoever picks up step 6.** `packages/realtime` no longer has a `ToolCallPort`
-and `packages/context` no longer has a `tools/` directory; there is nothing left to reconcile
-against. What step 6 will find already in place: `TurnBrief.topic`, `CoachingMemoryReader` on
-`ContextAssembler.coaching`, and a `BRIEF_PLAN` row for each of the eight `CoachEventKind` members.
+**Sequencing note for whoever picks up step 8.** Every number it needs to move is in
+`packages/events/src/config.ts`; every refusal it needs to read is on `EventEngine.counters()`,
+broken down by which of the thirteen gates said no; and the corpus it needs is `fixtures/gsi/`
+driven through `FakeGsiSource` into a real world model, a real engine and a real
+`ContextAssembler` — no session and no network, which makes tuning a Tier 4 job rather than a live
+one. What it cannot do against a fixture is §12 row 2, and that is the point of the step.

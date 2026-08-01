@@ -186,6 +186,27 @@ export default tseslint.config(
                 'vocabulary — the Realtime translation lives in the composition root adapter.',
             },
             {
+              // The trigger half decides *whether* to speak; a direct line to the thing that
+              // speaks would make the gates bypassable by anyone in a hurry, and the decision would
+              // stop being a value a test can inspect (coaching-trigger-architecture.md §11).
+              //
+              // The allowed edges are `world-model` (detection reads the reader) and `context`
+              // (types only: `CoachingMemoryReader`, `AdviceTopic`, `TapeEvent`, `EventId`). The
+              // reverse edge is forbidden by `no-restricted-imports` below, and `BRIEF_PLAN` stays
+              // on the context side so the salience path never acquires a reason to know about
+              // tokens.
+              from: [['package', { name: 'events' }]],
+              disallow: [
+                ['package', { name: 'realtime' }],
+                ['package', { name: 'gsi' }],
+                ['package', { name: 'log-tail' }],
+                ['package', { name: 'audio' }],
+              ],
+              message:
+                'packages/events decides whether Riki speaks; it may not reach the thing that ' +
+                'speaks, or a source. The composition root wires those (coaching-trigger §11).',
+            },
+            {
               // A brief section that read another section's output would have a rendering order
               // `BRIEF_PLAN` does not describe — and priority in a brief is per-cause, so there is
               // no fixed ladder for it to be consistent with (coaching-architecture.md §11). The
@@ -260,6 +281,16 @@ export default tseslint.config(
               disallow: ['@riki/realtime'],
               message:
                 'packages/world-model may not import packages/realtime — the model must not know it is feeding an LLM.',
+            },
+            {
+              // The gates are pure functions of a snapshot, a clock and `CoachingMemoryReader`,
+              // which is what makes a threshold testable without a session. An Electron import
+              // would end that in one line (coaching-trigger-architecture.md §11).
+              from: [['package', { name: 'events' }]],
+              disallow: ['electron'],
+              message:
+                'packages/events may not import electron — the trigger policy must run in a bare ' +
+                'vitest process.',
             },
             {
               // `packages/context` must run in a bare vitest process, which is what makes almost
@@ -374,6 +405,40 @@ export default tseslint.config(
               group: ['@riki/realtime', '@riki/events', '@riki/gsi', '@riki/log-tail'],
               message:
                 'packages/context reads through ports and speaks no vendor vocabulary. The event tape and the window arrive through ports the composition root wires; @riki/events depends on context, never the reverse (§2.3).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // `packages/events` does no I/O and speaks no vendor vocabulary
+  // (docs/design/coaching-trigger-architecture.md §11).
+  //
+  // `node:fs` is a builtin rather than an element, and `@riki/desktop` does not resolve from a
+  // package that does not depend on it — so both need the literal-specifier match for the same
+  // measured reason recorded in the `workspace` skill. The `@riki/realtime` half is in
+  // `boundaries/element-types` above, where it *does* resolve and therefore does fire.
+  {
+    files: ['packages/events/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:fs',
+              message:
+                'packages/events does no I/O. Thresholds arrive from packages/config through the composition root (§11).',
+            },
+            { name: 'node:fs/promises', message: 'packages/events does no I/O (§11).' },
+            { name: 'node:path', message: 'packages/events never picks a path (§11).' },
+          ],
+          patterns: [
+            {
+              group: ['@riki/desktop', '@riki/desktop/*'],
+              message:
+                'packages/events may not import from apps/* — the trigger policy stays testable without a window.',
             },
           ],
         },

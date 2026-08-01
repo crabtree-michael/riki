@@ -35,17 +35,31 @@ It is the interface to the LLM, so treat a format change like an API change: it 
 
 ## Trigger policy — invisible until needed
 
-The default is silence. `packages/events` scores salience and then has to clear gates
-before anything reaches the agent:
+The default is silence. `packages/events` detects, scores, and then has to clear **thirteen gates**
+before anything reaches the agent — `gates/index.ts`, in the order they are asked. Four rules hold
+the package together and each is easy to break in a way that looks fine:
 
-- **Not during a teamfight.** Riki talking over a fight is worse than Riki saying nothing.
-- **Not while the player is speaking.**
-- **Cooldown and novelty gates.** Saying a true thing for the third time is noise.
-- **"Only when I ask" mode must actually be silent** — it is a supported configuration, and
-  it defaults off but is asserted by test.
+- **Detection, salience and the gates are three separate things.** What is true, how much it
+  matters, whether to say it anyway. Folding a cooldown into the score makes the threshold
+  untunable, because one number would then mean both "not important" and "important but said
+  recently", and no single threshold is right for both.
+- **A latch is not a cooldown.** A cooldown is a rate limit; a latch asks whether *this exact
+  condition* has been true without interruption since it was mentioned. Without it, "your ult is
+  up" is said again every time the cooldown expires, forever. No cooldown length fixes that, which
+  is why `DetectionKey` identifies a condition instance (`enemy_missing:sf`) and not a kind.
+- **Every refusal is counted, individually.** "Riki said nothing" must never be indistinguishable
+  from "Riki noticed nothing", and the ratio of triggers detected to turns spoken **broken down by
+  which gate refused** is the primary tuning signal. A single `suppressed` counter answers none of
+  the questions worth asking.
+- **A detector that cannot answer honestly emits nothing.** Six of the eight can be starved of
+  their input — no sidecar, no build target, no scoreboard — and every one returns an empty array
+  rather than a low-confidence guess. The engine counts detections per kind so a detector that is
+  *unwired* is distinguishable from one that is merely quiet.
 
-When you change scoring, add the case to the suppression tests. The failure mode here is not
-a crash; it is a product that people turn off.
+**Every number that changes behaviour is in `config.ts`**, in one object, each marked *(tunable,
+unmeasured)*. Nothing else in the package holds a numeric literal that affects behaviour, so tuning
+is a diff to one file. When you change scoring, add the case to the gate tests. The failure mode
+here is not a crash; it is a product that people turn off.
 
 ## The coaching brief — what a moment needs
 
@@ -86,9 +100,11 @@ cache of its tail (ADR-0012). Four rules follow, and each is easy to break in a 
 
 - **If something must survive a compaction or a reconnect, it goes in the ledger.** The novelty
   gate, the coaching record and the post-match summary all read the ledger, never the conversation.
-- **Retention drops a tool result and its call together, always.** Dropping the result alone leaves
-  the model looking at a question it asked and never got an answer to — the exact vacuum the
-  one-result invariant exists to prevent, reintroduced from the other end.
+- **No rung of the retention ladder obliges dropping another entry**, and keeping it that way is
+  the design. The rule that did — a tool result and its call, dropped together — died with
+  ADR-0023, and the `brief` arm that replaced the `command` arm supersedes *itself* the way a
+  snapshot does. If you add a paired entry back, you re-earn the trap the old design called the
+  rule an implementation is most likely to get wrong. Keep the pair inside one entry.
 - **Summaries are rendered, never generated.** The world model already holds the kills, timings and
   net-worth curve; the ledger holds the advice. A template costs nothing, cannot invent a kill, and
   works when the session is already unhealthy — which is when compaction happens.
@@ -115,14 +131,69 @@ needs a network, it earns back the watchdog, the breaker and the queue that ADR-
 
 ## Learnings
 
-**2026-08-01 — the preamble, the snapshot, the memory layer and the coaching brief are implemented;
-the composition root is not.** `createContextAssembler()` (`src/assembler.ts`) is the runtime
-surface, and `openTurn` renders the snapshot *and* the brief in one synchronous call. What has
-*not* landed: the session wiring in `apps/desktop/src/main/agent/`, which needs `packages/realtime`
-and `packages/events`. So
-`Compactor.consider()` produces a `WindowPlan` and hands it to an injected `onWindowPlan` callback,
-and nothing executes it yet. *Why:* if you are here to "hook up the window", the seam already exists
-and takes a value — do not add a method to this package to make the truncation happen.
+**2026-08-01 — `coaching-trigger-architecture.md` did not exist, and four documents said it did.**
+ADR-0023, `coaching-architecture.md` §6, `docs/README.md` and `REPO_SKELETON.md` §2.2 all cited it
+as the spec owning `packages/events`, described as "in flight" by another agent. Nothing had been
+committed. It was written from the constraints those documents *quote* — the eight-member
+`CoachEventKind` union, `kind weight × magnitude × urgency`, the thirteen `SuppressionReason`
+members named individually, the directory layout — which turned out to be enough to reconstruct
+faithfully. *Why:* the general shape is worth carrying. **"In flight" in a committed document is a
+claim about a file, and it is checkable in one `ls`.** Do that before you plan around it; the cost
+of finding out late is that you have already built half of something against a spec that will
+never arrive to contradict you.
+
+**2026-08-01 — a detector reads a snapshot, not a delta, and the latch is why.**
+`coaching-architecture.md` §5.1 says `packages/events` "reads deltas rather than snapshots", which
+reads as an instruction to diff. It is not: a delta shows an *edge*, and an edge is not the same as
+a condition being newly worth mentioning — a hero glimpsed on a ward for one frame and gone again
+produces two edges and one situation. So the delta decides *when* to evaluate (the engine
+subscribes to `onVersion`, never a timer) and the detector is a pure function of the snapshot
+returning the conditions currently true. What turns "continuously true" into "said once" is the
+`latched` gate. *Why:* writing detectors against deltas gets `enemy_missing` wrong in a way no test
+you would think to write catches, and it makes every detector need its own memory.
+
+**2026-08-01 — the one thing that genuinely needs deltas is intensity, and it is one file.** HP
+swing over time cannot be read from a snapshot. That is the whole exception, `intensity.ts` exists
+for it, and it is a fold over `WorldDelta` on the **game** clock so a pause cannot manufacture calm.
+*Why:* if a second thing in `packages/events` starts wanting deltas, check whether it actually wants
+a rate or whether it wants a latch.
+
+**2026-08-01 — the urgency curve models lateness risk, not importance, and two kinds needed the
+distinction.** `urgency = horizon / (horizon + actWithinSeconds - speakLatency)` correctly drives a
+rune reminder that would arrive after the spawn to zero. Fed a *window* — "their carry is dead for
+fifty seconds" — it does the opposite of what you want: a longer window is more valuable and less
+urgent, and multiplying the two cancels the thing that made the moment worth mentioning. So
+`enemy_core_dead_window` and `enemy_missing` carry `actWithinSeconds: null` and put the size of the
+opportunity in `magnitude` instead. *Why:* `actWithinSeconds` means *"this advice stops being useful
+in N seconds"*, not *"the thing happens in N seconds"*. A window **opening** is not a deadline.
+
+**2026-08-01 — a test that advances the world clock is also testing that every source went quiet.**
+`self.*` expires at 60 s of game time and `enemies.*.position` at 20 s, so
+`world.advance(120)` then asserting a detector still fires is asserting the opposite of what it
+looks like — the facts are all expired and the brief renders empty for a reason that has nothing to
+do with the test. Every advance in `packages/events` and `main/agent` tests is paired with a
+re-`put` of the facts under test. *Why:* it cost two rounds of confusing red, and the failure reads
+as a broken cooldown rather than as an aged-out world.
+
+**2026-08-01 — the composition root now exists, and `onWindowPlan` is still the one seam nobody
+executes.** `apps/desktop/src/main/agent/` wires events → context → realtime, so
+`createContextAssembler()` is no longer the end of the line. What has *still* not landed:
+`Compactor.consider()` produces a `WindowPlan`, hands it to an injected `onWindowPlan` callback, and
+nothing calls `ContextWindowPort.apply`. *Why:* if you are here to "hook up the window", the seam
+already exists and takes a value — wire it in `main/agent/`, and do not add a method to
+`packages/context` to make the truncation happen.
+
+**2026-08-01 — the composition root has to hold a projection table, and its rule is the whole
+review.** `packages/context`'s renderers read about forty field paths they invented and
+`packages/world-model` supplies roughly half under other names, so `main/agent/world-view.ts` maps
+between them. The rule that keeps it honest: **it renames and reshapes, and computes nothing the
+world model could not already answer.** `self.hpPct` is one fact's `current/max` and keeps its
+envelope; `derived.threats` is two positions, a movement speed and a set of blinks, so it is left
+**unsatisfied** and the `threat` section is omitted. *Why:* the tempting fix is to compute it in the
+adapter, and the result is a number with no age and no confidence sitting next to numbers that have
+both — which is the failure the entire fact envelope exists to prevent. The unsatisfied set is
+`self.area`, `enemies.*.area`, `derived.threats`, `derived.paceLevel`, `derived.paceNetWorth`, and
+it is `packages/world-model` work (open question 21).
 
 **2026-08-01 — the field paths are this package's invention, and `packages/world-model` has not
 agreed to them.** `self.hpPct`, `self.kda`, `self.abilities` (a `{id, cooldown}[]`),
@@ -263,7 +334,10 @@ looking for the file.
 `docs/design/context-and-memory-architecture.md` (preamble, snapshot, memory, retention — with
 three revisions marked in its header);
 `docs/design/coaching-architecture.md` (the brief, `BRIEF_PLAN`, the revised budgets, and the full
-record of what was deleted); `docs/design/dota2-state-capture-design.md` §6, §6.4 (trigger policy);
+record of what was deleted);
+`docs/design/coaching-trigger-architecture.md` (detection, salience, the thirteen gates, the
+composition root, and every number that decides whether Riki speaks);
+`docs/design/dota2-state-capture-design.md` §6, §6.4 (trigger policy);
 [ADR-0023](../../../docs/adr/0023-coaching-replaces-command-execution.md);
 `REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the persona lives — open, and more
 urgent now that the preamble is the only thing shaping how Riki sounds).

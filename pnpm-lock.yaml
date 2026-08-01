@@ -46,6 +46,19 @@ importers:
         version: 2.1.9(@types/node@22.20.1)(happy-dom@20.11.1)(supports-color@7.2.0)
 
   apps/desktop:
+    dependencies:
+      '@riki/context':
+        specifier: workspace:*
+        version: link:../../packages/context
+      '@riki/events':
+        specifier: workspace:*
+        version: link:../../packages/events
+      '@riki/realtime':
+        specifier: workspace:*
+        version: link:../../packages/realtime
+      '@riki/world-model':
+        specifier: workspace:*
+        version: link:../../packages/world-model
     devDependencies:
       '@playwright/test':
         specifier: ^1.62.1
@@ -60,7 +73,14 @@ importers:
 
   packages/context: {}
 
-  packages/events: {}
+  packages/events:
+    dependencies:
+      '@riki/context':
+        specifier: workspace:*
+        version: link:../context
+      '@riki/world-model':
+        specifier: workspace:*
+        version: link:../world-model
 
   packages/gsi: {}
 

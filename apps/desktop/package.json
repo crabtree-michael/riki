@@ -8,6 +8,12 @@
     "postinstall": "install-electron",
     "typecheck": "tsc --build"
   },
+  "dependencies": {
+    "@riki/context": "workspace:*",
+    "@riki/events": "workspace:*",
+    "@riki/realtime": "workspace:*",
+    "@riki/world-model": "workspace:*"
+  },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "electron": "^43.2.0"

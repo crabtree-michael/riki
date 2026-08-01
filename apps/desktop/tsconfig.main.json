@@ -4,7 +4,13 @@
   // type-checks in main is a bug waiting to be written.
   "extends": "./tsconfig.base.json",
   "include": ["src/main/**/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "../../packages/context" },
+    { "path": "../../packages/events" },
+    { "path": "../../packages/realtime" },
+    { "path": "../../packages/world-model" }
+  ],
   "compilerOptions": {
     "types": ["node"]
   }

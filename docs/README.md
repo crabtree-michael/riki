@@ -30,8 +30,14 @@ Docs are split by kind, because "design doc" was covering four different things:
   voice intents and the overlay route, and the revised budgets. It is also the record of what was
   deleted to get here — `agent-command-execution-architecture.md` described a command execution
   system that no longer exists, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md)
-  removed both. **Built**, except the trigger half: `packages/events` has a sibling document,
-  `coaching-trigger-architecture.md`, and §6.6 records where the two designs meet.
+  removed both. **Built**, and its trigger half has a sibling document below; §6.6 records where
+  the two designs meet, and every row of it is now closed.
+- [**coaching-trigger-architecture.md**](design/coaching-trigger-architecture.md) — the other half
+  of coaching: what makes Riki decide a moment is worth speaking about. Detection over the world
+  model, the salience score, the thirteen gates that refuse and how each one is counted, the
+  mid-fight intensity signal, and the composition root where the two halves finally meet.
+  **Built**, except the tuning — every coefficient in it is a starting point with no measurement
+  behind it, which is open questions 19 and 20.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -82,6 +88,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0021](adr/0021-speech-occupies-the-window-as-audio.md)   | Speech is costed as audio, not as its transcript | Accepted, on one estimated constant    |
 | [0022](adr/0022-the-api-key-is-an-opaque-type.md)         | The API key is an opaque type            | Accepted — closes the accidental-log class     |
 | [0023](adr/0023-coaching-replaces-command-execution.md)   | Proactive coaching replaces command execution | Accepted — supersedes 0011, 0018 and 0019      |
+| [0024](adr/0024-suppression-is-counted-the-ledger-records-transitions.md) | Suppression is counted; the ledger records transitions | Accepted — corrects one row of coaching §13    |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -134,3 +141,5 @@ bottom of three separate documents where nobody found them. Full statements in
 | 17  | Is Riki's TTS intelligible over **un-ducked** Dota audio, and does output-side compression fix it? [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) removes ducking on the primary platform, which makes ui-design §7.2's "the player will just stop using the feature" unmitigated. A listening test, not a spike | Before voice ships to anyone outside the team |
 | 18  | Does a ~150-token focused coaching brief carry as much useful signal as a tool call did? The core bet of [ADR-0023](adr/0023-coaching-replaces-command-execution.md); if it is false, either the brief grows or some pull mechanism comes back ([coaching §12](design/coaching-architecture.md)) | Before the coaching brief's budget is load-bearing |
 | 19  | Is proactive coaching at the default thresholds welcome rather than irritating? dota2 §6.4 calls unprompted speech the feature most likely to make Riki annoying enough to uninstall, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md) makes it the primary path. Needs a person playing a real match, not a fixture | Before coaching ships to anyone outside the team |
+| 20  | Are the salience coefficients right? Every number in `packages/events/src/config.ts` is a starting point with no measurement behind it; the ordering they encode is the claim and the gaps between them are guesses ([coaching-trigger §4.5, §12](design/coaching-trigger-architecture.md)) | Before anyone concludes the trigger policy is wrong rather than untuned |
+| 21  | Does `packages/world-model` grow `derived.threats`, `derived.pace*` and a position-to-map-region table? Without them the `threat`, `pace`, `seen` and `map` renderings are omitted rather than wrong — the composition root refuses to compute them because the result would carry no provenance ([coaching-trigger §9.2, §15](design/coaching-trigger-architecture.md)) | Before the brief's content is judged against open question 18 |
