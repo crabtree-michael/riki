@@ -53,6 +53,12 @@ importers:
       '@riki/events':
         specifier: workspace:*
         version: link:../../packages/events
+      '@riki/gsi':
+        specifier: workspace:*
+        version: link:../../packages/gsi
+      '@riki/log-tail':
+        specifier: workspace:*
+        version: link:../../packages/log-tail
       '@riki/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime

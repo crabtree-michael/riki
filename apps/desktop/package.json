@@ -6,16 +6,21 @@
   "description": "The Electron application: lifecycle, tray, hotkeys, overlay window, sidecar supervisor",
   "scripts": {
     "postinstall": "install-electron",
-    "typecheck": "tsc --build"
+    "typecheck": "tsc --build",
+    "assets": "node ../../scripts/copy-renderer-assets.mjs",
+    "dev": "pnpm run typecheck && pnpm run assets && electron ."
   },
   "dependencies": {
     "@riki/context": "workspace:*",
     "@riki/events": "workspace:*",
+    "@riki/gsi": "workspace:*",
+    "@riki/log-tail": "workspace:*",
     "@riki/realtime": "workspace:*",
     "@riki/world-model": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "electron": "^43.2.0"
-  }
+  },
+  "main": "dist/main/index.js"
 }

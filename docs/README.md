@@ -89,6 +89,8 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0022](adr/0022-the-api-key-is-an-opaque-type.md)         | The API key is an opaque type            | Accepted — closes the accidental-log class     |
 | [0023](adr/0023-coaching-replaces-command-execution.md)   | Proactive coaching replaces command execution | Accepted — supersedes 0011, 0018 and 0019      |
 | [0024](adr/0024-suppression-is-counted-the-ledger-records-transitions.md) | Suppression is counted; the ledger records transitions | Accepted — corrects one row of coaching §13    |
+| [0025](adr/0025-packages-export-source-to-the-toolchain.md) | Packages export source to the toolchain and `dist` to Node | Accepted — what made `pnpm dev` possible without a bundler |
+| [0026](adr/0026-the-coaching-root-is-built-per-match.md) | The coaching root is built per match, not per app | Accepted — the lifetime step 6 had to decide   |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

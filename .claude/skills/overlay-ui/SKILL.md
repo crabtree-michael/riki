@@ -174,6 +174,40 @@ things Tier 5 would otherwise be the only witness to: `scaleY`-only frames, capt
 default, the clock actually stopping. Tier 5 is still the only place a *window* launches — assert
 placement, pixels and the 100 ms budget there.
 
+**2026-08-01 — `warm()` deadlocked on an event that had already fired, and nothing said so.**
+`OverlayWindow.load()` did `await win.loadFile(...)` and *then* subscribed to `ready-to-show`.
+`loadFile` resolves on `did-finish-load`, which arrives **after** `ready-to-show`, so the promise
+never settled, `shell.start()` never returned, and the app sat there with a tray icon and no GSI
+listener. Subscribe before `loadFile`, and race the wait against a timeout
+(`FIRST_PAINT_TIMEOUT_MS`) so a renderer that never paints degrades to a cold `showFast()` rather
+than to an app that never finishes starting.
+
+*Why:* an unresolved promise is indistinguishable from a slow start, and the two `once` listeners
+looked so obviously right that the bug survived every review of that file. Found in the first
+thirty seconds of the first real `pnpm dev`, and findable no other way — there is no unit test that
+can catch an ordering fact about Electron's own events. **Run the app.**
+
+**2026-08-01 — `globalShortcut` cannot do push-to-talk, and this is now load-bearing rather than
+theoretical.** ui-design §6.4 says it; the shell now depends on it. There is no key-*up* from
+`globalShortcut`, so `electron-hotkey.ts` synthesises both edges at one instant and the recognizer
+reads every press as a tap. **Tap-to-latch works; hold-to-push does not**, everywhere, until
+someone writes a `CGEventTap` behind `KeySource` — and the anti-cheat spike has to clear first.
+
+The related trap is in the *machine*, not the platform: `session/machine.ts` decides push-versus-
+latch from the **first** trigger event of a gesture and has no edge that promotes one to the other.
+So a recognizer cannot emit `down` optimistically at key-down and correct itself at 250 ms; it has
+to wait until it knows. That puts overlay §9.1's "t+0 key-down → visible" on the wrong side of
+§6.2's threshold for a held key — ≤100 ms after a tap, ≤350 ms after a hold — and **neither
+document acknowledges the interaction.** Named in `trigger/recognizer.ts`'s header rather than
+quietly resolved, because resolving it means giving up tap-to-latch or changing the state table.
+
+**2026-08-01 — the four tray glyphs are generated, and macOS needs them to be template images.**
+`scripts/generate-tray-glyphs.mjs` writes `apps/desktop/resources/tray/*Template.png` as raw PNG
+bytes (zlib + a CRC; no image dependency for eight 16×16 files). Two halves, and the second is the
+one that is easy to miss: the filename must end in `Template` **and** `nativeImage.setTemplateImage(true)`
+must be called. Without the flag AppKit draws the black pixels literally, which is invisible in
+dark mode — and a menu-bar icon nobody can see reads as an app that did not start.
+
 ## See also
 
 `docs/design/overlay-architecture.md` (module structure, class signatures, the seams);

@@ -36,13 +36,64 @@ with no key at all — see [ADR-0006](../adr/0006-env-var-api-key-for-alpha-beta
 | `pnpm check`      | lint + format + typecheck + test + codegen-clean. **The pre-commit hook runs this for you and blocks the commit if it fails (ADR-0008). There is no CI.** |
 | `pnpm test`       | Vitest + `cargo test`. No game, no network, no GPU, no API key.                               |
 | `pnpm dev:replay` | The whole app driven from fixtures. No Dota and no API key required.                          |
-| `pnpm dev`        | Electron + Vite HMR + `cargo watch`. Needs a key for live voice.                              |
+| `pnpm dev`        | Builds and launches the Electron app. No key needed — and none is read; see below.            |
 
 The full list is [REPO_SKELETON.md](../../REPO_SKELETON.md) §8.1. If a command you need is not
 there, it should be — add it under a canonical name rather than inventing a second one.
 
+## Running the app against a real game
+
+`pnpm dev` starts the tray, the hidden overlay window, the global hotkey and the GSI listener on
+`127.0.0.1:53101`. **One step is still manual:** nothing writes Dota's
+`gamestate_integration_riki.cfg` — `tools/setup-gsi-cfg` is named in `.env.example` and does not
+exist — so until it does, write it yourself.
+
+Take the token the app generated on first run:
+
+| Platform | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/Riki/gsi-token` |
+| Linux | `~/.config/Riki/gsi-token` |
+| Windows | `%APPDATA%\Riki\gsi-token` |
+
+and drop this into `<steam>/steamapps/common/dota 2 beta/game/dota/cfg/gamestate_integration/`:
+
+```keyvalues
+"Riki"
+{
+    "uri"           "http://127.0.0.1:53101/"
+    "timeout"       "5.0"
+    "buffer"        "0.1"
+    "throttle"      "0.1"
+    "heartbeat"     "30.0"
+    "auth"          { "token" "PASTE_THE_TOKEN_HERE" }
+    "data"
+    {
+        "provider" "1"  "map" "1"  "player" "1"  "hero" "1"
+        "abilities" "1" "items" "1" "buildings" "1" "draft" "1"
+    }
+}
+```
+
+Restart Dota. To check the listener without launching a game, POST a fixture line at it — the
+recipe is in the `game-state` skill.
+
+Settings live in `settings.json` beside that token. `.env` is **not** read yet: `packages/config`
+is [REPO_SKELETON.md](../../REPO_SKELETON.md) §10 step 3 and is still a skeleton, so
+`RIKI_GSI_PORT` and friends are ignored, and `RIKI_OPENAI_API_KEY` has nowhere to go — which is
+why there is no voice yet.
+
 ## What is not scaffolded yet
 
-`pnpm dev`, `pnpm dev:replay`, `pnpm test:e2e`, and `pnpm build` print what they are blocked on
-and exit non-zero. The scaffolding order in [REPO_SKELETON.md](../../REPO_SKELETON.md) §10 says
-which step unblocks each.
+`pnpm dev:replay`, `pnpm test:e2e`, and `pnpm build` print what they are blocked on and exit
+non-zero. The scaffolding order in [REPO_SKELETON.md](../../REPO_SKELETON.md) §10 says which step
+unblocks each.
+
+The app itself runs, with three gaps, each documented at its seam:
+
+- **No speech.** The Realtime session lives in a voice renderer that does not exist
+  (`voice-input-architecture.md` §7.3), and the API key is unreachable until step 3. Everything up
+  to the point of speaking runs — see `apps/desktop/src/main/shell/silent-session.ts`.
+- **No push-to-talk.** Electron's `globalShortcut` is key-down only, so tap-to-latch works and
+  holding the key does not (`ui-design.md` §6.4).
+- **No screen reading.** `crates/riki-vision` is an empty `main()`, so vision is off by default.

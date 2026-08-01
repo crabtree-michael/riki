@@ -180,6 +180,25 @@ wiring, windows, and platform calls.
 **`fixtures/` is a first-class directory, not a test subfolder.** Multiple packages, both
 languages, and the dev tools all read from it.
 
+**Every `packages/*` manifest exports the same three conditions per subpath** —
+[ADR-0025](docs/adr/0025-packages-export-source-to-the-toolchain.md):
+
+```jsonc
+"exports": {
+  ".": {
+    "riki-source": "./src/index.ts",  // Vitest, via resolve.conditions
+    "types": "./src/index.ts",        // tsc and eslint-import-resolver-typescript
+    "default": "./dist/index.js"      // Node, and therefore Electron main
+  }
+}
+```
+
+Tests and typecheck run against the working tree with no build step; Node runs the compiled output,
+because Node cannot execute TypeScript and `src/index.ts` importing `./common/timers.js` resolves
+to a file that only `tsc --build` creates. **If you add a package, copy this shape** — a plain
+`"./src/index.ts"` string works everywhere until the first time something tries to `require` or
+`import` it at runtime, which is `pnpm dev` and nothing earlier.
+
 ### 2.2 Ownership map — where does my task go?
 
 | If your task is about… | Work in | Spec |
@@ -533,7 +552,7 @@ One name per action, from the repo root. If a command is not here, it should be.
 |---|---|
 | `pnpm install` | Node deps. `cargo build` is invoked by the dev/build scripts. |
 | `pnpm setup` | Install deps, fetch LFS fixtures, generate protocol types, install hooks, create `.env` from `.env.example` if absent. **One command for a fresh clone.** |
-| `pnpm dev` | Electron + Vite HMR + `cargo watch` on the sidecar. Needs `RIKI_OPENAI_API_KEY` in `.env` for live voice (§7.1). |
+| `pnpm dev` | Launches the Electron app: `tsc --build`, copy the renderer's assets, `electron .`. **No Vite HMR and no `cargo watch` yet** — the renderer is three hand-written ES modules and the sidecar does nothing, so neither has earned a watcher. Reads no `.env`: `packages/config` is step 3, so settings come from `settings.json` under the app's data directory (`main/bootstrap.ts`). |
 | `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota and no API key required.** |
 | `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU, no API key. |
 | `pnpm test:e2e` | Playwright against a built Electron app |
@@ -657,7 +676,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay`. **Landed except `tools/gsi-replay`** — `packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour and tests, `FakeGsiSource` and the fixture corpus exist, but the replay tool and `pnpm dev:replay` still need the composition root (§8 of the state-capture architecture), which belongs to step 6 |
 | 5 | `packages/context` + `fixtures/golden/` | Snapshot and coaching-brief format iteration. **Landed**, including `src/coaching/` and `fixtures/golden/coaching/`. The command surface this step originally included was deleted by ADR-0023 |
 | 5b | `packages/events` + `apps/desktop/src/main/agent/` | Whether Riki speaks at all, and the wiring of events → context → realtime. **Landed** against `coaching-trigger-architecture.md`, which had to be written first — it was cited by four documents and had never been committed. Tuning (its §16 step 3) is open |
-| 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work. ⚠ `src/main/index.ts` is **still a skeleton**: there is no `app.whenReady()`, no tray and no sidecar supervisor, so the coaching root from 5b is constructed by injection and tested against fakes but has never run in an Electron process |
+| 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work. **Landed except the Playwright harness.** `src/main/index.ts` has `app.whenReady()`, the single-instance lock and the quit drain; `main/shell/` is the Electron-free composition root, `main/state/` is state-capture §8, and `main/sidecar/`, `main/tray/` and `main/trigger/` are the three surfaces. The coaching root now runs in a real Electron process — verified by launching it, POSTing `fixtures/gsi/laning-phase.jsonl` at the live listener on 53101, and watching a coaching turn come out. Three gaps, each recorded at its seam: **no speech** (the voice renderer is voice-input §7.3 / step 7, and there is no permitted way to reach the API key until step 3 — `shell/silent-session.ts`); **no push-to-talk** (`globalShortcut` is key-down only, so tap-to-latch works and hold does not — `trigger/index.ts`); **no sidecar protocol** (step 2 — `sidecar/contracts.ts`) |
 | 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice |
 | 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in dota2 §11.3 |
 | 9 | `bench/` + `docs/adr/` seeded + runbooks | Release gating |

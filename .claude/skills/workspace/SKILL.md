@@ -182,6 +182,38 @@ does not resolve and the rule reports success on a file written specifically to 
 dep to the package's `package.json`, `pnpm install`, lint, confirm the error, then revert both.
 *Why:* this is how the correction above was found — the rule looked verified and was not.
 
+**2026-08-01 — `packages/*` pointing `exports` at `src/*.ts` works until something *runs* it.**
+Nine steps of the scaffolding order never loaded a package at run time — Vitest and `tsc` both read
+source — so nobody noticed that Node cannot: under NodeNext the code writes `./foo.js` for
+`./foo.ts`, so `packages/context/src/index.ts` importing `./common/timers.js` is
+`ERR_MODULE_NOT_FOUND` the first time Electron main imports the package. Every manifest now exports
+three conditions per subpath (`riki-source` + `types` → `src`, `default` → `dist`), and
+`vitest.workspace.ts` sets `resolve.conditions` on all five projects. **Copy that shape into any
+new package**; ADR-0025 has the reasoning.
+
+The check that means anything: `rm -rf packages/<name>/dist` and run the suite. If it still passes,
+tests are reading source. If a *new Vitest project* is added without `resolve.conditions`, it will
+silently assert against the last build instead — which passes, and is wrong in a way no failure
+reveals.
+
+**2026-08-01 — three "landed" packages were skeletons, and the scaffolding table did not say so.**
+`packages/config`, `packages/telemetry` and `packages/protocol` all export `{}`. §10's table marks
+steps 4, 5 and 5b as landed and is silent on 2 and 3, which reads as "fine" rather than "not
+started". That silence cost real time on step 6, because two lint rules point *at* those packages:
+`process.env` is readable only in `packages/config` and `console.*` only in `packages/telemetry`,
+so the shell can read no environment variable and emit no log line. Both rules are right and
+neither should be worked around — but budget for it, and check `src/index.ts` for `export {}`
+before assuming a dependency exists.
+
+**2026-08-01 — the last mile of a step is running the thing, and it finds what tests cannot.**
+Step 6 was green — lint, typecheck, 960 tests — while containing a deadlock that stopped the app
+before it bound a socket, an unhandled rejection that hid the deadlock, and a data directory named
+`~/.config/@riki/desktop` because nothing called `app.setName`. None of the three is reachable from
+a unit test: they are facts about Electron's event ordering, `Promise.prototype.then`'s two-argument
+form, and a default derived from `package.json`. Under a headless sandbox that is
+`xvfb-run -a pnpm dev`, then curl the GSI listener (see the `game-state` skill). *Why:* "all tests
+pass" and "it starts" are different claims, and only one of them is what the step promised.
+
 ## See also
 
 `REPO_SKELETON.md` §2 (layout), §8 (scripts), §9 (working agreements), §13 (skills).

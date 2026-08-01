@@ -10,12 +10,12 @@
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "dev": "node scripts/not-scaffolded.mjs dev \"REPO_SKELETON.md §10 step 6 — apps/desktop shell\"",
-    "dev:replay": "node scripts/not-scaffolded.mjs dev:replay \"REPO_SKELETON.md §10 step 4 — FakeGsiSource + tools/gsi-replay\"",
+    "dev": "pnpm --filter @riki/desktop run dev",
+    "dev:replay": "node scripts/not-scaffolded.mjs dev:replay \"REPO_SKELETON.md \u00a710 step 4 \u2014 FakeGsiSource + tools/gsi-replay\"",
     "test": "pnpm run test:ts && pnpm run test:rust",
     "test:ts": "vitest run",
     "test:rust": "node scripts/cargo.mjs test --workspace",
-    "test:e2e": "node scripts/not-scaffolded.mjs test:e2e \"REPO_SKELETON.md §10 step 6 — Playwright harness\"",
+    "test:e2e": "node scripts/not-scaffolded.mjs test:e2e \"REPO_SKELETON.md \u00a710 step 6 \u2014 Playwright harness\"",
     "lint": "pnpm run lint:ts && pnpm run lint:md && pnpm run lint:rust",
     "lint:ts": "eslint .",
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
@@ -27,7 +27,7 @@
     "codegen:check": "node scripts/codegen.mjs --check",
     "bench": "node scripts/cargo.mjs bench --workspace",
     "check": "pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run codegen:check",
-    "build": "node scripts/not-scaffolded.mjs build \"REPO_SKELETON.md §10 step 6 — apps/desktop shell\""
+    "build": "node scripts/not-scaffolded.mjs build \"REPO_SKELETON.md \u00a710 step 6 \u2014 apps/desktop shell\""
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

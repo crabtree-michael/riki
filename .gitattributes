@@ -12,6 +12,11 @@ fixtures/frames/**/*.webp filter=lfs diff=lfs merge=lfs -text
 # Fixture audio for the resampling tests.
 fixtures/**/*.wav filter=lfs diff=lfs merge=lfs -text
 
+# App resources are small binaries committed plainly, not in LFS — the eight tray glyphs are
+# 130–450 bytes each. Marked `-text` so `* text=auto` above cannot decide a PNG is text and
+# rewrite a CRLF byte pair inside a deflate stream on a Windows checkout.
+apps/desktop/resources/**/*.png -text
+
 # Generated files: collapse in review, they are verified by `pnpm codegen:check`.
 *.generated.ts linguist-generated=true
 *.generated.json linguist-generated=true

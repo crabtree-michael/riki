@@ -9,34 +9,59 @@
  *
  * See docs/design/overlay-architecture.md §5.6 and §8.
  *
- * Declarations only. The handle types below are placeholders: each becomes an import from its
- * package once that package exists (@riki/realtime is step 7, @riki/events follows
- * packages/context). They are declared structurally here so this file states the seam without
- * reaching into someone else's directory.
+ * The placeholder handle types this file used to declare are gone: `@riki/realtime` and
+ * `@riki/events` both exist now, and the seam is expressed in their vocabulary. `voice.ts` is the
+ * `VoiceBridge` implementation; `PolicyBridge` has no implementation and does not need one — see
+ * the note on it below.
  */
 
+import type { VoiceCommand as RealtimeVoiceCommand, VoiceEvent } from '@riki/realtime';
 import type { Unsubscribe } from '../../shared/overlay.js';
 import type { MachineEnvironment, MachineInput } from '../session/types.js';
 import type { VoiceCommandSink } from '../session/contracts.js';
 
-/** Placeholder for the session handle @riki/realtime will expose. */
-export interface RealtimeSessionHandle {
-  readonly sessionId: string;
+/** Anything that emits the vendor-free event stream: a `RealtimeSession`, or a stand-in. */
+export interface VoiceEventSource {
+  onEvent(listener: (event: VoiceEvent) => void): Unsubscribe;
 }
 
-/** Placeholder for the trigger-policy handle @riki/events will expose (dota2 §6.4). */
-export interface TriggerPolicyHandle {
-  readonly enabled: boolean;
+/** The other direction: `interrupt` (barge-in → truncate) and `abort`. */
+export interface VoiceCommandTarget {
+  send(command: RealtimeVoiceCommand): void;
+}
+
+/**
+ * What the machine's current phase is, read at the moment an event arrives.
+ *
+ * The bridge needs it for exactly one decision — `responseStarted` while Idle is *unprompted*
+ * speech and takes a different machine input (§9.3) — and giving it a reader rather than the whole
+ * runtime keeps that the only thing it can do.
+ */
+export interface PhaseReader {
+  phase(): string;
 }
 
 export interface VoiceBridge {
-  attach(session: RealtimeSessionHandle, sink: (input: MachineInput) => void): Unsubscribe;
-  /** The other direction: machine effects become calls on the session. */
-  commands(session: RealtimeSessionHandle): VoiceCommandSink;
+  attach(source: VoiceEventSource, sink: (input: MachineInput) => void): Unsubscribe;
+  /** Machine effects become calls on the session. */
+  commands(target: VoiceCommandTarget): VoiceCommandSink;
 }
 
+/**
+ * ⚠ **No implementation, deliberately.**
+ *
+ * overlay-architecture.md §8 has `@riki/events` reaching the overlay through a `PolicyBridge`
+ * carrying `unprompted.speechStarted`. Under ADR-0023 that is not how it happens: the trigger
+ * policy hands a `CoachEvent` to the composition root, which opens a turn and hands *that* to the
+ * session, and the chip appears when the session starts speaking. So the unprompted edge arrives
+ * over `VoiceBridge` like every other turn edge, and a second path from `packages/events` straight
+ * to the chip would be a way for the chip to claim Riki is speaking when nothing is.
+ *
+ * The type is kept because the overlay document still names it and a reader who goes looking
+ * should find the answer rather than an absence.
+ */
 export interface PolicyBridge {
-  attach(policy: TriggerPolicyHandle, sink: (input: MachineInput) => void): Unsubscribe;
+  attach(policy: unknown, sink: (input: MachineInput) => void): Unsubscribe;
 }
 
 export interface SettingsBridge {

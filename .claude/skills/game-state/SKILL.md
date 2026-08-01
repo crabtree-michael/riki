@@ -125,6 +125,41 @@ straight into a committed fixture. `packages/gsi`'s parser drops `auth` before b
 place that has to strip it on the way in. *Why:* gitleaks will not recognise a Riki install token,
 so nothing else catches this.
 
+**2026-08-01 — `FakeGsiSource` does not implement `onLifecycle`, and its header says it does.**
+Its comment reads *"satisfies the same interface as `GsiServer`, so a consumer wired to it is
+wired"*. It does not: `createGsiServer` returns `GsiServerWithExtras`, which has `onLifecycle`,
+`estimateClock` and `stats`, and the fake has the last two only. A consumer wired to the fake
+therefore **never sees `match_started`** — so no world-model reset, no preamble, and in the shell
+no coaching root at all. Nothing fails; the pipeline just quietly never begins.
+
+The workaround, until the fake grows the method, is what `createGsiServer` does internally — feed
+that package's own `createMatchSessionTracker()` from the observation stream:
+
+```ts
+const tracker = createMatchSessionTracker();
+source.subscribe((o) => {
+  const events = tracker.observe(o.payload, { observedAt: clock.now() });
+  if (events.length > 0) listener(events);
+});
+```
+
+There is a worked copy in `apps/desktop/src/main/shell/shell.test.ts`. *Why:* this is the seam
+`tools/gsi-replay` and the tuning harness (coaching-trigger §16 step 3) both sit on, and the
+failure is silent in the worst way — every stage looks healthy and nothing ever starts.
+
+**2026-08-01 — a live GSI listener is testable from a shell prompt, and it is worth doing once.**
+With the app running, take the token from the app's data directory
+(`~/.config/Riki/gsi-token`, `~/Library/Application Support/Riki/gsi-token` on macOS), splice it
+into a fixture line as `auth.token`, and POST it:
+
+```shell
+curl -X POST -H 'Content-Type: application/json' -d "$BODY" http://127.0.0.1:53101/
+```
+
+`200` accepted · `403` bad or missing token · `405` not a POST · connection refused means the
+listener never bound. Replaying all of `fixtures/gsi/laning-phase.jsonl` this way is the cheapest
+end-to-end proof that exists, and it needs neither Dota nor a test harness.
+
 ## See also
 
 `docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),

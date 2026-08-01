@@ -23,6 +23,23 @@ import { parseOverlayIntent } from '../../shared/intents.js';
 import type { Rectangle } from './contracts.js';
 import type { OverlayWindow, OverlayWindowFactory } from './window-port.js';
 
+/**
+ * How long `warm()` waits for a first paint before giving up on it.
+ *
+ * Generous: this is a cold renderer start on an unknown machine, and the cost of being wrong in
+ * this direction is one slow `showFast()`. The cost in the other direction is an app that never
+ * finishes starting.
+ */
+export const FIRST_PAINT_TIMEOUT_MS = 5_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const handle = setTimeout(resolve, ms);
+    // A pending warm-up timeout must never be the reason Electron will not quit.
+    handle.unref();
+  });
+}
+
 export interface ElectronOverlayWindowOptions {
   /** Absolute path to the compiled preload script. */
   readonly preloadPath: string;
@@ -89,23 +106,34 @@ function createElectronOverlayWindow(options: ElectronOverlayWindowOptions): Ove
 
   return {
     async load() {
-      await win.loadFile(options.entryPath);
-      // Wait for a real first paint, not merely for the load event: that is the difference between
-      // `showFast()` mapping an existing surface and cold-starting a renderer.
-      await new Promise<void>((resolve) => {
+      // ⚠ **Subscribed before `loadFile`, and that ordering is load-bearing.** `loadFile` resolves
+      // on `did-finish-load`, which arrives *after* `ready-to-show` — so attaching the listener
+      // afterwards waits for an event that has already fired, forever. Measured, not reasoned
+      // about: the first real `pnpm dev` hung in `warm()` with no output and no error, because an
+      // unresolved promise looks exactly like a slow start.
+      const painted = new Promise<void>((resolve) => {
         if (win.isDestroyed()) {
           resolve();
           return;
         }
+        // `paint` only fires for offscreen windows, so on a normal one `ready-to-show` is the one
+        // that arrives. Both are subscribed because which one fires is the claim §12 asks us to
+        // check on real hardware.
         win.webContents.once('paint', () => {
           resolve();
         });
-        // `paint` only fires for offscreen windows, so on a normal one this is the event that
-        // arrives. Both are subscribed because which one fires is the claim §12 asks us to check.
         win.once('ready-to-show', () => {
           resolve();
         });
       });
+
+      await win.loadFile(options.entryPath);
+
+      // Bounded, for the same reason. `warm()` is awaited by app start, so a first paint that
+      // never comes — a renderer that throws before its first frame, a compositor that never
+      // reports one — must degrade to a cold `showFast()` rather than to an app that never
+      // finishes starting. The content is loaded by this point either way.
+      await Promise.race([painted, delay(FIRST_PAINT_TIMEOUT_MS)]);
     },
 
     showInactive() {
