@@ -28,6 +28,11 @@ Docs are split by kind, because "design doc" was covering four different things:
   what happens when the agent asks Riki something: parsing and validating a tool call, the four
   ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it
   with `state-capture-architecture.md` §7, whose read interface it consumes.
+- [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
+  agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
+  renderer, the shared rendering primitives, and the memory layer underneath — the conversation
+  ledger, coaching memory, the context-window retention policy, and durable cross-match player
+  memory. The other half of `packages/context`, alongside the command architecture above.
 
 ## Research
 
@@ -53,6 +58,8 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
 | [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
 | [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
+| [0012](adr/0012-conversation-ledger-is-ours.md)           | Riki keeps its own conversation ledger   | Accepted                                       |
+| [0013](adr/0013-durable-memory-is-typed-observations.md)  | Durable memory is typed, local, no free text | Accepted, one default needs a human call   |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -96,3 +103,6 @@ bottom of three separate documents where nobody found them. Full statements in
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
 | 9   | May consent for `read_screen` be remembered for a match, or is it per call? Per call is the default until someone decides otherwise | Before `read_screen` ships                                |
 | 10  | Can the Realtime API emit more than one function call per response? It decides whether the command queue needs to exist at all | Before `packages/context/src/tools/queue.ts` is written   |
+| 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)) | Before `RetentionPolicy` numbers are load-bearing          |
+| 12  | Should durable player memory be on by default? [ADR-0013](adr/0013-durable-memory-is-typed-observations.md) says yes on structural grounds; REPO_SKELETON §7.2 says privacy-relevant defaults are off | With the first-run consent flow                           |
+| 13  | Does post-match review ship, and does the conversation ledger therefore persist? It holds the player's own voice transcript | Before post-match review is built                          |

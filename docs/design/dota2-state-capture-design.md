@@ -282,6 +282,7 @@ Design rules that matter:
 
 - **Include uncertainty explicitly.** `(0.55)` and `unseen >20s` let the model hedge appropriately. Never render a stale CV position as a bare fact.
 - **Elide what didn't change** when consecutive turns are close together, but never elide silently — a `(unchanged)` marker is fine, a missing field is not.
+  > **Refined by [`context-and-memory-architecture.md`](context-and-memory-architecture.md) §5.3.** Elision is a coupling to the retention policy, not a formatting choice: a delta is only meaningful while its base is still in the context window, and the base is exactly what compaction wants to drop. The saving is real but marginal, and the failure — a `(unchanged)` referring to something the model can no longer see — is silent and lands in the tier that carries self-state. The mechanism is specified there and **defaults off** until the window-belief estimate has been measured. The marker also gains its base's clock time (`(unchanged since 14:12)`), because a bare marker is unfalsifiable.
 - **Pre-compute the arithmetic.** `buy: diffusal2 in ~40s` is far better than making the model do gold math it will sometimes get wrong.
 - **Cap it hard.** A token ceiling with priority-ordered truncation; self-state and enemy state never get truncated, history does.
 

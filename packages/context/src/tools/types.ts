@@ -8,31 +8,42 @@
  * Declarations only — no behaviour lands here. Implementations follow §16 of that document, from
  * REPO_SKELETON.md §10 step 5.
  *
- * ⚠ Transitional declarations. `MonoMs`, `GameClock` and the id brands duplicate types that belong
- * to @riki/protocol, and `ConsentRequest` / `ConsentDecision` cross main → renderer, so per
- * REPO_SKELETON.md §4 they belong there as zod schemas. That package is step 2 and still empty.
- * When it lands, this file imports them instead of declaring them, and moving `ConsentRequest` is
- * a coordination event (the `protocol` skill).
+ * ⚠ Transitional declarations. `ConsentRequest` / `ConsentDecision` cross main → renderer, so per
+ * REPO_SKELETON.md §4 they belong in @riki/protocol as zod schemas. That package is step 2 and
+ * still empty; moving `ConsentRequest` when it lands is a coordination event (the `protocol` skill).
+ *
+ * The scalars this file used to declare — `MonoMs`, `GameClock`, `TurnId`, `CallId`, `HeroId`,
+ * `ItemId`, `Staleness`, `Observed<T>`, `PrivacyPolicy`, `Unsubscribe` — now live in
+ * `../common/types.ts` and are re-exported below, because Tiers 1 and 2 speak about all of them
+ * too (context-and-memory-architecture.md §3, §11). One transitional declaration per type means
+ * one edit when @riki/protocol lands, rather than one per tier.
  */
 
-/** Every subscription in this component returns its own disposer. */
-export type Unsubscribe = () => void;
+export type {
+  CallId,
+  GameClock,
+  HeroId,
+  ItemId,
+  MonoMs,
+  Observed,
+  PrivacyPolicy,
+  Staleness,
+  TurnId,
+  Unsubscribe,
+} from '../common/types.js';
+
+import type {
+  CallId,
+  GameClock,
+  MonoMs,
+  PrivacyPolicy,
+  TurnId,
+  Unsubscribe,
+} from '../common/types.js';
 
 // -----------------------------------------------------------------------------------------------
-// Identity and time (§3.1)
+// Identity (§3.1)
 // -----------------------------------------------------------------------------------------------
-
-/** The session's id for one function call. Opaque, off the wire, and the join key for everything. */
-export type CallId = string & { readonly __brand: 'CallId' };
-
-/** One agent turn. Every budget, memo, rate window and cancellation is scoped to it (§3.5). */
-export type TurnId = string & { readonly __brand: 'TurnId' };
-
-/** Local monotonic milliseconds. Never wall-clock: a fact's age must not move when NTP steps. */
-export type MonoMs = number & { readonly __brand: 'MonoMs' };
-
-/** Dota's `map.clock_time`, in seconds. Negative before the horn. Frozen while paused. */
-export type GameClock = number & { readonly __brand: 'GameClock' };
 
 /** Canonicalised name + arguments. Two calls with the same fingerprint are the same question. */
 export type CallFingerprint = string & { readonly __brand: 'CallFingerprint' };
@@ -193,12 +204,6 @@ export interface ResultMemo {
 // Rendering (§4.6)
 // -----------------------------------------------------------------------------------------------
 
-/** The second of the two independent gates on chat text; the first is at the source (dota2 §7). */
-export interface PrivacyPolicy {
-  readonly allowChatText: boolean;
-  readonly allowPlayerNames: boolean;
-}
-
 export interface RenderContext {
   readonly now: MonoMs;
   readonly clock: GameClock | null;
@@ -242,27 +247,8 @@ export interface ActivityHandle {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Domain ids — ⚠ placeholders for @riki/protocol and @riki/world-model (§11)
+// Domain ids — ⚠ placeholder for @riki/protocol (§11)
 // -----------------------------------------------------------------------------------------------
 
-export type HeroId = string & { readonly __brand: 'HeroId' };
-export type ItemId = string & { readonly __brand: 'ItemId' };
+/** A named capture region. Tier 3's alone: no other tier names one. */
 export type RegionId = string & { readonly __brand: 'RegionId' };
-
-/** state-capture-architecture.md §5.5. Repeated here only so the render contract can name it. */
-export type Staleness = 'fresh' | 'aging' | 'stale' | 'expired';
-
-/**
- * The pair a handler returns for anything derived from an observation.
- *
- * Handlers never return a bare value, mirroring `WorldSnapshot.get()` (state-capture §7.1). The
- * annoyance at every call site is the intended effect: it is what stops a 30-second-old CV
- * position from being rendered as a fact.
- */
-export interface Observed<T> {
-  readonly value: T;
-  readonly staleness: Staleness;
-  readonly ageMs: number;
-  readonly confidence: number;
-  readonly source: 'gsi' | 'log' | 'cv' | 'api' | 'derived';
-}

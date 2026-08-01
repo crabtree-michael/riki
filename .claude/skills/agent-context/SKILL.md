@@ -62,6 +62,29 @@ open it, because each is easy to break in a way that looks fine:
 Adding a command is one handler file, one registry entry, one golden fixture — and a re-measure
 of the manifest's token cost, which is the part people skip.
 
+## Memory — the window is a cache, not a record
+
+The model's context window truncates oldest-first, cannot be enumerated, and dies with the session
+(realtime §5). So `packages/context` keeps a **conversation ledger** and treats the window as a
+cache of its tail (ADR-0012). Four rules follow, and each is easy to break in a way that looks fine:
+
+- **If something must survive a compaction or a reconnect, it goes in the ledger.** The novelty
+  gate, the coaching record and the post-match summary all read the ledger, never the conversation.
+- **Retention drops a tool result and its call together, always.** Dropping the result alone leaves
+  the model looking at a question it asked and never got an answer to — the exact vacuum the
+  one-result invariant exists to prevent, reintroduced from the other end.
+- **Summaries are rendered, never generated.** The world model already holds the kills, timings and
+  net-worth curve; the ledger holds the advice. A template costs nothing, cannot invent a kill, and
+  works when the session is already unhealthy — which is when compaction happens.
+- **Nothing durable holds free text.** `PlayerObservation` is a closed union of ids and enums
+  (ADR-0013), so chat and transcripts are not representable rather than merely not written. If you
+  add an arm with a `string` that is not an id, the privacy test fails, and that is the design
+  working.
+
+`AgeFormatter` in `render/` is the *only* function that turns an `Observed<T>` into words. Do not
+format an age locally, in either tier — one function is what makes "never render a stale fact as a
+bare fact" enforceable rather than remembered.
+
 ## Latency
 
 Model → snapshot is budgeted at under 5 ms. The snapshot is rendered per turn, so anything
@@ -82,9 +105,37 @@ returns, check all three; the one that will bite is the token cost, because tool
 accumulate in conversation history and are billed as input on every later turn, while the
 snapshot replaces itself.
 
+**2026-08-01 — realtime §5's "15–20 minutes" does not transfer, and the correction inverts what you
+economise.** That number assumes continuous conversation at ~1,800 tokens/min of audio. Riki mostly
+listens, so its audio is a fraction of that — but it injects a ~300-token snapshot and up to 600
+tokens of command results *per turn*, and unlike the snapshot's role as a view, those accumulate.
+Redone for Riki's pattern the total is ~750 tokens/min, of which **~500 is our own injection**,
+giving roughly 38 minutes to the first compaction. *Why:* two consequences that are easy to get
+backwards — compaction is a normal event in a normal-length match rather than an edge case, and the
+thing to economise is what you *tell* the model, not what it says. Arithmetic, not measurement:
+it is open question 11 and the first row of context-and-memory §12.
+
+**2026-08-01 — a design doc asking for a formatting optimisation can be asking for a coupling.**
+dota2 §6.2 asks the snapshot to elide unchanged fields. Working it against the retention policy
+turned up that an elided snapshot is a delta, a delta needs its base to still be in the window, and
+the base is exactly what compaction drops — so it is a keyframe scheme with a silent failure mode,
+for an estimated ~120 tokens a turn. *Why:* the general shape is worth remembering, not the
+conclusion. Before implementing anything that references a previous turn, ask what happens when
+that turn has been compacted away; the answer is usually that the reference has to carry enough
+information to be falsifiable, which is why the marker is now `(unchanged since 14:12)`.
+
+**2026-08-01 — `packages/context` has three tiers and they share more vocabulary than the first one
+expects.** `tools/` landed first and declared `MonoMs`, `Observed<T>`, `Staleness`, `PrivacyPolicy`
+and the world-model reader itself; all three tiers need every one of them. They now live in
+`src/common/` and `tools/` re-exports them. *Why:* if you are adding to this package, put a type in
+`common/` the moment a second tier names it — the transitional declarations all collapse into
+`@riki/protocol` and `@riki/world-model` later, and one file to edit beats three. Duplicating
+instead is silently fine until the package index re-exports both and `tsc` reports TS2308.
+
 ## See also
 
-`docs/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy);
+`docs/design/context-and-memory-architecture.md` (Tiers 1 and 2, memory, retention);
+`docs/design/dota2-state-capture-design.md` §6 (all three tiers), §6.4 (trigger policy);
 `docs/design/agent-command-execution-architecture.md` (Tier 3 — the pipeline, ports, failure
 taxonomy and budgets); `REPO_SKELETON.md` §5.3 Tier 2 (golden tests), §11 item 5 (where the
 persona lives — open).

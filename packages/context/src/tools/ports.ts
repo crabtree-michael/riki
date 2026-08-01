@@ -8,13 +8,20 @@
  *
  * See docs/design/agent-command-execution-architecture.md §5.
  *
- * ⚠ Transitional. `WorldModelReader`, `WorldSnapshot`, `CapturePort` and `WorldDelta` are owned by
- * state-capture-architecture.md §7.1 and §4.3; `packages/world-model` is step 4 and still empty, so
- * the ones this component consumes are declared structurally here. When that package lands, this
- * file imports them and deletes its copies — the structural declarations are a consequence of
- * writing this first, not a design position.
+ * ⚠ Transitional. `CapturePort` is owned by state-capture-architecture.md §4.3 and
+ * `packages/world-model` is step 4 and still empty, so what this component consumes is declared
+ * structurally — a consequence of writing this first, not a design position.
+ *
+ * `WorldModelReader`, `WorldSnapshot` and `WorldDelta` moved to `../common/ports.ts`, because
+ * Tiers 1 and 2 read the world model too (context-and-memory-architecture.md §8.1). They are
+ * re-exported here so §5.1 of the command architecture still names them in this file.
  */
 
+export type { WorldDelta, WorldModelReader, WorldSnapshot } from '../common/ports.js';
+export type { Clock } from '../common/types.js';
+
+import type { Clock } from '../common/types.js';
+import type { WorldModelReader, WorldSnapshot } from '../common/ports.js';
 import type {
   ActivityHandle,
   CancelSignal,
@@ -24,41 +31,10 @@ import type {
   GameClock,
   HeroId,
   ItemId,
-  MonoMs,
   PortId,
   RegionId,
   ToolOutcome,
-  Unsubscribe,
 } from './types.js';
-
-// -----------------------------------------------------------------------------------------------
-// §5.1 — every game fact, one way in
-// -----------------------------------------------------------------------------------------------
-
-/** Opaque here. `packages/world-model` owns its shape; this component only reads through it. */
-export interface WorldSnapshot {
-  readonly version: number;
-  readonly now: MonoMs;
-  readonly clock: GameClock | null;
-}
-
-export interface WorldDelta {
-  readonly fromVersion: number;
-  readonly toVersion: number;
-}
-
-/**
- * state-capture-architecture.md §7.1, unchanged.
- *
- * No command reads a source. Not GSI, not the log tailer, not the sidecar. Everything a handler can
- * know has been through fusion, precedence, the confidence gate and ageing exactly once — which is
- * the only way those guarantees actually reach the agent.
- */
-export interface WorldModelReader {
-  snapshot(now: MonoMs): WorldSnapshot;
-  onVersion(listener: (version: number, delta: WorldDelta) => void): Unsubscribe;
-  history(since: GameClock): readonly WorldDelta[];
-}
 
 // -----------------------------------------------------------------------------------------------
 // §5.2 — the only outbound command channel
@@ -131,13 +107,8 @@ export interface ConsentPort {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Clock and telemetry
+// Telemetry (the clock is `Clock`, re-exported from ../common/types.js at the top of this file)
 // -----------------------------------------------------------------------------------------------
-
-/** Injected, so every deadline and rate window is deterministic in a Tier 1 test. */
-export interface Clock {
-  now(): MonoMs;
-}
 
 /**
  * `console.*` is confined to `packages/telemetry` (REPO_SKELETON.md §6.2), which is why this is a
