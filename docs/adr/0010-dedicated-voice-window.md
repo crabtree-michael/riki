@@ -1,6 +1,6 @@
 # ADR-0010: A dedicated hidden window owns the microphone, not the overlay
 
-**Status:** Proposed
+**Status:** Accepted (2026-08-01 — `packages/realtime` built against it; see [ADR-0017](0017-voice-input-module-decomposition.md))
 **Date:** 2026-08-01
 
 ## Context
@@ -34,9 +34,11 @@ overlay window.
   Electron's footprint is already the open question in REPO_SKELETON §11.1.
 - Level frames take one extra hop. At 30 Hz against a 250 ms budget this is not measurable, but
   it is one more thing between the mic and the bars.
-- It constrains `packages/realtime`'s host, which is why this is Proposed rather than Accepted:
+- It constrains `packages/realtime`'s host, which is why this was Proposed rather than Accepted:
   the agent who builds that package owns the decision and may have a reason to fold the two
-  windows together.
+  windows together. **That agent has now built it and found no such reason** — the package reads no
+  globals and takes its transport by injection, so the window split costs it nothing and the
+  ephemeral-secret boundary in `auth/credentials.ts` depends on it. Accepted.
 
 ## Alternatives rejected
 

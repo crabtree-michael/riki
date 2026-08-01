@@ -159,6 +159,13 @@ here is a hook that passes loudly while doing nothing, which no one notices unti
 missing from someone else's clone. If you change this, test it the same way: push a tracked
 binary to a scratch remote and confirm the object appears under its `lfs/objects/`.
 
+**2026-08-01 — a package-level `test/` directory needs a tsconfig change first.**
+`vitest.workspace.ts` globs `packages/*/test/**/*.test.ts`, but every package tsconfig has
+`include: ["src/**/*.ts"]`. An integration test there *passes*, then `pnpm lint` dies with
+`Parsing error: … not found by the project service`. Fix it in that package's tsconfig —
+`rootDir: "."` plus `test/**/*.ts` in `include` (see `packages/realtime/tsconfig.json`). *Why:*
+the error names `allowDefaultProject`, which sends you to `eslint.config.js` — the wrong file.
+
 **2026-08-01 — Prettier does not format markdown here, deliberately.** `*.md` is in
 `.prettierignore`; markdownlint owns it. *Why:* Prettier pads every table cell to the widest
 row, which turns the wide tables in the design docs into 700-column lines, and reflowing prose

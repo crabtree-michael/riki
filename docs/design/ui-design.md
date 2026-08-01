@@ -15,7 +15,7 @@ any are wrong, the sections marked ⚑ are the ones that change.
 |---|---|---|
 | A1 | Riki is a desktop companion app that runs alongside full-screen / borderless games | ⚑ §2 Surfaces |
 | A2 | Interaction is voice-in → voice-out, and the agent can also *take actions* (not just answer) | ⚑ §3 State model |
-| A3 | Windows is the primary target for players; Linux is the dev platform and a secondary target | ⚑ §6.4 Hotkey capture |
+| A3 | ~~Windows is the primary target for players; Linux is the dev platform and a secondary target~~ — **reversed: macOS is the primary target** ([ADR-0015](../adr/0015-macos-is-the-primary-target.md)). Windows and Linux remain supported. | ⚑ §6.4 Hotkey capture · §6.5 Overlay rendering · §7.2 Ducking |
 | A4 | Speech recognition and/or inference may be remote, so multi-second latency is possible | ⚑ §8 Timing |
 | A5 | A meaningful share of users stream or record their gameplay | ⚑ §9.3 Streamers |
 
@@ -428,6 +428,11 @@ so the mitigation matters more than the choice:
 
 This is the highest-risk implementation area and it differs sharply by platform.
 
+> ⚑ **A3 is reversed** ([ADR-0015](../adr/0015-macos-is-the-primary-target.md)): macOS is now primary,
+> so the macOS path below is the one that has to work first. It is a `CGEventTap`, which requires
+> the user to grant Accessibility permission — an onboarding step neither this document nor
+> `overlay-architecture.md` has budgeted for, and a new input to the §13.3 anti-cheat spike.
+
 - **Windows:** low-level keyboard hook (`WH_KEYBOARD_LL`) or Raw Input. Works with
   borderless-windowed reliably; exclusive full-screen needs verification per title. Anti-cheat
   interaction must be validated early — a global hook plus an always-on-top overlay is exactly
@@ -470,6 +475,14 @@ The capture-end earcon matters more than it looks: it is the only confirmation t
 actually closed, which is the thing users are anxious about.
 
 ### 7.2 Game audio ducking
+
+> ⚑ **Largely unimplementable as specified.** macOS — now the primary target
+> ([ADR-0015](../adr/0015-macos-is-the-primary-target.md)) — has **no public API** for
+> attenuating another application's audio, and Windows ducks only on the OS's own terms. The
+> numbers below are honoured on Linux alone. See
+> [ADR-0016](../adr/0016-ducking-is-a-no-op-by-default.md) and
+> [audio-ducking-platform-support.md](../research/audio-ducking-platform-support.md); the
+> "player will just stop using the feature" risk in this paragraph is now live rather than solved.
 
 While Riki speaks, duck other application audio by **−12 dB** with a 120 ms ramp in and a
 250 ms ramp out. Without ducking, TTS is unintelligible over combat audio and the player will

@@ -1,9 +1,20 @@
 {
   "extends": "../../tsconfig.base.json",
+  // `rootDir: "."` rather than `"src"`, and `test/**` in `include`, because this is the first
+  // package with an integration-test directory. `vitest.workspace.ts` already globs
+  // `packages/*/test/**/*.test.ts`, but ESLint's type-aware rules refuse to lint a file that no
+  // tsconfig claims — so a test placed here fails `pnpm lint` with a "not found by the project
+  // service" parsing error that says nothing about the test. `dist/` is typecheck bookkeeping
+  // only; consumers import this package by `main: ./src/index.ts`, so the deeper output path is
+  // inert.
   "compilerOptions": {
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"],
-  "references": []
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "references": [
+    {
+      "path": "../audio"
+    }
+  ]
 }

@@ -28,6 +28,10 @@ Docs are split by kind, because "design doc" was covering four different things:
   what happens when the agent asks Riki something: parsing and validating a tool call, the four
   ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it
   with `state-capture-architecture.md` §7, whose read interface it consumes.
+- **Voice input has no design document.** It was built directly against the decisions listed
+  below; the module and class decomposition is recorded in
+  [ADR-0017](adr/0017-voice-input-module-decomposition.md), which is the thing to read before
+  touching `packages/audio` or `packages/realtime`.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -39,6 +43,9 @@ Docs are split by kind, because "design doc" was covering four different things:
 - [**openai-realtime-research.md**](research/openai-realtime-research.md) — the Realtime API:
   transports, session configuration, barge-in, context growth, cost, and the failure modes that
   bite.
+- [**audio-ducking-platform-support.md**](research/audio-ducking-platform-support.md) — whether
+  one application can lower another's volume, per platform. The short answer on macOS is no, which
+  is why [ADR-0016](adr/0016-ducking-is-a-no-op-by-default.md) exists.
 
 ## Decisions
 
@@ -55,11 +62,14 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0007](adr/0007-superpowers-plugin-enabled-by-default.md) | Superpowers plugin on by default         | Implemented (long-form; predates the template) |
 | [0008](adr/0008-pre-commit-is-the-gate.md)                | Pre-commit is the gate; CI deleted       | Accepted                                       |
 | [0009](adr/0009-overlay-state-machine-in-main.md)         | Interaction state machine in main        | Accepted                                       |
-| [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Proposed — `packages/realtime` owns the call   |
+| [0010](adr/0010-dedicated-voice-window.md)                | A hidden window owns the microphone      | Accepted — `packages/realtime` built on it     |
 | [0011](adr/0011-tool-manifest-frozen-per-session.md)      | Command manifest frozen per session      | Accepted, on one unmeasured claim              |
 | [0012](adr/0012-conversation-ledger-is-ours.md)           | Riki keeps its own conversation ledger   | Accepted                                       |
 | [0013](adr/0013-durable-memory-is-typed-observations.md)  | Durable memory is typed, local, no free text | Accepted, one default needs a human call   |
 | [0014](adr/0014-observation-reducer-seam.md)              | Observation seam + pure fusion reducer   | Accepted                                       |
+| [0015](adr/0015-macos-is-the-primary-target.md)           | macOS is the primary target platform     | Accepted — reverses ui-design A3                |
+| [0016](adr/0016-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API              |
+| [0017](adr/0017-voice-input-module-decomposition.md)      | Voice input module/class decomposition   | Accepted — stands in for a missing design doc   |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
@@ -99,10 +109,12 @@ bottom of three separate documents where nobody found them. Full statements in
 | 4   | Rust vs. C++ for the sidecar — how mature are the WGC / ScreenCaptureKit bindings really?                              | During the CV spike                                       |
 | 5   | Where does the agent's prompt/persona live? Proposal: versioned files in `packages/context/prompts/` with golden tests | With `packages/context`                                   |
 | 6   | Anti-cheat: is a global hook plus an always-on-top window viable?                                                      | **Blocking** — before any UI is built on the hotkey layer |
-| 7   | Does the Realtime session get its own hidden window, or does the overlay host it? ([ADR-0010](adr/0010-dedicated-voice-window.md), Proposed) | With `packages/realtime`                                  |
+| ~~7~~ | ~~Does the Realtime session get its own hidden window?~~ **Answered:** yes — [ADR-0010](adr/0010-dedicated-voice-window.md) is Accepted, built against in `packages/realtime` | — |
 | 8   | Who scrubs other players' chat before it can reach an on-screen caption?                                               | Before caption mode ships                                 |
 | 9   | May consent for `read_screen` be remembered for a match, or is it per call? Per call is the default until someone decides otherwise | Before `read_screen` ships                                |
 | 10  | Can the Realtime API emit more than one function call per response? It decides whether the command queue needs to exist at all | Before `packages/context/src/tools/queue.ts` is written   |
 | 11  | Does Riki's own context injection really dominate the window, filling it in ~38 min? It sizes the whole retention design ([context-and-memory §7.1, §12](design/context-and-memory-architecture.md)) | Before `RetentionPolicy` numbers are load-bearing          |
 | 12  | Should durable player memory be on by default? [ADR-0013](adr/0013-durable-memory-is-typed-observations.md) says yes on structural grounds; REPO_SKELETON §7.2 says privacy-relevant defaults are off | With the first-run consent flow                           |
 | 13  | Does post-match review ship, and does the conversation ledger therefore persist? It holds the player's own voice transcript | Before post-match review is built                          |
+| 14  | Is Riki's TTS intelligible over **un-ducked** Dota audio? [ADR-0016](adr/0016-ducking-is-a-no-op-by-default.md) removes ducking on the primary platform, which makes ui-design §7.2's "the player will just stop using the feature" a live risk. A listening test, not a spike | Before voice ships to anyone outside the team |
+| 15  | Does the macOS Accessibility-permission flow for a `CGEventTap` hotkey survive onboarding, and does the §13.3 anti-cheat spike need re-running on macOS? Both follow from [ADR-0015](adr/0015-macos-is-the-primary-target.md) | **Blocking** — with the hotkey layer |

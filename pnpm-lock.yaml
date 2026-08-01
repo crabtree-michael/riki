@@ -65,7 +65,11 @@ importers:
 
   packages/protocol: {}
 
-  packages/realtime: {}
+  packages/realtime:
+    dependencies:
+      '@riki/audio':
+        specifier: workspace:*
+        version: link:../audio
 
   packages/telemetry: {}
 
