@@ -329,6 +329,29 @@ in git history at `8b1a902~4` if a future pull surface ever needs them. *Why:* a
 that no longer exists is worse than no learning — the next agent reads it as current and goes
 looking for the file.
 
+**2026-08-01 — a brief section that renders static content breaks two of `sections/util.ts`'s rules
+on paper and neither in fact.** `library` uses no `field()` and therefore no `AgeFormatter`, which
+reads like the one thing this directory forbids. The rule is *a stale fact renders with its age or it
+does not render*, and its mechanism is that `field()` is the only route from an `Observed<T>` to the
+text — but hero notes are not observed, so there is no age to omit. What they carry instead is the
+**patch**, rendered inside the same section as the notes so it cannot outlive them. *Why:* if you add
+another source of non-observed content, copy that shape rather than inventing a second one — and be
+suspicious of any section that reads a bare `T` off the snapshot, because that one *is* the violation
+the rule is aimed at.
+
+**2026-08-01 — `derived.threats` is the way to order heroes without doing arithmetic.** The `library`
+section wanted "the two enemies that matter most", which is a comparison over positions and movement
+speeds, which `util.ts` says belongs to `packages/world-model`. Reading the derived field's *order*
+rather than computing anything keeps the rule and still gets the answer. It needs a fallback —
+roster order — because early in a match the field is not there yet, and a section that goes quiet
+exactly when hero knowledge is all anyone has is worse than one that is arbitrary but covered.
+
+**2026-08-01 — a `*.test.ts` inside `coaching/sections/` is a section, as far as `boundaries` is
+concerned.** Importing the section under test trips *"a brief section may not import another brief
+section"*. That is the rule working rather than a false positive, and the fix is where the file
+lives: `coaching.test.ts` and `golden.test.ts` sit one level up, and a section test belongs there
+too. The same trap existed in the deleted `tools/handlers/` and cost the same ten minutes twice.
+
 ## See also
 
 `docs/design/context-and-memory-architecture.md` (preamble, snapshot, memory, retention — with

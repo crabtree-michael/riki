@@ -207,6 +207,14 @@ export class FakeWorldModel implements WorldModelReader {
     this.#clock = clock;
   }
 
+  /**
+   * The gap next to `setRoster`: change the draft and the unseen list has to move with it, or the
+   * fake reports heroes as unseen who are not in the game.
+   */
+  setUnseen(unseen: readonly HeroId[]): void {
+    this.#unseen = unseen;
+  }
+
   setHistory(deltas: readonly WorldDelta[]): void {
     this.#history = [...deltas];
   }

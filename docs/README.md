@@ -38,6 +38,11 @@ Docs are split by kind, because "design doc" was covering four different things:
   mid-fight intensity signal, and the composition root where the two halves finally meet.
   **Built**, except the tuning — every coefficient in it is a starting point with no measurement
   behind it, which is open questions 19 and 20.
+- [**hero-library.md**](design/hero-library.md) — the coaching knowledge the world model does not
+  have: twenty top-tier heroes, six topics each, one line per note, surfaced as the `library` brief
+  section and refreshed by nothing ([ADR-0027](adr/0027-the-hero-library-is-static.md)). **Built.**
+  Read §3 before editing content — the policy is what keeps a static library from ageing into being
+  wrong rather than merely old.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -55,6 +60,11 @@ Docs are split by kind, because "design doc" was covering four different things:
   application can lower another's volume, per platform. The answer on macOS is no, which is why
   [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) exists and why `Ducker.available` is false
   on the primary target.
+- [**web-search-providers.md**](research/web-search-providers.md) — whether a search API's terms let
+  us cache results to disk and read them aloud. Brave forbids it in writing and nobody grants it on
+  self-serve; measured p95 is ~3.5 s against a budget three orders of magnitude smaller. Together
+  those are why the hero library is static content rather than a live search
+  ([ADR-0027](adr/0027-the-hero-library-is-static.md)). Read it before proposing a live one.
 - [**openai-realtime-research.md**](research/openai-realtime-research.md) — the Realtime API:
   transports, session configuration, barge-in, context growth, cost, and the failure modes that
   bite.
@@ -91,6 +101,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0024](adr/0024-suppression-is-counted-the-ledger-records-transitions.md) | Suppression is counted; the ledger records transitions | Accepted — corrects one row of coaching §13    |
 | [0025](adr/0025-packages-export-source-to-the-toolchain.md) | Packages export source to the toolchain and `dist` to Node | Accepted — what made `pnpm dev` possible without a bundler |
 | [0026](adr/0026-the-coaching-root-is-built-per-match.md) | The coaching root is built per match, not per app | Accepted — the lifetime step 6 had to decide   |
+| [0027](adr/0027-the-hero-library-is-static.md)            | The hero library is static; nothing refreshes it | Accepted — no network at runtime          |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

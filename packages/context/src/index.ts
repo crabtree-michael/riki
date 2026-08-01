@@ -34,3 +34,8 @@ export * from './snapshot/index.js';
 export * from './memory/index.js';
 export * from './coaching/index.js';
 export * from './assembler.js';
+
+// `./reference/` is deliberately **not** exported. The hero library is read by the `library` brief
+// section and by nothing else, so keeping it off the barrel makes the brief the only route by which
+// a hero note can reach the model — which is the same property every other section has for free, by
+// virtue of reading a world model this package does not re-export either.

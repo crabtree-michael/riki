@@ -6,4 +6,4 @@ windows: rune 15:00 | rosh 16:50 | stack 14:53 | night
 pace: nw +1.2k vs typical | lvl -1 vs typical | lh 96 | gpm 512
 
 --- 189 tokens
---- omitted: history
+--- omitted: library, history

@@ -173,6 +173,41 @@ describe('rendered briefs', () => {
     ).toMatchFileSnapshot(`${DIR}/low-hp-no-escape-truncated.txt`);
   });
 
+  it('a draft the hero library covers, which the fixed world deliberately does not', async () => {
+    // **The one exception to "one world, five causes", and it earns it.** The world above drafts
+    // five heroes the library has no notes on, which is realistic — twenty are covered and ten are
+    // drafted — but it means every other fixture shows `library` only in `omitted`, and a section
+    // whose text never appears in the corpus is a section whose wording nobody reviews.
+    //
+    // Same moment, same budget, same cause; only the enemy draft differs. So the diff against
+    // `player-question.txt` is exactly what hero knowledge adds to a turn, which is the question a
+    // reviewer of this section actually has.
+    const covered = midGame();
+    covered.setRoster({
+      self: 'riki' as HeroId,
+      enemies: ['enigma', 'spectre', 'undying', 'lina', 'bane'] as HeroId[],
+    });
+    // The derived facts have to move with the draft. A fixture whose `threat` line names heroes the
+    // roster no longer contains is a world that could not exist, and a reviewer reading it would
+    // reasonably distrust the rest of the file.
+    covered.set(
+      'derived.threats',
+      observed(
+        [
+          { hero: 'enigma', area: 'bot', etaSeconds: 3 },
+          { hero: 'lina', area: 'mid', etaSeconds: 7 },
+        ],
+        { source: 'derived', confidence: 0.78 },
+      ),
+    );
+    covered.set(
+      'enemies.enigma.area',
+      observed('bot', { source: 'cv', confidence: 0.91, ageMs: 4_000 }),
+    );
+    covered.setUnseen(['undying', 'bane'] as HeroId[]);
+    await expect(render(covered)).toMatchFileSnapshot(`${DIR}/library.txt`);
+  });
+
   it('a cause whose sections are all empty — the turn that does not happen', async () => {
     // §6.5, as a fixture. The correct behaviour is a recorded silent turn, not an opened session
     // turn with an empty brief and a model left to improvise.

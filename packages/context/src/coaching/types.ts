@@ -37,7 +37,15 @@ import type { CoachingMemoryReader } from '../memory/contracts.js';
  * about tokens (§4.4).
  */
 export type BriefSectionId =
-  'threat' | 'economy' | 'windows' | 'cooldowns' | 'positions' | 'pace' | 'history';
+  | 'threat'
+  | 'economy'
+  | 'windows'
+  | 'cooldowns'
+  | 'positions'
+  | 'pace'
+  | 'history'
+  /** Static hero knowledge, not an observation. The one section with no age (ADR-0027). */
+  | 'library';
 
 /**
  * The event ids `packages/events` can emit, as this package needs to key on them.

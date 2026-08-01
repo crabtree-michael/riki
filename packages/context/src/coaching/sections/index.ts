@@ -1,5 +1,5 @@
 /**
- * The seven brief sections.
+ * The eight brief sections.
  *
  * Adding one is one file here, one mention in whichever `BRIEF_PLAN` rows want it, and one golden
  * diff (§14). The plan row is the part not to skip: **a section this array holds but no plan row
@@ -24,6 +24,7 @@ import { cooldowns } from './cooldowns.js';
 import { positions } from './positions.js';
 import { pace } from './pace.js';
 import { history } from './history.js';
+import { library } from './library.js';
 
 export const ALL_BRIEF_SECTIONS: readonly BriefSectionSource[] = [
   threat,
@@ -33,7 +34,9 @@ export const ALL_BRIEF_SECTIONS: readonly BriefSectionSource[] = [
   positions,
   pace,
   history,
+  library,
 ];
 
-export { threat, economy, windows, cooldowns, positions, pace, history };
+export { threat, economy, windows, cooldowns, positions, pace, history, library };
 export { HISTORY_WINDOW_SECONDS } from './history.js';
+export { MAX_HEROES } from './library.js';

@@ -32,11 +32,16 @@ import type { BriefPlanKey, BriefRequest, BriefSectionId } from './types.js';
  * one row here. Two files, two packages, and no existing module changes behaviour — the one
  * genuinely good property the deleted tool registry had, carried over deliberately (§14).
  */
+// `library` is never first, in any row. Position is priority and the first section is undroppable,
+// so leading with it would let static hero notes survive a budget that dropped the observed fact
+// the turn actually fired on — advice about a hero, in place of the reason for mentioning them.
+// It sits above `history` and below everything observed, which is the order a coach would use:
+// what is happening, then what that hero usually does, then what we already said about it.
 export const BRIEF_PLAN: Readonly<Record<BriefPlanKey, readonly BriefSectionId[]>> = {
   // Reactive, shortest useful life. Where they were and what that means for the player, and
   // nothing about farm — a hero missing is not a moment to mention the benchmark.
-  enemy_missing: ['positions', 'threat', 'history'],
-  low_hp_no_escape: ['threat', 'positions', 'cooldowns', 'history'],
+  enemy_missing: ['positions', 'threat', 'library', 'history'],
+  low_hp_no_escape: ['threat', 'positions', 'cooldowns', 'library', 'history'],
 
   // Economy moments. `pace` is what turns "you can afford a BKB" into "you can afford a BKB and
   // you are two minutes behind", which is the difference between a reminder and coaching.
@@ -49,14 +54,23 @@ export const BRIEF_PLAN: Readonly<Record<BriefPlanKey, readonly BriefSectionId[]
 
   // Cooldown windows, on both sides of the fight.
   ult_ready: ['cooldowns', 'threat', 'positions', 'history'],
-  enemy_core_dead_window: ['cooldowns', 'threat', 'windows', 'history'],
+  enemy_core_dead_window: ['cooldowns', 'threat', 'windows', 'library', 'history'],
 
   // §3.2 mitigation 1: no cause to focus on means the widest brief the budget allows.
-  player_question: ['threat', 'positions', 'economy', 'cooldowns', 'windows', 'pace', 'history'],
+  player_question: [
+    'threat',
+    'positions',
+    'library',
+    'economy',
+    'cooldowns',
+    'windows',
+    'pace',
+    'history',
+  ],
 
   // A system turn — match start, or a rehydrate — is about the shape of the game, not a moment
   // in it.
-  system: ['pace', 'economy', 'history'],
+  system: ['pace', 'library', 'economy', 'history'],
 };
 
 /** The row a request lands on. Unknown event ids fall to the widest plan rather than to nothing. */
