@@ -12,7 +12,7 @@ Riki is a voice coach. The product promise — *invisible until needed* — sets
 
 | Goal | Implication for state capture |
 |---|---|
-| Never costs the player frames | Capture must be GPU-side, region-limited, adaptive, and out-of-process. Budget: **≤3% of one CPU core average, ≤200 MB RSS, no measurable FPS delta**. |
+| Never costs the player frames | Capture must be GPU-side, region-limited, adaptive, and out-of-process. Budget: **≤3% of one CPU core average, no measurable FPS delta**. |
 | Never gets anyone VAC-banned | **Read-only observation only.** No memory reads, no injection, no overlay, no input synthesis. See §8. |
 | Never gives unfair information | Riki may only reason about what the player can already see. See §8.2. |
 | Sub-second responsiveness | The world model must be ≤250 ms stale when a turn starts. This is why the model lives *outside* the LLM. |
@@ -313,17 +313,6 @@ Each event gets a **salience score**. Riki speaks unprompted only when salience 
 
 Unprompted speech is the feature most likely to make Riki annoying enough to uninstall. The threshold should start conservative and be user-tunable, with a hard "only when I ask" mode.
 
-### 6.5 Latency budget
-
-| Stage | Target |
-|---|---|
-| GSI POST → world model updated | <10 ms |
-| Frame capture → CV fact in model | <120 ms |
-| World model → rendered snapshot | <5 ms (pure formatting) |
-| Snapshot + user turn → first audio out | dominated by LLM+TTS |
-
-The point of the whole architecture is that context assembly is *never* on the critical path — by the time the user finishes speaking, the snapshot is already current.
-
 ---
 
 ## 7. Privacy
@@ -372,23 +361,7 @@ This constraint is worth taking seriously beyond compliance. A coach that tells 
 
 ---
 
-## 9. Performance
-
-**Budget:** ≤3% of one core average (≤8% peak), ≤200 MB RSS, no measurable FPS delta, ≤50 MB GPU memory.
-
-Where the wins come from:
-
-- **Crop on GPU, read back small.** The dominant cost in naive screen capture is full-frame readback. Cropping to ~6 small regions first cuts it by roughly 50× at 4K.
-- **Hash before recognize.** Most regions are static most of the time. A 64-bit hash comparison costs microseconds and skips the entire CV pass.
-- **Template match, don't neural-net.** Fixed fonts and fixed sprites don't need a model. NCC on small regions is microseconds; a general OCR pass is milliseconds; a VLM call is hundreds of milliseconds plus network.
-- **Separate process, below-normal priority.** The OS scheduler protects the game. Consider CPU affinity away from the game's primary threads on high-core machines.
-- **Adaptive shedding** driven by a real signal (see below), not a fixed rate.
-
-**Measure the right thing.** The metric that matters isn't Riki's CPU% — it's Dota's *1% low* frame time with Riki running versus not. Benchmark on a low-end machine (the median Dota box is not a 4090) across 1080p/1440p/4K, and gate releases on it. A tool that costs 5 FPS in a teamfight will be uninstalled no matter how good the advice is.
-
----
-
-## 10. Failure modes
+## 9. Failure modes
 
 | Failure | Detection | Response |
 |---|---|---|
@@ -407,7 +380,7 @@ Cross-cutting principle: **degrade loudly to the developer, quietly to the user,
 
 ---
 
-## 11. Open questions
+## 10. Open questions
 
 1. **GSI rate in practice** — measure real delivery rates and jitter across a full match on each platform before committing to the 5 Hz minimap budget.
 2. **Linux/Proton GSI viability** — known-buggy historically. May force vision-primary on Linux.
@@ -419,7 +392,7 @@ Cross-cutting principle: **degrade loudly to the developer, quietly to the user,
 
 ---
 
-## 12. Suggested build order
+## 11. Suggested build order
 
 Each step is independently useful, and the risky assumption gets tested early rather than after the architecture is committed:
 
@@ -430,4 +403,4 @@ Each step is independently useful, and the risky assumption gets tested early ra
 5. **Top bar + scoreboard CV.**
 6. **Event engine + trigger policy.** Tune on real matches.
 7. **External API enrichment** and the cached preamble.
-8. **VLM fallback,** if §11.6 resolves in its favour.
+8. **VLM fallback,** if §10.6 resolves in its favour.
