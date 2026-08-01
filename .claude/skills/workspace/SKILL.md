@@ -182,6 +182,23 @@ does not resolve and the rule reports success on a file written specifically to 
 dep to the package's `package.json`, `pnpm install`, lint, confirm the error, then revert both.
 *Why:* this is how the correction above was found — the rule looked verified and was not.
 
+**2026-08-01 — `ls docs/design/` at the start of a task is not the same as `git status`, and the gap
+is where duplicated work lives.** A task to build a hero knowledge library was started against a
+`docs/design/` listing that did not contain the 36 KB design doc for the same
+feature, with three Accepted ADRs, sitting **untracked** in the working tree and landing mid-session
+from parallel work. The result was a second design note, a second ADR-0023, and an implementation
+that violated two ADRs nobody had told it about. *Why:* `docs/README.md` referenced the doc the whole
+time. Before writing a design note or claiming an ADR number, run `git status` and read the index —
+untracked files are invisible to a directory listing you took ten minutes ago, and on this repo
+"another agent is mid-task on the same thing" is the normal case, not the unlucky one.
+
+**2026-08-01 — an ADR number is not claimable from `ls docs/adr/` either, if the competing file is
+untracked.** Two `0026-*.md` files existed briefly. The convention above ("claim immediately before
+you commit") assumes the numbers you can see are the numbers that exist. Check `git status` for
+untracked ADRs at the same moment, and when two designs converge, keep the one the *other* documents
+already link to — the deferred ADRs and the design doc had been rewritten to point at a specific
+filename, so the choice was already made by the inbound links rather than by which was written first.
+
 ## See also
 
 `REPO_SKELETON.md` §2 (layout), §8 (scripts), §9 (working agreements), §13 (skills).

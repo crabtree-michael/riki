@@ -241,6 +241,54 @@ sees `RegisteredTool` — `decode`/`execute`/`render`, all `unknown`. *Why:* it 
 assertion in the component to a place where the value provably came from the matching codec, and it
 is the answer to "why is there not just one definition type?" if you are tempted to simplify it.
 
+**2026-08-01 — adding a command breaks two tests that do not mention it, and one lint rule that does
+not look like it applies.** Landing `search_hero_library` (the ninth command) turned up all three:
+
+- `pipeline.test.ts` pins `manifest.tools` to a hard-coded length. That is deliberate — §8.1's whole
+  point is that a new command is a visible edit — so update the number and the comment, do not
+  derive it from `ALL_HANDLERS.length`.
+- A **test file inside `handlers/` is a handler** as far as `boundaries/element-types` is concerned,
+  so `import { x } from './x.js'` in `handlers/x.test.ts` fails the "no handler imports another
+  handler" rule. Reach the definition through `ALL_HANDLERS.find(t => t.name === …)` instead —
+  which is also how the pipeline gets it, so the test exercises the real path.
+- `RegisteredTool.render(value: unknown, …)` accepts the erased value happily, so nothing is lost
+  by going through the registry.
+
+*Why:* all three cost minutes each and none is visible from the handler you are writing.
+
+**2026-08-01 — `expect(Object.keys(literal))` is a tautology wearing a test's clothes.** A test
+asserting a query type had exactly two fields built the object literal on the line above and
+enumerated its keys — it restates the literal and cannot fail unless someone edits the assertion
+itself. The rule it was guarding (this command takes no free-text argument) does have a place where it can
+genuinely regress: **the JSON Schema in the manifest**, which is what the model is actually shown
+and filled in from. That assertion now lives in `manifest.test.ts`. *Why:* the general shape is
+worth carrying past this repo — when a test guards a type-level rule, ask what artifact would
+change if the rule broke, and assert on *that*. If the answer is "the line above", there is no test.
+
+**2026-08-01 — a `*.test.ts` inside `handlers/` is a handler, as far as `boundaries` is concerned.**
+`eslint.config.js` matches `packages/context/src/tools/handlers/*.ts`, so the no-handler-imports-another
+rule fires on a test that imports the definition it is testing. Reach it through the registry instead
+— `ALL_HANDLERS.find((t) => t.name === '…')`, then `definition.render(...)`. *Why:* that is the rule
+working rather than a false positive; the registry is how every other stage in the pipeline gets at a
+definition, so it is how the test should too. Typecheck passes either way — only `pnpm lint` catches it.
+
+**2026-08-01 — `resolve.ts`'s fuzzy matcher forgives typos, not abbreviations, and it looks like the
+opposite.** `distance()` returns 3 immediately when the length difference exceeds two, and the caller
+accepts only `d < 2` — so it covers one edit, and `eni` does not reach `enigma`, `spec` does not reach
+`spectre`, `jugg` does not reach `juggernaut`. Anything shorter than the canonical name by three
+characters needs a real entry in `aliases.ts`. *Why:* it is easy to write a test asserting a nickname
+resolves, watch it fail, and conclude the resolver is broken. It is not — the alias table is just the
+only thing that does abbreviations, exactly as its own header says.
+
+**2026-08-01 — adding a ninth command cost 234 manifest tokens before it cost 159.** The manifest was
+865 tokens for eight commands against a 2000 ceiling; `search_hero_library` arrived at 234, the most
+expensive entry in it, because argument *descriptions* and an enum's values are tokenized verbatim
+into the cached prefix along with the summary. Cutting the descriptions to curtness saved 42 and
+dropping a free-text argument saved 33 more. *Why:* the skill already says to re-measure — this is
+what the number looks like when you do, and where it goes. `packages/context/src/tools/manifest.test.ts`
+now prints the per-command breakdown on failure and holds each new command to a ratchet, so the next
+person adding one gets the number without writing a scratch test to find it.
+
 ## See also
 
 `docs/design/context-and-memory-architecture.md` (Tiers 1 and 2, memory, retention);

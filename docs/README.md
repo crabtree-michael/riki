@@ -34,6 +34,10 @@ Docs are split by kind, because "design doc" was covering four different things:
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
   ledger, coaching memory, the context-window retention policy, and durable cross-match player
   memory. The other half of `packages/context`, alongside the command architecture above.
+- [**hero-library.md**](design/hero-library.md) — the coaching knowledge the world model does not
+  have: twenty top-tier heroes, six topics each, one line per note, reached by `search_hero_library`
+  and refreshed by nothing ([ADR-0023](adr/0023-the-hero-library-is-static.md)). **Built.** Read §3
+  before editing content — the policy is what keeps a static library from ageing into being wrong.
 - [**voice-input-architecture.md**](design/voice-input-architecture.md) — the voice path end to
   end: microphone capture and gating, the real-time audio pipeline, the Realtime session and its
   turn-taking, transcription and local command parsing, and the class structure of
@@ -46,6 +50,11 @@ Docs are split by kind, because "design doc" was covering four different things:
   application can lower another's volume, per platform. The answer on macOS is no, which is why
   [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) exists and why `Ducker.available` is false
   on the primary target.
+- [**web-search-providers.md**](research/web-search-providers.md) — whether a search API's terms
+  let us cache results to disk and read them aloud. Brave forbids it in writing and nobody grants it
+  on self-serve; measured p95 is ~3.5 s against a 400 ms deadline. Together those two findings are
+  why the hero library is static content rather than a live search
+  ([ADR-0023](adr/0023-the-hero-library-is-static.md)). Read it before proposing a live one.
 - [**openai-realtime-research.md**](research/openai-realtime-research.md) — the Realtime API:
   transports, session configuration, barge-in, context growth, cost, and the failure modes that
   bite.
@@ -78,6 +87,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0020](adr/0020-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API             |
 | [0021](adr/0021-speech-occupies-the-window-as-audio.md)   | Speech is costed as audio, not as its transcript | Accepted, on one estimated constant    |
 | [0022](adr/0022-the-api-key-is-an-opaque-type.md)         | The API key is an opaque type            | Accepted — closes the accidental-log class     |
+| [0023](adr/0023-the-hero-library-is-static.md)            | The hero library is static; nothing refreshes it | Accepted — this is what v1 ships       |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

@@ -51,7 +51,14 @@ import type {
   ToolPorts,
   ToolTelemetry,
 } from '../ports.js';
+import type {
+  HeroLibrary,
+  HeroLibraryQuery,
+  HeroLibraryResult,
+  HeroLibrarySource,
+} from '../../reference/hero-library/index.js';
 import type { Timers } from '../timers.js';
+import { createStaticHeroLibrary } from '../../reference/hero-library/index.js';
 import { failure, ok } from '../failures.js';
 
 // -----------------------------------------------------------------------------------------------
@@ -278,6 +285,25 @@ export class FakeReferenceData implements ReferenceDataPort {
   benchmarks: BuildBenchmark | null = null;
   /** Every lookup answers `unavailable` — the "reference API is down" row of §10. */
   down = false;
+
+  /**
+   * The hero library is **not faked**: this is the real static content.
+   *
+   * It is pure, synchronous and in-process, so a fake would stand in for nothing and would let the
+   * content drift from the tool that serves it — the drift §5.5 warns about, in the one place it
+   * costs nothing to avoid. `useLibrary()` is there for tests that need a hero the real roster does
+   * not cover, which is the only thing the real one cannot express.
+   */
+  #library: HeroLibrarySource = createStaticHeroLibrary();
+
+  useLibrary(library: HeroLibrary): void {
+    this.#library = createStaticHeroLibrary(library);
+  }
+
+  heroLibrary(query: HeroLibraryQuery): Promise<ToolOutcome<HeroLibraryResult>> {
+    if (this.down) return Promise.resolve(failure('unavailable', { detail: 'fake: down' }));
+    return this.#library.heroLibrary(query);
+  }
 
   item(id: ItemId): Promise<ToolOutcome<ItemInfo>> {
     if (this.down) return Promise.resolve(failure('unavailable', { detail: 'fake: down' }));

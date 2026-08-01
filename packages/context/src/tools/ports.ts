@@ -22,6 +22,7 @@ export type { Clock } from '../common/types.js';
 
 import type { Clock } from '../common/types.js';
 import type { WorldModelReader, WorldSnapshot } from '../common/ports.js';
+import type { HeroLibraryQuery, HeroLibraryResult } from '../reference/hero-library/types.js';
 import type {
   ActivityHandle,
   CancelSignal,
@@ -71,6 +72,15 @@ export interface ReferenceDataPort {
   item(id: ItemId): Promise<ToolOutcome<ItemInfo>>;
   matchup(a: HeroId, b: HeroId): Promise<ToolOutcome<MatchupNote>>;
   benchmark(hero: HeroId, at: GameClock): Promise<ToolOutcome<BuildBenchmark>>;
+  /**
+   * The hero library (hero-library.md). Static content today, served by
+   * `createStaticHeroLibrary()` — the first part of this port with a real implementation.
+   *
+   * It takes the *query* rather than the hero, and returns notes already ranked. That is what puts
+   * the search behind the seam: a later live implementation can rank server-side instead of
+   * shipping a hero's whole entry across to be filtered here.
+   */
+  heroLibrary(query: HeroLibraryQuery): Promise<ToolOutcome<HeroLibraryResult>>;
 }
 
 /** Shapes are illustrative — dota2 §2.4 treats external data as best-effort and it will change. */

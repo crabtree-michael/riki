@@ -28,5 +28,6 @@ export * from './render/index.js';
 export * from './preamble/index.js';
 export * from './snapshot/index.js';
 export * from './memory/index.js';
+export * from './reference/index.js';
 export * from './tools/index.js';
 export * from './assembler.js';

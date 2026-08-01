@@ -55,7 +55,11 @@ export type PortId = 'world' | 'capture' | 'reference' | 'consent';
 // Commands and effect classes (§3.2)
 // -----------------------------------------------------------------------------------------------
 
-/** The eight commands of dota2-state-capture-design.md §6.3. A closed union on purpose. */
+/**
+ * The commands of dota2-state-capture-design.md §6.3, plus `search_hero_library`. Closed on
+ * purpose: adding an arm is a manifest cost paid on every turn of every session (§8.1), so it
+ * should be a visible edit here rather than a string that appears in one handler file.
+ */
 export type ToolName =
   | 'get_enemy_detail'
   | 'get_minimap_summary'
@@ -64,7 +68,9 @@ export type ToolName =
   | 'get_timings'
   | 'get_recent_events'
   | 'read_screen'
-  | 'get_build_benchmark';
+  | 'get_build_benchmark'
+  /** hero-library.md §4. Not in §6.3's original eight. */
+  | 'search_hero_library';
 
 /**
  * The class decides concurrency, deadline, consent, caching and degradation behaviour — so adding
