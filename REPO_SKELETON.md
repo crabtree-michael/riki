@@ -1,0 +1,611 @@
+# Riki — Repository Skeleton Proposal
+
+**Status:** Proposal. Nothing in this document has been scaffolded yet.
+**Scope:** Directory layout, testing strategy, linting and code-quality gates, environment
+configuration, and the build/dev workflow for the Riki codebase.
+**Out of scope:** Product design (see [`docs/ui-design.md`](docs/ui-design.md)), state capture
+architecture (see [`docs/dota2-state-capture-design.md`](docs/dota2-state-capture-design.md)),
+and the Realtime API integration decision (see
+[`docs/openai-realtime-research.md`](docs/openai-realtime-research.md)).
+
+This document is written for the agents who will build Riki. Read §1 and §2 to know where your
+work goes, §5 to know what "tested" means here, and §9 for the definition of done.
+
+---
+
+## 0. Assumptions
+
+The repo is currently docs-only, so the layout is derived from the three design documents rather
+than from existing code. Sections marked ⚑ change if an assumption is wrong.
+
+| # | Assumption | Source | Affects |
+|---|---|---|---|
+| A1 | Riki is a desktop app: overlay chip + tray + voice, running alongside Dota 2 | `ui-design.md` §2 | ⚑ §1 Stack |
+| A2 | WebRTC is the Realtime transport, which means a Chromium-class renderer owns the mic | `openai-realtime-research.md` §2, §11.5 (AEC is mandatory) | ⚑ §1 Stack |
+| A3 | Capture + CV must be a **separate process**, perf-budgeted, and must not take the app down when it crashes | `dota2-state-capture-design.md` §3, §9 | ⚑ §2 `crates/` |
+| A4 | The OpenAI API key cannot ship in the binary, so a token-minting service exists | `openai-realtime-research.md` §9 | ⚑ §2 `services/` |
+| A5 | Multiple agents work in parallel and commit directly to `main` | `AGENTS.md` | ⚑ §2 ownership, §8 CI |
+| A6 | Agents cannot run Dota 2, cannot use a real microphone, and should not spend money on live Realtime sessions | — | ⚑ §5 (fixtures/replay are load-bearing) |
+
+**A6 is the one that shapes the most.** If the test suite needs a running game client, agents
+cannot verify their own work, and every task ends with "untested, please check." The whole
+fixture-and-replay apparatus in §5.2 exists to make that impossible.
+
+---
+
+## 1. Stack
+
+One decision up front, because the directory layout is downstream of it.
+
+**Electron (TypeScript) for the shell, voice, and world model; Rust for the capture/CV sidecar;
+a small Node service for token minting.**
+
+| Layer | Choice | Why |
+|---|---|---|
+| Shell / overlay / tray / hotkeys | **Electron + TypeScript** | The overlay is a click-through layered window with per-pixel alpha (`ui-design.md` §6.5) — a normal desktop window concern. Electron bundles Chromium, which is the only route that gives us WebRTC *and* known-good acoustic echo cancellation. AEC is not optional: `openai-realtime-research.md` §11.5 documents self-interruption loops as a reliable failure without it. Tauri's webview-per-OS AEC variance (§9 of the same doc) is exactly the risk we cannot absorb. |
+| GSI server, world model, context, events | **TypeScript, in the Electron main process** | `dota2-state-capture-design.md` §3: "the GSI server and world model are lightweight enough to share the main process." Inputs arrive at 2–8 Hz. This is not hot code. |
+| Capture + CV | **Rust, separate process** | Budget is ≤3% of one core, ≤200 MB RSS, ≤50 MB GPU memory, no measurable FPS delta (§9). That rules out Node and Python for the shipping path. Rust also gives clean bindings to WGC / PipeWire / ScreenCaptureKit. |
+| Token broker | **TypeScript (Node)** | Tiny. Shares the protocol and config packages. |
+
+### Known tension, recorded rather than hidden
+
+Electron's baseline RSS (~150–250 MB) sits uncomfortably next to the ≤200 MB budget in
+`dota2-state-capture-design.md` §9. That budget is written against the *capture subsystem*, and
+the sidecar is where it must be enforced — but total process-tree memory is a real product
+concern and belongs in the frame-time harness (§5.6), not in a footnote. If it fails on a
+median machine, the fallback is a Rust/Tauri shell with a native WebRTC stack, which costs
+several weeks and reintroduces the AEC problem. **Measure before believing either way.**
+
+Alternatives and why not: pure Python (cannot meet the CV budget, no good overlay story); pure
+Rust/Tauri (AEC variance, more work, per A2); a web app (no overlay, no global hotkeys).
+
+---
+
+## 2. Directory layout
+
+```
+riki/
+├── AGENTS.md                        how agents work here — read first
+├── README.md
+├── REPO_SKELETON.md                 this file
+├── CONTRIBUTING.md                  human-facing setup + workflow
+│
+├── package.json                     pnpm workspace root; canonical script names (§7)
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── eslint.config.js                 flat config, incl. module-boundary rules (§6.2)
+├── .prettierrc  .editorconfig  .markdownlint.jsonc
+├── vitest.workspace.ts
+├── Cargo.toml                       Rust workspace
+├── rustfmt.toml  clippy.toml  deny.toml
+├── lefthook.yml                     git hooks
+├── .env.example                     every var, documented, no real values
+├── .gitattributes                   LFS rules for fixture frames
+├── .gitignore
+│
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                   lint · typecheck · test · build (ubuntu + windows)
+│       ├── bench.yml                CV micro-benchmarks, regression gate
+│       └── docs.yml                 markdownlint + link check
+│
+├── apps/
+│   └── desktop/                     the Electron application
+│       ├── src/
+│       │   ├── main/                lifecycle, tray, global hotkeys, window mgmt,
+│       │   │                        sidecar supervisor, IPC host
+│       │   ├── preload/             the only bridge; contextIsolation on, no node in renderer
+│       │   ├── renderer/
+│       │   │   ├── overlay/         the chip — states, motion, bars (ui-design §3–§5)
+│       │   │   ├── settings/        settings surface (ui-design §11)
+│       │   │   └── onboarding/      first-run consent, GSI setup, hotkey capture check
+│       │   └── shared/              types shared across main↔renderer only
+│       ├── resources/               tray glyphs, earcon audio, atlases
+│       ├── test/                    integration tests (main-process, no window)
+│       └── e2e/                     Playwright-driven Electron tests
+│
+├── packages/                        TypeScript libraries — the testable core
+│   ├── protocol/                    ⭐ THE CONTRACT. zod schemas for every cross-boundary
+│   │                                message + generated JSON Schema + generated Rust types.
+│   │                                Changing this changes two languages — see §4.
+│   ├── config/                      layered config resolution + validation. The ONLY place
+│   │                                that reads process.env (§6.2, §7)
+│   ├── gsi/                         GSI HTTP listener, auth, parsing, liveness/heartbeat
+│   ├── log-tail/                    console.log tailer: chat, kill feed, rotation handling
+│   ├── world-model/                 the model, fusion, provenance, staleness, confidence,
+│   │                                derived state, ring history (dota2 §4)
+│   ├── context/                     snapshot renderer (Tier 2) + tool surface (Tier 3)
+│   │                                + session preamble assembly (Tier 1) (dota2 §6)
+│   ├── events/                      event engine, salience scoring, trigger policy,
+│   │                                interrupt gates (dota2 §6.4)
+│   ├── realtime/                    OpenAI Realtime session: transport, event bus, barge-in,
+│   │                                truncation policy, cost accounting
+│   ├── audio/                       device enumeration, RMS/envelope for the bars, resampling,
+│   │                                earcons, ducking
+│   └── telemetry/                   structured logging, perf counters, redaction rules
+│
+├── crates/                          Rust — the sidecar
+│   ├── riki-vision/                 the sidecar binary: supervisor-friendly, stdio protocol
+│   ├── riki-capture/                WGC (win) · PipeWire portal (linux) · ScreenCaptureKit (mac)
+│   │                                GPU crop, downscale, region hashing
+│   ├── riki-cv/                     calibration, digit/icon template matching, minimap
+│   │                                detection, confidence scoring
+│   └── riki-ipc/                    sidecar side of packages/protocol (generated + handwritten)
+│
+├── services/
+│   └── token-broker/                mints ephemeral Realtime client secrets; rate limited;
+│                                    the real API key lives here and nowhere else
+│
+├── fixtures/                        ⭐ what makes the repo workable without a game running
+│   ├── gsi/                         recorded GSI sessions, JSONL, one line per POST + ts
+│   ├── console-log/                 captured console.log excerpts
+│   ├── frames/                      hand-labelled screenshots + label JSON (git-lfs)
+│   ├── realtime/                    recorded Realtime event transcripts for replay
+│   └── golden/                      expected snapshot-renderer output
+│
+├── tools/                           dev-only executables, not shipped
+│   ├── gsi-replay/                  replay a fixture session into a running dev build
+│   ├── gsi-record/                  capture a live session to a fixture
+│   ├── frame-labeler/               annotate frames for the CV corpus
+│   ├── atlas-build/                 build hero/item/digit template atlases per HUD scale
+│   └── setup-gsi-cfg/               write the gamestate_integration cfg + per-install token
+│
+├── bench/
+│   ├── cv/                          criterion benchmarks, thresholds enforced in CI
+│   └── frametime/                   Dota 1% low harness — manual, real hardware, release gate
+│
+├── docs/
+│   ├── README.md                    index: what's here, what's decided, what's open
+│   ├── design/                      ui-design.md, dota2-state-capture-design.md  (moved)
+│   ├── research/                    openai-realtime-research.md  (moved)
+│   ├── adr/                         numbered decision records, ADR-0001 onward
+│   └── runbooks/                    dev setup, releasing, on-call-ish troubleshooting
+│
+└── scripts/                         repo chores: codegen, fixture fetch, release
+```
+
+### 2.1 Why this shape
+
+**One package per concern in `dota2-state-capture-design.md` §3.** The architecture diagram in
+that doc has named boxes — GSI server, capture+CV, log tailer, fusion, world model, event
+engine, context builder, trigger policy. Each becomes its own package or crate. That is not
+decoration: per A5, agents work in parallel and commit to `main` without review, so the cheapest
+way to avoid collisions is for two agents' tasks to touch disjoint directories.
+
+**`packages/protocol` is deliberately small and deliberately central.** It is the one place two
+agents *will* collide, so it gets the strictest rules (§4).
+
+**Business logic lives in `packages/`, not in `apps/desktop`.** The world model, snapshot
+renderer, and salience scoring are pure functions over data. Kept out of Electron they are
+testable in milliseconds with no window, no game, and no GPU. `apps/desktop` should end up thin:
+wiring, windows, and platform calls.
+
+**`fixtures/` is a first-class directory, not a test subfolder.** Multiple packages, both
+languages, and the dev tools all read from it.
+
+### 2.2 Ownership map — where does my task go?
+
+| If your task is about… | Work in | Spec |
+|---|---|---|
+| The chip, its states, motion, colours | `apps/desktop/src/renderer/overlay` | ui-design §3–§5 |
+| Tray icon, menu, mute | `apps/desktop/src/main` | ui-design §2.3 |
+| Global hotkey, tap-vs-hold, conflict detection | `apps/desktop/src/main` | ui-design §6 |
+| Receiving GSI POSTs | `packages/gsi` | dota2 §2.1 |
+| Chat / kill feed from `console.log` | `packages/log-tail` | dota2 §2.3 |
+| Merging sources, staleness, confidence | `packages/world-model` | dota2 §4 |
+| The ~300-token snapshot the LLM sees | `packages/context` | dota2 §6.2 |
+| Agent tools (`get_enemy_detail`, …) | `packages/context` | dota2 §6.3 |
+| "Should Riki speak?" | `packages/events` | dota2 §6.4 |
+| Realtime session, barge-in, truncation | `packages/realtime` | realtime §2, §4, §5 |
+| Mic level, earcons, ducking, resampling | `packages/audio` | ui-design §7, realtime §3 |
+| Screen capture, calibration, minimap CV | `crates/riki-*` | dota2 §2.2 |
+| Ephemeral tokens | `services/token-broker` | realtime §6 |
+| Anything crossing TS↔Rust | `packages/protocol` **first** | §4 |
+
+---
+
+## 3. Documentation structure
+
+`docs/` already holds the design corpus and `AGENTS.md` names it as the home for durable
+reasoning. Three changes:
+
+1. **Split by kind** — `design/` (how it should work), `research/` (what we learned about the
+   outside world), `adr/` (what we decided and why), `runbooks/` (how to do a thing).
+2. **Add `docs/adr/`.** The existing docs already make binding calls — push-to-talk by default,
+   no red, read-only observation only, Electron over Tauri — but they bury them in long
+   documents. An ADR is one page: context, decision, consequences, status. Agents get a
+   scannable list of what is already settled instead of re-litigating it. Seed with:
+   ADR-0001 Electron shell · ADR-0002 WebRTC transport · ADR-0003 read-only observation only ·
+   ADR-0004 push-to-talk default · ADR-0005 monorepo + protocol package.
+3. **`docs/README.md` as the index** — what exists, what is decided, what is open. The open
+   questions currently sit at the bottom of three separate documents where nobody finds them.
+
+House style is already set by the existing docs and should hold: state assumptions up front,
+mark the ones that are load-bearing, record rejected alternatives so they are not re-proposed.
+
+---
+
+## 4. The protocol package — rules
+
+`packages/protocol` defines every message crossing a process or language boundary: Electron main
+↔ renderer, Electron ↔ Rust sidecar, app ↔ token broker.
+
+- **zod is the source of truth.** JSON Schema is generated from it; Rust types are generated from
+  that JSON Schema into `crates/riki-ipc`. Generation runs in `pnpm codegen` and CI fails if the
+  generated files are dirty. Hand-editing generated Rust is the failure mode to prevent.
+- **Every message is versioned.** The sidecar and the app can be different builds during
+  development; a version mismatch must produce a clear error, not a confusing parse failure.
+- **Confidence, provenance, and timestamps are non-optional fields** on every CV-derived fact.
+  `dota2-state-capture-design.md` §4 makes these structural, and the type system should too — a
+  CV position that can be constructed without a confidence score will eventually be rendered to
+  the agent as if it were a fact, which §4 rule 3 calls out as the worst outcome in the product.
+- **Changing protocol is a coordination event.** Say so in the commit message; other agents may
+  be mid-task against the old shape.
+
+---
+
+## 5. Testing
+
+### 5.1 Frameworks
+
+| Target | Tool | Notes |
+|---|---|---|
+| TypeScript unit + integration | **Vitest** | Workspace mode, one project per package. Fast, ESM-native, snapshot support built in. |
+| Electron end-to-end | **Playwright** (`_electron`) | Drives a real Electron build; the only place a window is launched. |
+| Rust unit + integration | **`cargo test`** | Plus **`insta`** for CV snapshot assertions. |
+| Rust benchmarks | **criterion** | Thresholds enforced (§5.6). |
+| Contract (TS↔Rust) | Vitest + `cargo test` over shared fixtures | §5.4. |
+| Coverage | `vitest --coverage` (v8), `cargo-llvm-cov` | Reported, not gated at a blanket number — see §5.7. |
+
+Tests live colocated as `*.test.ts` next to the unit under test; integration and e2e tests get
+their own `test/` and `e2e/` directories. Rust follows the standard `#[cfg(test)]` /
+`tests/` split.
+
+### 5.2 The rule that matters most
+
+> **No test may require a running Dota 2 client, a real microphone, a GPU, or a live OpenAI
+> session.** Every external input has a fixture and a fake.
+
+Per A6 this is what lets an agent finish a task and actually verify it. It also keeps CI free and
+deterministic. Concretely, four fakes ship as `testing/` subpath exports so any package can
+import them:
+
+| Fake | Replaces | Behaviour |
+|---|---|---|
+| `FakeGsiSource` | The Dota client's POSTs | Replays `fixtures/gsi/*.jsonl` at recorded or accelerated wall-clock timing |
+| `FakeVisionSidecar` | The Rust process | Emits scripted protocol messages, including crashes, stalls, and low-confidence output |
+| `FakeRealtimeTransport` | OpenAI | Replays `fixtures/realtime/*`; records what we sent for assertion; can inject errors and mid-response disconnects |
+| `FakeAudioDevice` | Mic + speakers | Feeds known PCM, captures output for the resampling tests |
+
+The fakes are not test scaffolding — they are also what `pnpm dev:replay` (§7) uses, so a
+developer or agent can drive the whole app with no game installed. Keeping them shared means
+they stay honest.
+
+### 5.3 Test tiers
+
+**Tier 1 — unit (the bulk).** Pure functions, no I/O, milliseconds. Fusion precedence
+(GSI beats CV, CV never overwrites fresh GSI), staleness decay, derived state arithmetic
+(gold-to-item, buyback affordability, Roshan window), snapshot token budgeting and priority
+truncation, salience scoring, cooldown and novelty gates, calibration solve, template match
+scoring, audio RMS and envelope math.
+
+**Tier 2 — golden.** Committed expected outputs, reviewed as diffs.
+- Snapshot renderer → `fixtures/golden/`. Format changes should show up as a readable diff,
+  because the format *is* the interface to the LLM.
+- CV detections → `insta` snapshots against `fixtures/frames/`, with an **F1 floor** rather than
+  exact equality. `dota2-state-capture-design.md` §11.3 names minimap accuracy as the
+  load-bearing assumption of the entire vision layer; it needs a number in CI, not a vibe.
+
+**Tier 3 — contract.** Both languages parse the same `fixtures/protocol/` corpus and must agree.
+Round-trip: TS encodes → Rust decodes → Rust re-encodes → TS decodes → deep-equal. This is the
+cheapest insurance against the most likely cross-language bug.
+
+**Tier 4 — integration.** Replay a full recorded match through
+GSI → fusion → world model → derived → snapshot, with a fake sidecar injecting CV facts.
+Assert the §6.5 latency budgets (GSI POST → model < 10 ms; model → snapshot < 5 ms) and the
+failure-mode table in §10 (heartbeat miss → CV-only + user notice; sidecar crash → restart with
+backoff; pause → freeze and mark stale).
+
+**Tier 5 — end-to-end.** Playwright on a real Electron build. State machine transitions from
+`ui-design.md` §3.1 including barge-in and Esc-cancel; the **≤100 ms key-down → chip visible**
+budget from §8; that Hidden renders no window at all (§10 "idle costs literally nothing");
+reduced-motion and high-contrast variants; the caption-mode-off-by-default default.
+
+**Tier 6 — performance.** §5.6.
+
+### 5.4 Specific tests the specs have already asked for
+
+The design docs name failure modes precisely enough to write the guarding test now. These are
+not optional extras; each one guards something a doc flags as high-risk.
+
+| Risk (source) | Guarding test |
+|---|---|
+| Beta/GA schema mixing silently misconfigures the session (realtime §3) | Assert the outgoing `session.update` matches the GA schema exactly and contains **no** top-level `voice` or string `input_audio_format`. Snapshot it. |
+| Wrong resampling produces pitch-shifted audio rather than an error (realtime §3) | Round-trip 48 kHz → 24 kHz → 48 kHz on a known tone; assert frequency within tolerance. The doc explicitly asks for this test. |
+| Barge-in without `conversation.item.truncate` corrupts every later turn (realtime §4) | On simulated interruption, assert a truncate event was sent with a plausible `audio_end_ms`. |
+| Context fills in 15–20 min and truncates oldest-first (realtime §5) | Simulate a 25-minute session; assert the retention policy fires and cache-busting truncations stay under a threshold. |
+| Stale CV facts rendered as certainties (dota2 §4, §6.2) | Feed a 30-second-old CV position; assert the snapshot renders it with an age and confidence marker and never as a bare fact. |
+| Confidence below threshold surfaced anyway (dota2 §4) | Below-threshold facts are dropped, not rendered. |
+| Riki talks over the player or during a fight (dota2 §6.4) | Trigger policy suppresses under simulated teamfight conditions and while the player is speaking. |
+| Red used for errors (ui-design §4.2) | Token lint: no `#FF0000`-family value in the accent palette. |
+| Colour as the only channel (ui-design §4.3) | Every state has a distinct glyph and motion signature; assert exhaustively over the state enum. |
+| Chat text leaving the machine by default (dota2 §7) | Egress test: with default config, assert chat text never reaches the outbound payload. |
+| Voice chat captured (dota2 §7) | Assert no capture path exists for game audio output. |
+| API key in the shipped bundle (realtime §9) | Build-artifact scan for key-shaped strings; `packages/realtime` must not read the key at all. |
+
+### 5.5 What is genuinely hard to test, and what we do instead
+
+Honesty matters more than coverage theatre:
+
+- **Anti-cheat interaction** (`ui-design.md` §13.3, flagged as a blocking risk) cannot be unit
+  tested. It needs a manual spike against EAC/BattlEye/Vanguard, documented in
+  `docs/runbooks/anticheat-validation.md`, before UI is built on the hotkey layer.
+- **Real CV accuracy in a chaotic teamfight** is bounded by the quality of `fixtures/frames/`.
+  The corpus needs to grow deliberately, weighted toward hard frames, not easy ones.
+- **Perceived latency and whether Riki is annoying** are human judgements. `bench/frametime`
+  and real-user tuning, not CI.
+- **Exclusive fullscreen capture** behaviour differs per title and cannot be faked.
+
+Each of these gets a runbook rather than a test, and the runbook result gets committed.
+
+### 5.6 Performance testing
+
+Two separate things, often conflated:
+
+1. **Micro-benchmarks (CI-gated).** criterion over `crates/riki-cv`: region hash, template match,
+   minimap pass, calibration solve. A regression threshold fails the build. Cheap, catches the
+   obvious.
+2. **Frame-time harness (manual, release gate).** `dota2-state-capture-design.md` §9 is explicit
+   that the metric that matters is **Dota's 1% low frame time with Riki running versus not**, on
+   a low-end machine, at 1080p/1440p/4K. This cannot run in CI. It runs on real hardware before a
+   release and the numbers get committed to `docs/runbooks/perf-results/`. A release that has not
+   run it is not a release.
+
+### 5.7 On coverage
+
+Reported per package, not gated at a blanket percentage. A uniform threshold pushes agents toward
+testing `apps/desktop` wiring, which is the least valuable code in the repo. Where a floor is
+useful is `packages/world-model`, `packages/context`, and `packages/events` — pure logic, cheap
+to test, and where a silent bug becomes wrong advice in a player's ear. Propose 85% there and
+report-only elsewhere.
+
+---
+
+## 6. Linting and code quality
+
+### 6.1 Tooling
+
+| Concern | Tool | Gate |
+|---|---|---|
+| TS lint | **ESLint** flat config + `typescript-eslint` `strict-type-checked` | error |
+| TS types | `tsc --noEmit` per package | error |
+| Formatting (TS/JSON/MD/YAML) | **Prettier** | error (`--check` in CI) |
+| Rust format | **rustfmt** | error |
+| Rust lint | **clippy** with `-D warnings` | error |
+| Rust deps | **cargo-deny** — licences, advisories, duplicate versions | error |
+| JS deps | `pnpm audit` + lockfile freshness | warn → error on advisories |
+| Secrets | **gitleaks** | error |
+| Markdown | **markdownlint** + **lychee** link check | error / warn |
+| Commit hygiene | **lefthook** — format + lint changed files pre-commit | local |
+
+Two tools, one per language, doing formatting and linting. No Biome-plus-ESLint-plus-Prettier
+sprawl; agents should not have to work out which formatter owns a file.
+
+### 6.2 Rules that encode design decisions
+
+Ordinary lint rules catch ordinary mistakes. These catch the specific things the design docs say
+must not happen, and they are worth the setup cost because they hold without anyone remembering:
+
+- **Module boundaries** (`eslint-plugin-boundaries`):
+  - `packages/*` may not import from `apps/*`. Business logic stays testable.
+  - The `openai` SDK may only be imported by `packages/realtime` and `services/token-broker`.
+  - `packages/world-model` may not import `packages/realtime` — the model must not know it is
+    feeding an LLM (`dota2-state-capture-design.md` §1: state and conversation rates are
+    decoupled by design).
+  - Renderer code may not import from `main/`; the preload bridge is the only path.
+- **`process.env` is readable only in `packages/config`.** Everything else takes injected config.
+  This is what makes config testable and keeps secrets traceable to one file.
+- **No `console.*` outside `packages/telemetry`.** Logs pass through redaction (chat text and
+  Steam IDs, per `dota2-state-capture-design.md` §7) before they reach a sink.
+- **No raw colour literals in renderer code** — accents come from the token module in
+  `ui-design.md` §4.2, so the "no red" rule has exactly one place to be enforced.
+- **`no-floating-promises` and `no-misused-promises` as errors.** The Realtime integration is an
+  async event bus (`openai-realtime-research.md` §1); a dropped promise there manifests as a
+  hung session, which is the hardest class of bug to reproduce here.
+
+---
+
+## 7. Environment configuration
+
+**Layered resolution**, highest wins: CLI flags → environment → user config file (OS config dir:
+`%APPDATA%\Riki`, `~/.config/riki`) → committed defaults. Resolved once at startup by
+`packages/config`, validated with zod, and **injected** thereafter.
+
+Invalid config fails at startup with a readable message naming the offending key. It never
+half-boots — a Riki that runs with a broken microphone setting and no error is exactly the
+failure `ui-design.md` §1.6 says to avoid.
+
+`.env.example` is committed with every variable documented and no real values:
+
+```bash
+# --- Token broker (server-side only; never in a client build) ---
+RIKI_OPENAI_API_KEY=            # real key. Only services/token-broker reads this.
+RIKI_TOKEN_BROKER_URL=http://localhost:8787
+
+# --- Realtime ---
+RIKI_REALTIME_MODEL=gpt-realtime-2.1-mini   # mini by default; cost lever, realtime §10
+RIKI_REALTIME_VOICE=marin
+RIKI_REALTIME_TRANSPORT=webrtc              # webrtc | websocket
+
+# --- Dota integration ---
+RIKI_GSI_PORT=53101
+RIKI_GSI_TOKEN=                 # generated per-install by tools/setup-gsi-cfg; not a secret
+                                # to share across machines, but never committed
+RIKI_DOTA_PATH=                 # auto-detected; override for non-standard Steam installs
+
+# --- Feature flags / degradation ---
+RIKI_VISION=on                  # on | off — off runs GSI-only (dota2 §10 fallback path)
+RIKI_UNPROMPTED=off             # on | off — "only when I ask" mode, dota2 §6.4
+RIKI_CAPTIONS=off               # must default off, ui-design §9.3
+RIKI_LOG_LEVEL=info
+
+# --- Development ---
+RIKI_REPLAY_FIXTURE=            # path to a fixtures/gsi/*.jsonl to drive a dev session
+RIKI_FAKE_VISION=0              # 1 → FakeVisionSidecar instead of the Rust process
+```
+
+Three rules:
+
+1. **Secrets never enter the desktop app's config surface.** `RIKI_OPENAI_API_KEY` is read by
+   `services/token-broker` only; a lint boundary and a build-artifact scan enforce it (§5.4).
+2. **Privacy-relevant defaults are off**, and their defaults are asserted by tests, not just
+   written down: captions off, unprompted speech off, chat egress off, debug frame capture off.
+3. **The GSI token is generated per install**, matching the cfg template in
+   `dota2-state-capture-design.md` §2.1, and written by `tools/setup-gsi-cfg`.
+
+---
+
+## 8. Build, dev, and CI workflow
+
+### 8.1 Canonical scripts
+
+One name per action, from the repo root. If a command is not here, it should be.
+
+| Command | Does |
+|---|---|
+| `pnpm install` | Node deps. `cargo build` is invoked by the dev/build scripts. |
+| `pnpm setup` | Install deps, fetch LFS fixtures, generate protocol types, install hooks. **One command for a fresh clone.** |
+| `pnpm dev` | Electron + Vite HMR + `cargo watch` on the sidecar |
+| `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota required.** |
+| `pnpm dev:broker` | Token broker locally on :8787 |
+| `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU. |
+| `pnpm test:e2e` | Playwright against a built Electron app |
+| `pnpm lint` | ESLint + clippy + markdownlint + gitleaks |
+| `pnpm format` / `pnpm format:check` | Prettier + rustfmt |
+| `pnpm typecheck` | `tsc --noEmit` across the workspace |
+| `pnpm codegen` | Regenerate JSON Schema + Rust types from `packages/protocol` |
+| `pnpm bench` | criterion micro-benchmarks |
+| `pnpm check` | **lint + typecheck + test + codegen-clean.** What CI runs; run before committing. |
+| `pnpm build` | Production build of app + sidecar |
+
+`pnpm check` matters most: it is one thing to remember, and it is the same thing CI runs, so an
+agent never discovers a failure only after pushing to `main`.
+
+### 8.2 CI
+
+GitHub Actions, on push to `main` and on PRs (there are no PRs today per `AGENTS.md`, but the
+workflow should not assume that forever):
+
+- **Matrix: `ubuntu-latest` + `windows-latest`.** Both are load-bearing — Linux is the dev
+  platform, Windows is the target, and `dota2-state-capture-design.md` §2.1 flags Linux/Proton
+  GSI as historically buggy. Platform divergence needs to surface in CI, not in a bug report.
+- Jobs: `lint` · `typecheck` · `test` · `test:rust` · `codegen-clean` · `build` · `e2e`
+  (Linux only, headless) · `docs`.
+- `codegen-clean` fails if regenerating protocol types produces a diff.
+- Caches: pnpm store, Cargo registry and target dir, Playwright browsers.
+- `bench.yml` runs on `crates/**` changes and compares against the baseline on `main`.
+- macOS is not in the matrix initially — it is a third-tier target in the specs and the runner
+  cost is not yet justified. Revisit if macOS becomes a shipping platform.
+
+### 8.3 Fixture management
+
+Recorded frames are binary and large; JSONL fixtures are small and diff well.
+
+- `fixtures/frames/**` via **git-lfs**, configured in `.gitattributes`.
+- Everything else committed plainly — a GSI recording of a full match is a few MB of JSONL and is
+  worth having in normal git history so diffs are reviewable.
+- `pnpm setup` fetches LFS objects; tests that need frames skip with a clear message if the
+  objects are absent, rather than failing cryptically.
+
+---
+
+## 9. Working agreements for agents
+
+Extends `AGENTS.md` rather than replacing it.
+
+**Before you start**
+- Read the spec section for your area (§2.2 has the mapping).
+- Check `docs/adr/` — the decision may already be made.
+- `git pull`. Others commit to `main` while you work.
+
+**While you work**
+- Stay in your directory. If your task needs a change in someone else's package, that is usually a
+  sign the seam is in the wrong place — say so in your report rather than reaching across.
+- Touching `packages/protocol` is a coordination event (§4). Say so loudly.
+- Add the fixture alongside the code. A parser without a fixture is untestable by the next agent.
+
+**Before you commit**
+- `pnpm check` passes.
+- New behaviour has a test at the lowest tier that can catch it (§5.3).
+- If you added a design decision, it is an ADR — not a comment.
+- If you left something undone, the commit message says what and why (`AGENTS.md`).
+
+**Definition of done:** the work is on `main`, `pnpm check` is green, the behaviour is covered by
+a test that runs without Dota 2 or a live API, and anything you learned that the next agent needs
+is in `docs/`.
+
+---
+
+## 10. Suggested scaffolding order
+
+`dota2-state-capture-design.md` §12 gives a build order for the product. This is the
+infrastructure order that unblocks it, front-loaded so agents are productive immediately.
+
+| # | Step | Unblocks |
+|---|---|---|
+| 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, CI | Everything. Nothing else should land before the gates exist. |
+| 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
+| 3 | `packages/config` + `.env.example` | Every package that needs a setting |
+| 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The §12.1 milestone, and `pnpm dev:replay` |
+| 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration |
+| 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work |
+| 7 | `packages/realtime` + `FakeRealtimeTransport` + `services/token-broker` | Voice |
+| 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in §12.3 |
+| 9 | `bench/` + `docs/adr/` seeded + runbooks | Release gating |
+
+Steps 1–3 are strictly sequential. 4–8 can run in parallel across agents, which is the point of
+the layout.
+
+---
+
+## 11. Open decisions
+
+Flagged rather than assumed. Each needs a human call or a spike.
+
+1. **Electron vs. Tauri (⚑ A2, §1).** Proposed Electron for bundled-Chromium AEC. The cost is
+   memory. If the frame-time harness says Electron is too heavy on a median Dota machine, this
+   inverts — and it inverts cheaply only if it happens before `apps/desktop` has real depth.
+   **Decide before step 6.**
+2. **Does the token broker ship in v1?** It implies hosting, an account system, and rate limiting
+   for a product that otherwise has no backend (`openai-realtime-research.md` §9). The
+   alternative — a user-supplied API key in local config — removes the backend entirely at the
+   cost of a worse onboarding flow. This is a product decision with a real architectural
+   footprint.
+3. **git-lfs for `fixtures/frames/`.** Correct technically; adds a setup step and a bandwidth
+   cost. The alternative is a scripted download from object storage.
+4. **Rust vs. C++ for the sidecar.** Proposed Rust. Worth confirming against whatever WGC and
+   ScreenCaptureKit binding maturity actually looks like when someone builds the §12.3 spike.
+5. **Where does the agent's prompt/persona live?** It is neither code nor doc exactly. Proposal:
+   versioned prompt files in `packages/context/prompts/` with golden tests, so a persona change
+   shows up as a reviewable diff.
+6. **Anti-cheat spike must precede step 6.** `ui-design.md` §13.3 calls this a blocking risk. If a
+   global hook plus an always-on-top window is not viable, the entire trigger design changes and
+   the overlay directory is wasted work.
+
+---
+
+## 12. Rejected alternatives
+
+Recorded so they are not re-proposed.
+
+| Rejected | Why |
+|---|---|
+| Single flat `src/` | Three subsystems in two languages with parallel agents; flat layout guarantees merge conflicts and hides the seams the design docs are explicit about |
+| Separate repos per component | The protocol contract has to be versioned in lockstep; polyrepo makes the most fragile boundary the hardest to change |
+| Python for the CV layer | Cannot meet the ≤3% core / ≤200 MB budget in `dota2-state-capture-design.md` §9; fine for a labelling tool, not for the shipping path |
+| CV in-process with the app | §3 requires the CV worker to crash without taking the agent down |
+| Jest | Vitest is faster, ESM-native, and shares config with Vite in the renderer |
+| Biome instead of ESLint + Prettier | The boundary rules in §6.2 are the point, and they need ESLint's plugin ecosystem |
+| A blanket coverage threshold | Pushes effort toward wiring code and away from `world-model` / `context` / `events`, where bugs become wrong advice in a player's ear |
+| Tests that drive a real Dota 2 client | Non-deterministic, impossible in CI, and impossible for the agents doing the work (A6) |
+| Mock-heavy unit tests over shared fakes | Divergent mocks per package drift from reality; shared fakes stay honest because `pnpm dev:replay` uses them too |
