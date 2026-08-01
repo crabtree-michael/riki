@@ -162,7 +162,9 @@ export class FakeWorldModel implements WorldModelReader {
   readonly #listeners = new Set<(version: number, delta: WorldDelta) => void>();
 
   constructor(options: FakeWorldOptions = {}) {
-    this.#clock = options.clock ?? (600 as GameClock);
+    // `??` would be wrong here: `clock: null` is the pre-horn case a test asks for on purpose, and
+    // coalescing it to a default makes the one snapshot that must render without a clock untestable.
+    this.#clock = options.clock === undefined ? (600 as GameClock) : options.clock;
     this.#roster = {
       self: options.roster?.self ?? ('nevermore' as HeroId),
       allies: options.roster?.allies ?? [],

@@ -75,6 +75,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0018](adr/0018-argument-schemas-from-a-local-declaration.md) | Argument schemas from a local declaration, not zod yet | Accepted, migrate when protocol lands |
 | [0019](adr/0019-get-build-benchmark-is-reference-class.md) | `get_build_benchmark` is a `reference` command | Accepted, corrects the design doc          |
 | [0020](adr/0020-ducking-is-a-no-op-by-default.md)         | Ducking is a no-op by default            | Accepted — macOS has no public API             |
+| [0021](adr/0021-speech-occupies-the-window-as-audio.md)   | Speech is costed as audio, not as its transcript | Accepted, on one estimated constant    |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

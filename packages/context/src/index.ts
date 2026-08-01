@@ -15,15 +15,18 @@
  * Architecture: docs/design/context-and-memory-architecture.md (Tiers 1 and 2, and memory) and
  * docs/design/agent-command-execution-architecture.md (Tier 3).
  *
- * **Tier 3 and the shared render primitives have landed** (`./tools/`, `./render/`); Tiers 1 and 2
- * and the memory layer are still declarations. See REPO_SKELETON.md §2.2 for what belongs here and
- * §10 for where this package sits in the scaffolding order.
+ * `createContextAssembler()` is the one runtime surface (§9.4). Everything else is exported for the
+ * composition root's own wiring and for tests; nothing outside this package should need to
+ * construct a renderer, a ledger or a retention policy by hand.
+ *
+ * See REPO_SKELETON.md §2.2 for what belongs here and §10 for where this package sits in the
+ * scaffolding order.
  */
 
 export type * from './common/index.js';
 export * from './render/index.js';
-export type * from './preamble/index.js';
-export type * from './snapshot/index.js';
-export type * from './memory/index.js';
+export * from './preamble/index.js';
+export * from './snapshot/index.js';
+export * from './memory/index.js';
 export * from './tools/index.js';
-export type * from './assembler.js';
+export * from './assembler.js';

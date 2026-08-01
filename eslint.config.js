@@ -302,6 +302,52 @@ export default tseslint.config(
     },
   },
 
+  // `packages/context` does no I/O and speaks no vendor vocabulary
+  // (docs/design/context-and-memory-architecture.md §2.3, §11).
+  //
+  // These are `no-restricted-imports` and not `boundaries/*` for the measured reason recorded in
+  // the `workspace` skill: boundaries only sees imports that **resolve**. `@riki/events` is step 8
+  // and does not exist yet, and `node:fs` is a builtin rather than an element — so a boundaries
+  // rule naming either would report success while catching nothing. Matching the literal specifier
+  // is what makes these fire today, on the day somebody writes the import.
+  {
+    files: ['packages/context/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:fs',
+              message:
+                'packages/context does no I/O. Durable memory goes through MemoryStore, which the composition root implements with a path packages/config resolved (§2.3).',
+            },
+            {
+              name: 'node:fs/promises',
+              message: 'packages/context does no I/O — see MemoryStore (§2.3).',
+            },
+            {
+              name: 'node:path',
+              message: 'packages/context never picks a path — see MemoryStore (§2.3).',
+            },
+            { name: 'fs', message: 'packages/context does no I/O — see MemoryStore (§2.3).' },
+            {
+              name: 'path',
+              message: 'packages/context never picks a path — see MemoryStore (§2.3).',
+            },
+          ],
+          patterns: [
+            {
+              group: ['@riki/realtime', '@riki/events', '@riki/gsi', '@riki/log-tail'],
+              message:
+                'packages/context reads through ports and speaks no vendor vocabulary. The event tape and the window arrive through ports the composition root wires; @riki/events depends on context, never the reverse (§2.3).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // `process.env` is readable in exactly one package. This is what keeps the API key
   // (REPO_SKELETON.md §7.1) traceable to a single auditable file.
   {

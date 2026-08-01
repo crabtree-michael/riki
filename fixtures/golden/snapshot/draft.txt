@@ -1,0 +1,6 @@
+T pre-horn | you: riki, lvl 1
+enemies: nevermore · tidehunter · crystal_maiden · windranger · zuus
+recent: [14:10] tide died top · [13:52] you got your 3rd item · [13:22] rosh killed by us
+
+--- 69 tokens
+--- omitted: self_economy, self_abilities, self_items, seen, unseen, derived, map

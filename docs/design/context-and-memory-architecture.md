@@ -1,6 +1,11 @@
 # Context & Memory — Module & Class Architecture
 
-**Status:** Draft / design proposal. No implementation exists; `packages/context` is the step-5 stub.
+**Status:** Implemented, except §16 step 7. `packages/context` holds Tier 1, Tier 2, Tier 3 and the
+memory layer, with `createContextAssembler()` (§9.4) as the runtime surface and the golden corpus in
+`fixtures/golden/snapshot/`. What has not landed is the `ContextWindowPort` adapter and the session
+wiring in the composition root, which need `packages/realtime` (step 7): a `WindowPlan` is computed
+and handed over, and nothing executes it yet. ADR-0021 records one decision taken during
+implementation that this document leaves implicit — how an utterance is costed against the window.
 **Scope:** What the agent is given and what Riki remembers — Tier 1 session preamble assembly, the
 Tier 2 rolling snapshot renderer, the shared rendering primitives both tiers use, and the memory
 layer underneath all of it: the conversation ledger, coaching memory, the context-window retention
