@@ -9,22 +9,27 @@
  * It must not know it is feeding an LLM — state and conversation rates are decoupled by
  * design, and a lint boundary stops it importing @riki/realtime (§6.2).
  *
- * Contracts only — no behaviour yet. Every `declare`d function is a signature waiting for
- * REPO_SKELETON.md §10 step 4; the shapes are docs/design/state-capture-architecture.md §3 and §5,
- * and the seam they all serve is ADR-0014.
+ * The shapes are docs/design/state-capture-architecture.md §3 and §5, and the seam they all serve
+ * is ADR-0014. `createWorldModelStore` is the only entry point most callers need; everything else
+ * is exported so a test can construct one piece without the rest.
  */
 
-export type * from './time.js';
-export type * from './fact.js';
+export * from './time.js';
+export * from './fact.js';
 export type * from './observation.js';
-export type * from './state.js';
-export type * from './snapshot.js';
-export type * from './store.js';
-export type * from './drift.js';
-export type * from './fusion/reducer.js';
-export type * from './fusion/precedence.js';
-export type * from './fusion/confidence.js';
-export type * from './fusion/staleness.js';
-export type * from './derived/registry.js';
-export type * from './history/ring.js';
-export type * from './history/delta.js';
+export * from './state.js';
+export * from './snapshot.js';
+export * from './store.js';
+export * from './drift.js';
+export * from './fusion/candidate.js';
+export * from './fusion/reducer.js';
+export * from './fusion/precedence.js';
+export * from './fusion/confidence.js';
+export * from './fusion/staleness.js';
+export * from './fusion/read-cv.js';
+export * from './fusion/read-gsi.js';
+export * from './fusion/read-log.js';
+export * from './derived/registry.js';
+export * from './derived/rules/index.js';
+export * from './history/ring.js';
+export * from './history/delta.js';

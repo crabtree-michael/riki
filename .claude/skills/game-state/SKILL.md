@@ -79,9 +79,56 @@ than leaving it to each call site. *Why:* both readings are defensible, they pro
 behaviour during a GSI dropout, and that dropout is exactly when Riki is most likely to say something
 wrong.
 
+**2026-08-01 — the three packages are implemented; read §13 of the architecture before §3–§7.**
+`state-capture-architecture.md` gained a §13 recording every place the implementation disagreed with
+the contract, and the sections above it were *not* rewritten in full. So §3.5's `WorldState` and
+§5.1–§5.3's signatures are the intent, and §13 is what the code does. *Why:* four of the six
+differences are shape changes you would otherwise discover from a type error — `self.abilities` is
+`Fact<readonly AbilityState[]>`, not an array of facts, and `enemies[].itemsSeen` is a `Map`.
+
+**2026-08-01 — "never writes" has to mean rank 0, not lowest priority.** The obvious reading of the
+§5.3 matrix — rank the sources and let the shadow window sort out the rest — quietly lets a CV
+reading land on `self.health` after two seconds of GSI silence. It must never land there at all:
+that is the *whole* input to the drift monitor (§5.6), and admitting it as a fact both corrupts the
+model and destroys the calibration signal. Implement the "Never writes" column as an
+unconditional refusal *before* the shadow window is consulted, and test it at a stale field with a
+long-quiet authoritative source. *Why:* every other rule in the matrix is a comparison, so this one
+reads like a comparison too, and the failure is silent.
+
+**2026-08-01 — a CV batch's timestamp is not its detections' timestamps.** The batch is later than
+every region in it by however long the CV worker took, and the regions in one batch were sampled at
+different moments anyway. Age each detection from its own `observedAt` and treat the batch time as a
+ceiling. *Why:* using the batch time makes every position look fresher than it is, in exactly the
+direction that gets someone killed — and it is invisible in testing unless a test deliberately puts
+the two timestamps apart.
+
+**2026-08-01 — fusion stamps a non-GSI observation with the clock the model currently holds.** So a
+CV batch arriving before the first GSI POST is stamped clockless and ages in wall time. That is
+correct — there was no match clock to age it against — but it means the *order* of the first two
+observations changes how the first CV fact ages, and a test that feeds CV first will see `expired`
+where it expected `fresh`. *Why:* cost twenty minutes here; the fix is to feed GSI first in any test
+that cares about ageing, which is also what happens in production.
+
+**2026-08-01 — the console-log matchers are unverified guesses and are marked as such.** Nobody has
+run Dota with `-condebug` (dota2 §2.3 still lists it as open, and the dev box has no client), so
+`packages/log-tail/src/matchers/*` were written against community reports and
+`fixtures/console-log/` is synthetic. The tailer underneath them — rotation, truncation, partial
+lines, start-mid-file — is real and tested against temp files. *Why:* if you have a capture, replace
+the fixtures and run the matcher tests; every failure is a matcher to fix, and if kills turn out not
+to reach `console.log` at all, delete `killfeed.ts` rather than fighting it — `enemies.*.alive`
+already falls back to top-bar CV through the `enemy_liveness` class.
+
+**2026-08-01 — a real GSI capture contains the per-install token, and `fixtures/gsi/` must not.**
+The `auth` block is inside the POST body, not a header, so a naive recorder writes the secret
+straight into a committed fixture. `packages/gsi`'s parser drops `auth` before building a payload
+(there is a test asserting a token cannot reach an `Observation`), but `tools/gsi-record` is the
+place that has to strip it on the way in. *Why:* gitleaks will not recognise a Riki install token,
+so nothing else catches this.
+
 ## See also
 
 `docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),
 §9 (failure modes); `docs/design/state-capture-architecture.md` (classes, method signatures, module
-boundaries); `docs/adr/0014-observation-reducer-seam.md`; `REPO_SKELETON.md` §5.3 (tiers),
+boundaries — and **§13 for where the code differs**);
+`docs/adr/0014-observation-reducer-seam.md`; `REPO_SKELETON.md` §5.3 (tiers),
 §6.2 (module boundaries).

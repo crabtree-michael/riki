@@ -22,10 +22,11 @@ Stated up front, house style, and flagged where load-bearing:
    it is the constraint most likely to be eroded by a convenient shortcut.
 3. **Sources and the model do not know about each other.** They meet at a protocol type. A source
    cannot import `@riki/world-model`; the model cannot import `@riki/gsi`. §2.3 gives the lint rule.
-4. **This document specifies interfaces, not implementations.** The declaration-only TypeScript
-   contracts it describes have landed (§12); no *behaviour* has. The signatures here are the
-   contract for the agents who implement REPO_SKELETON §10 step 4; treat a disagreement with them
-   as a reason to amend this file and the contracts together, not to diverge silently.
+4. **This document specifies interfaces, not implementations.** The contracts it describes, and now
+   the behaviour behind them, have landed for `packages/gsi`, `packages/log-tail` and
+   `packages/world-model` (§12). Treat a disagreement with the signatures here as a reason to amend
+   this file and the contracts together, not to diverge silently — **§13 is that amendment for the
+   step-4 implementation**, and the next one should extend it the same way.
 5. Numbers marked *(tunable)* are starting points to be measured, not decisions. Numbers not so
    marked come from the companion design doc or from REPO_SKELETON and should not be changed here.
 
@@ -125,29 +126,42 @@ modular rather than merely layered:
 
 ### 2.3 The boundary lints this design needs
 
-REPO_SKELETON §6.2 already forbids `world-model → realtime`. This architecture adds two rules that
-should land in `eslint.config.js` **with the implementation**, not before (a rule with nothing to
+REPO_SKELETON §6.2 already forbids `world-model → realtime`. This architecture adds two rules,
+which landed in `eslint.config.js` **with the implementation**, not before (a rule with nothing to
 catch cannot be verified, and the `workspace` skill is emphatic that an unverified boundary rule is
 decoration):
 
 ```js
-// in boundaries/external, alongside the existing world-model → realtime rule
+// in boundaries/element-types, alongside the existing world-model → realtime rule
 {
   from: [['package', { name: 'world-model' }]],
-  disallow: ['@riki/gsi', '@riki/log-tail', '@riki/context', '@riki/events'],
+  disallow: [
+    ['package', { name: 'gsi' }],
+    ['package', { name: 'log-tail' }],
+    ['package', { name: 'context' }],
+    ['package', { name: 'events' }],
+  ],
   message:
-    'world-model may not import a source or a reader — sources and the model meet at @riki/protocol.',
+    'packages/world-model may not import a source or a reader — sources and the model meet at a protocol type, never at each other (ADR-0014).',
 },
 {
   from: [['package', { name: 'gsi' }], ['package', { name: 'log-tail' }]],
-  disallow: ['@riki/world-model'],
+  disallow: [['package', { name: 'world-model' }]],
   message: 'A source emits Observations; it does not know what consumes them.',
 },
 ```
 
-Verify each by writing a file that violates it, running `pnpm exec eslint` on it, confirming the
-error, and deleting it. Both rules belong in `boundaries/external` rather than `element-types`
-because workspace packages are imported by name.
+Verify each by adding the dependency to the importing package's `package.json`, writing a file that
+violates the rule, running `pnpm exec eslint` on it, confirming the error, then reverting both.
+
+> **Corrected during implementation.** This section originally placed both rules in
+> `boundaries/external`, on the reasoning that workspace packages are imported by name. They are in
+> **`element-types`** instead. Once the importing package actually declares the dependency — the
+> only situation the rule needs to catch — `eslint-import-resolver-typescript` resolves
+> `@riki/gsi` to `packages/gsi/**`, boundaries matches it as a `package` **element**, and the
+> `external` rule stays silent. A rule written only in `external` passes on a real violation. The
+> `workspace` skill records the same correction; `boundaries/external` is for genuine node_modules
+> packages such as `electron` and `openai`.
 
 ---
 
@@ -608,11 +622,24 @@ export type PrecedenceVerdict =
 | `self.*` | `gsi` | — | `cv` | CV of own HUD feeds the drift monitor (§5.6), never the model |
 | `map.buildings.*` | `gsi` | — | `cv` | The `buildings` component covers both teams; minimap CV is redundant |
 | `meta.*` | `gsi` | — | all | Match identity and clock have exactly one honest source |
+| `*.hero` (`roster`) | `gsi` (draft) | `cv` (top bar) | — | **Added during implementation.** The `draft` component is populated only during the draft phase, so an app started mid-match never sees it and the top bar has to be able to name a hero GSI never did. Folding this into `meta` would make a CV-only start nameless; folding it into `enemy_progress` would let a 0.6 top-bar guess overwrite a draft-confirmed pick |
 | `enemies[].position` | `cv` | — | — | GSI cannot see it; §8.2 fairness allows only what is on the minimap |
 | `enemies[].alive/respawn` | `log` (kill feed) | `cv` (top bar) | — | The log gives an exact instant; CV gives a rounded timer |
 | `enemies[].level/items` | `cv` | — | — | Top bar and scoreboard |
 | `chat` | `log` | `cv` (OCR) | — | OCR only when the log path is unavailable — an availability gate, not confidence |
 | `derived.*` | `derived` | — | all | Recomputed, never written from outside |
+
+Three `map.*` fields have no row of their own because their policy is already stated: `map.daytime`
+is `meta` (GSI-only, nothing else may write it), `map.roshanState` is `enemy_liveness` (kill feed
+exact, top bar rounded — the same two sources in the same order), and `map.wardsSeen` is
+`enemy_position` (CV-only, §8.2 allows only what the minimap renders). Duplicating the rows would
+add a place for them to disagree.
+
+**"Never writes" is rank 0, not "lowest priority."** A rank-0 source is refused unconditionally,
+however stale the field is and however long the authoritative source has been quiet. That is the
+whole difference between `self.health` — where a disagreeing CV reading is a calibration signal
+(§5.6) and never a fact — and `enemies[].alive`, where CV *should* write once the kill feed has
+gone quiet because otherwise nobody would.
 
 Rules applied in order:
 
@@ -625,6 +652,9 @@ Rules applied in order:
    makes out-of-order delivery harmless instead of corrupting.
 4. **Confidence.** Within `cv`, a lower-confidence detection does not overwrite a higher-confidence
    one that is still fresh. A 0.55 blob does not get to erase a 0.91 sighting from a second ago.
+   "Still fresh" needs a number for the same reason "quiet" does, so `PrecedenceOptions` gained a
+   second field during implementation — `confidenceWindowMs`, 2000 *(tunable)*. Without it the rule
+   either never fires or lets a confident sighting from four minutes ago block every update forever.
 
 ### 5.4 The confidence gate
 
@@ -1024,8 +1054,14 @@ considered done, rather than by argument.
 
 ## 12. Where the contracts live
 
-Declaration-only TypeScript, landed with this document. No behaviour: every `declare`d function is
-a signature waiting for REPO_SKELETON §10 step 4.
+~~Declaration-only TypeScript, landed with this document. No behaviour: every `declare`d function is
+a signature waiting for REPO_SKELETON §10 step 4.~~
+
+**Implemented (REPO_SKELETON §10 step 4).** Every `declare` below is now a function with a test.
+`packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour; the composition
+root (§8), the `CapturePort` (§4.3) and `FreshCaptureRequest` (§7.2) are still unbuilt, because
+they belong to `apps/desktop` and to the wiring pass. §13 records where the implementation
+disagreed with this document.
 
 | This document | File |
 |---|---|
@@ -1063,3 +1099,85 @@ Two things are deliberately **not** here:
 checked compatible: that `WorldModelReader` is method-for-method identical to `store.ts`'s, and its
 `WorldSnapshot` is a strict subset of `snapshot.ts`'s, so the real types satisfy the declarations
 without either side changing. Deleting the copies is that package's call to make, not this one's.
+
+---
+
+## 13. What the implementation changed
+
+Assumption ⚑4 says a disagreement with these contracts is a reason to amend this file and the
+contracts together rather than to diverge silently. This is that amendment. Everything here is a
+change made while building §10 step 4, with the reason it was made.
+
+### 13.1 Shape changes to `WorldState` (§3.5)
+
+| Was | Is | Why |
+|---|---|---|
+| `self.abilities: readonly Fact<AbilityState>[]` | `Fact<readonly AbilityState[]>` | One POST observes every slot at one instant from one source, so per-slot provenance would be eight copies of the same stamp — and an array of facts is not addressable by `FieldPath`, which would put both fields outside precedence, ageing and delta computation. Still "every leaf a `Fact<T>`"; the array moved inside the envelope |
+| `self.items: readonly Fact<ItemState>[]` | `Fact<readonly ItemState[]>` | Same |
+| `map.wardsSeen: readonly Fact<MapPosition>[]` | `Fact<readonly MapPosition[]>` | One CV pass observes the whole visible ward set |
+| `enemies[].itemsSeen: readonly Fact<ItemId>[]` | `ReadonlyMap<ItemId, Fact<ItemId>>` | Keyed so a second sighting refreshes the first instead of appending a duplicate. Each entry keeps its own age and confidence, which an array of anonymous facts could not preserve across re-observation. Addressed as `enemies.<hero>.itemsSeen.<itemId>` |
+| — | `self.xp` added | `powerSpikeIn` cannot answer "how long until level 12" from a level alone, and GSI's `hero.xp` gives it for free |
+| — | `enemies[].netWorth` added | `netWorthLead` needs all ten, and scoreboard CV is what supplies the other five |
+
+`FieldPath` also acquired a grammar and two functions that walk it (`readFact`, `writeFact` in
+`state.ts`). §5.2 and §5.8 both assume a leaf can be reached by name and neither said where that
+lives; putting it anywhere but next to the state invites a second, subtly different copy.
+
+### 13.2 Signature changes
+
+- **`FusionOutcome.accepted: number`** (§5.2). `ApplyResult.accepted` is in §5.1, and the store
+  cannot count what it never saw — only the reducer knows how many candidates an observation
+  implied.
+- **`WorldModelStore.paused: boolean`** (§5.1). `setPaused` was write-only, which is untestable and
+  leaves the supervisor with nothing to render.
+- **`PrecedenceOptions.confidenceWindowMs`** — see §5.3 rule 4 above.
+- **`createConfidenceGate` and `createStalenessPolicy` take their tables as optional arguments**
+  with documented defaults. Every call site would otherwise have to invent thresholds, which is how
+  two of them end up different.
+- **`emptyState(now, opts?)`** takes the history window, since the store owns it.
+
+### 13.3 Behavioural notes not in the design
+
+- **The rings are shared across versions.** `chat` and `history` are bounded append-only logs, not
+  fields: they carry no `Fact` envelope, are not addressable by `FieldPath`, and never appear in a
+  delta. Every version shares the same ring object, so a snapshot's view of them is as of the moment
+  it is *read*, not the moment it was taken. This is the one deliberate exception to §7.1's
+  immutability, and copying them per observation would make the guarantee uniform at the cost of an
+  allocation per POST for a view nobody diffs. A chat line still bumps the version, or a chat-only
+  observation would be invisible to `packages/events`.
+- **`setPaused` has no body beyond recording the flag** (§6.4). It does not need one: `clock_time`
+  stops advancing while paused and every tactical ageing policy is on the `game` basis, so tactical
+  facts stop ageing as a *consequence of the clock* rather than of a flag. If that method ever grows
+  a body, the two-clock rule has been worked around somewhere.
+- **`position` expiring into `lastSeenAt`** (§3.5, §5.5) is implemented by writing both from the
+  same reducer step and giving `lastSeenAt` a far longer expiry. No timer, no sweep, no mutation on
+  read.
+- **A non-GSI observation is stamped with the clock the model currently holds.** So a CV batch that
+  arrives before the first GSI POST is stamped clockless and ages in wall time — correct, since
+  there was no match clock to age it against, but surprising the first time it is seen.
+- **CV detections carry their own `observedAt`**, and fusion uses it in preference to the batch's.
+  A batch is assembled over one capture pass but its regions were sampled at different moments;
+  ageing a minimap blob from arrival makes every position look fresher than it is, in the direction
+  that gets someone killed.
+- **§5.7's per-dependency memo is not implemented.** A rule's answer depends on `now` as well as on
+  its inputs — that is what ageing means — so a cache keyed on dependency identity would need
+  invalidating on every clock tick, which is every call. Laziness alone delivers the stated
+  property: derived state is computed on first read *of a snapshot*, and seven of eight GSI updates
+  never have a snapshot taken of them. `dependsOn` still earns its place by skipping rules none of
+  whose inputs have ever been observed.
+
+### 13.4 What the implementation could not verify
+
+Both are §11 items and neither moved:
+
+- **`previously`/`added` (§11.5)** are dropped in one place (`parse.ts`) so the assumption has a
+  single site to change. Confirming it needs a live capture.
+- **Console-log line formats.** `packages/log-tail`'s tailer is format-independent and tested
+  against temp files; its *matchers* are a reconstruction from community reports, because dota2
+  §2.3's "verify which events reach `console.log`" has not been run. `fixtures/console-log/` says so
+  in its README, and the matcher registry exists precisely so that being wrong here breaks one small
+  file.
+
+`fixtures/gsi/` is likewise synthesised from §2.1's component list rather than recorded. It
+exercises the pre-horn negative clock, irregular delivery, a pause, a partial POST, unknown
+components and a heartbeat — but it cannot answer either question above, and its headers say so.

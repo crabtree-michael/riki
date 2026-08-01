@@ -31,3 +31,34 @@ export interface Clock {
 
 /** Every subscription in this package returns its own disposer. */
 export type Unsubscribe = () => void;
+
+// -----------------------------------------------------------------------------------------------
+// Branding
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * The brands above exist to stop a wall-clock number being used where a match clock belongs, so
+ * the cast that removes the brand should be spelled the same way everywhere and be greppable.
+ * These are that spelling. They are identity functions; the check is at the type level.
+ */
+export function asMonoMs(value: number): MonoMs {
+  return value as MonoMs;
+}
+
+export function asGameClock(value: number): GameClock {
+  return value as GameClock;
+}
+
+export function asSeconds(value: number): Seconds {
+  return value as Seconds;
+}
+
+/** Milliseconds between two monotonic readings. Negative when `then` is in the future. */
+export function elapsedMs(then: MonoMs, now: MonoMs): number {
+  return now - then;
+}
+
+/** Match-clock seconds converted to milliseconds, so both clocks are compared in one unit. */
+export function gameClockDeltaMs(then: GameClock, now: GameClock): number {
+  return (now - then) * 1000;
+}

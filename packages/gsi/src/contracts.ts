@@ -4,6 +4,9 @@
  *
  * See docs/design/state-capture-architecture.md §4.1.
  *
+ * The interfaces live here; the implementations are one file each, per §4.1's layout —
+ * `server.ts`, `auth.ts`, `parse.ts`, `liveness.ts`, `session.ts`, `clock.ts`.
+ *
  * ⚠ Transitional. `MonoMs`, `GameClock`, `Observation`, `ObservationSource` and `SourceHealth` are
  * the same contract `packages/world-model` declares, mirrored here because a source may not import
  * the model (state-capture-architecture.md §2.3 — sources and the model meet at a type, not at
@@ -65,8 +68,6 @@ export interface GsiServer {
   readonly address: { readonly port: number } | null;
 }
 
-export declare function createGsiServer(opts: GsiServerOptions): GsiServer;
-
 // -----------------------------------------------------------------------------------------------
 // Auth
 // -----------------------------------------------------------------------------------------------
@@ -77,8 +78,6 @@ export type AuthVerdict = 'ok' | 'missing' | 'mismatch';
 export interface GsiAuthenticator {
   verify(presented: string | undefined): AuthVerdict;
 }
-
-export declare function createGsiAuthenticator(expected: string): GsiAuthenticator;
 
 // -----------------------------------------------------------------------------------------------
 // Liveness
@@ -96,8 +95,6 @@ export interface GsiLiveness {
   noteObservation(now: MonoMs): void;
   check(now: MonoMs): { readonly state: SourceHealth['state']; readonly sinceLastMs: number };
 }
-
-export declare function createGsiLiveness(opts: GsiLivenessOptions): GsiLiveness;
 
 // -----------------------------------------------------------------------------------------------
 // Match session
@@ -121,8 +118,6 @@ export interface MatchSessionTracker {
   observe(payload: GsiPayload, at: { observedAt: MonoMs }): readonly MatchLifecycleEvent[];
 }
 
-export declare function createMatchSessionTracker(): MatchSessionTracker;
-
 // -----------------------------------------------------------------------------------------------
 // The game clock
 // -----------------------------------------------------------------------------------------------
@@ -140,5 +135,3 @@ export interface GameClockEstimator {
   /** Null before the first update — pre-horn and loading have no clock, which is not clock zero. */
   estimate(now: MonoMs): GameClock | null;
 }
-
-export declare function createGameClockEstimator(): GameClockEstimator;

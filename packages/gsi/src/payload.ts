@@ -67,5 +67,3 @@ export type ParseResult<T> =
 export interface GsiPayloadParser {
   parse(raw: unknown): ParseResult<GsiPayload>;
 }
-
-export declare function createGsiPayloadParser(): GsiPayloadParser;

@@ -103,8 +103,6 @@ export interface ConsoleLogTailer {
   health(now: MonoMs): SourceHealth;
 }
 
-export declare function createConsoleLogTailer(opts: ConsoleLogTailerOptions): ConsoleLogTailer;
-
 /**
  * Pure, and cheap on the common path: most lines match nothing.
  *

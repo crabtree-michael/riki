@@ -17,6 +17,30 @@ export interface ConfidenceGate {
   thresholdFor(detector: DetectorId): Confidence;
 }
 
-export declare function createConfidenceGate(
-  thresholds: ReadonlyMap<DetectorId, Confidence>,
-): ConfidenceGate;
+/**
+ * The threshold a detector with no entry of its own gets.
+ *
+ * 0.5, matching `packages/context`'s `DEFAULT_AGE_OPTIONS.confidenceFloor`. The two are separate
+ * gates on purpose — this one drops the fact, that one declines to render it — but a renderer
+ * floor *above* the admission floor would mean facts that land in the model and can never be
+ * spoken, so they start equal and any divergence should be deliberate.
+ */
+export const DEFAULT_CONFIDENCE_THRESHOLD = 0.5 as Confidence;
+
+export function createConfidenceGate(
+  thresholds: ReadonlyMap<DetectorId, Confidence> = new Map(),
+  fallback: Confidence = DEFAULT_CONFIDENCE_THRESHOLD,
+): ConfidenceGate {
+  return {
+    thresholdFor(detector: DetectorId): Confidence {
+      return thresholds.get(detector) ?? fallback;
+    },
+
+    admit(fact: Fact<unknown>, detector: DetectorId): boolean {
+      // gsi, log and api are 1.0 by construction (fact.ts), so gating them would be a no-op that
+      // reads as though it might one day fail. `derived` is gated by its rule returning null.
+      if (fact.source !== 'cv') return true;
+      return fact.confidence >= (thresholds.get(detector) ?? fallback);
+    },
+  };
+}

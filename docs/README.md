@@ -23,7 +23,8 @@ Docs are split by kind, because "design doc" was covering four different things:
   what the agent is shown.
 - [**state-capture-architecture.md**](design/state-capture-architecture.md) — the module and class
   architecture that implements it: the fact envelope, the source interface, the fusion reducer and
-  its policies, and the read interface `context` and `events` consume.
+  its policies, and the read interface `context` and `events` consume. **Built**, except the
+  composition root — start at §13, which records where the code differs from §3–§7.
 - [**agent-command-execution-architecture.md**](design/agent-command-execution-architecture.md) —
   what happens when the agent asks Riki something: parsing and validating a tool call, the four
   ports it may reach, queueing and deadlines, the failure taxonomy, and the token budget. Read it

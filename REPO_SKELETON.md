@@ -653,7 +653,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 | 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. **Landed except `check:skills` (§13.7) and activating CI (§8.2)** — both still open. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
-| 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay` |
+| 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay`. **Landed except `tools/gsi-replay`** — `packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour and tests, `FakeGsiSource` and the fixture corpus exist, but the replay tool and `pnpm dev:replay` still need the composition root (§8 of the state-capture architecture), which belongs to step 6 |
 | 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration |
 | 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work |
 | 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice |

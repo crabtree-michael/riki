@@ -92,6 +92,21 @@ have to wait for Tier 5 to be tested at all. Tier 5 is still the only place a *w
 *Why:* the alternative was shipping ~600 lines of untested DOM code against a Playwright harness
 that does not exist yet, which is the "untested, please check" outcome this skill exists to prevent.
 
+**2026-08-01 — a fake needs a hand-crank, or its tests sleep.** `FakeGsiSource` has `step()`/`drain()`
+and `ConsoleLogTailer` has `poll()` for the same reason: the alternative is a test that waits out a
+250 ms poll or a recorded 30 s heartbeat, which is slow when idle and flaky under load. Both default
+to *not* running their timer (`speed: 0`), so the timing path exists for `pnpm dev:replay` and the
+tests never touch it. *Why:* it is much easier to add the crank while writing the fake than to
+retrofit it into a suite that has already learned to sleep.
+
+**2026-08-01 — the synthetic fixtures are labelled, and the label is load-bearing.**
+`fixtures/gsi/*.jsonl` and `fixtures/console-log/*` were assembled from the design docs, not
+captured — no one has a machine that can run Dota. Both carry a header (JSONL fixtures skip `//`
+lines, which is why that is supported) saying so and saying what a real recording would settle.
+*Why:* a synthesised fixture and a captured one look identical and are worth very different amounts;
+without the label the next agent reasonably assumes the delivery rates and line formats in them were
+observed.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

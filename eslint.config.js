@@ -112,6 +112,37 @@ export default tseslint.config(
               message: 'packages/world-model may not import packages/realtime.',
             },
             {
+              // ADR-0014's seam, in both directions. The model may not import a source, because
+              // a model that knows how Valve spells `respawn_seconds` has taken on a job that
+              // belongs to fusion; and it may not import a reader, because a model that knows it
+              // is feeding an LLM couples state's 8 Hz to the agent's once a minute.
+              //
+              // state-capture-architecture.md §2.3 asks for these in `boundaries/external`. They
+              // are here instead: a workspace import written by name resolves once the dependency
+              // is declared, which is the only case that matters, and boundaries then matches it
+              // as a `package` element that `external` never sees. Verified by adding each
+              // dependency, linting, and removing it again — the `workspace` skill records why
+              // that is the only verification that means anything here.
+              from: [['package', { name: 'world-model' }]],
+              disallow: [
+                ['package', { name: 'gsi' }],
+                ['package', { name: 'log-tail' }],
+                ['package', { name: 'context' }],
+                ['package', { name: 'events' }],
+              ],
+              message:
+                'packages/world-model may not import a source or a reader — sources and the ' +
+                'model meet at a protocol type, never at each other (ADR-0014).',
+            },
+            {
+              from: [
+                ['package', { name: 'gsi' }],
+                ['package', { name: 'log-tail' }],
+              ],
+              disallow: [['package', { name: 'world-model' }]],
+              message: 'A source emits Observations; it does not know what consumes them.',
+            },
+            {
               // The preload bridge is the only path from renderer to main. `preload` is on this
               // list too: its implementation imports `electron`, so a renderer that could reach
               // it would have Electron in it. The bridge's *type* lives in shared/ for exactly
