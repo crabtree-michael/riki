@@ -132,6 +132,10 @@ impl<W: Write, B: CaptureBackend> Session<W, B> {
         };
 
         if !self.acquired {
+            // Before `acquire`, not after: a pushing backend fixes its frame interval when it
+            // builds its stream, and this is the first moment the configured rate is known.
+            self.pipeline
+                .set_frame_interval(Duration::from_millis(config.interval_ms));
             let acquisition = self.pipeline.acquire(&config.target);
             if let Some(diagnosis) = acquisition.diagnosis {
                 self.report(&diagnosis);

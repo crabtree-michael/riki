@@ -15,3 +15,56 @@ workspace = true
 # app, and restating it here is the drift `packages/protocol` exists to prevent. Nothing in this
 # crate constructs a protocol *message* — that happens one layer up, in riki-vision.
 riki-ipc = { workspace = true }
+
+# ScreenCaptureKit, the shipping backend (ADR-0032). These are Apple's own frameworks behind
+# generated bindings — no third-party capture crate — and they are `target`-scoped so that a Linux
+# or Windows build never resolves, downloads or audits them. `default-features = false` throughout:
+# the defaults pull SCRecordingOutput and the content-sharing picker, which drag in AVFoundation
+# for features a read-only observer must never have (ADR-0003).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+block2 = "0.6.1"
+dispatch2 = { version = "0.3.1", default-features = false, features = ["std", "objc2"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSEnumerator",
+    "NSError",
+    "NSString",
+] }
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "SCStream",
+    "SCShareableContent",
+    "block2",
+    "dispatch2",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-core-media",
+] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CMBase",
+    "CMSampleBuffer",
+    "CMTime",
+    # For `CMSampleBuffer::image_buffer`, which is how a delivered frame becomes a pixel buffer.
+    "objc2-core-video",
+] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CVBase",
+    "CVBuffer",
+    "CVImageBuffer",
+    "CVPixelBuffer",
+    "CVReturn",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFCGTypes",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGDirectDisplay",
+    "CGError",
+    "CGWindow",
+] }

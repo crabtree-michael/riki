@@ -119,6 +119,21 @@ pub trait CaptureBackend {
 
     /// Tear the session down. Called on `capture.stop` and before exit.
     fn release(&mut self);
+
+    /// Tell the backend how often the caller intends to call [`Self::capture`].
+    ///
+    /// Defaulted to nothing, because for a backend that produces a frame only when asked — replay,
+    /// and any CPU backend — the caller's rate *is* the capture rate and there is nothing to say.
+    /// It matters for a backend that pushes: `ScreenCaptureKit` runs its stream at the display's
+    /// refresh rate unless given `minimumFrameInterval`, which would mean cropping sixty times a
+    /// second for a consumer that reads five. That is most of the ≤3% budget spent on frames
+    /// nobody looks at.
+    ///
+    /// Called before [`Self::acquire`], because the interval arrives with `capture.configure` and
+    /// a stream's frame interval is fixed when it is built.
+    fn set_frame_interval(&mut self, interval: std::time::Duration) {
+        let _ = interval;
+    }
 }
 
 /// Forwarding impl so a backend chosen at run time is still a `CaptureBackend`.
@@ -142,5 +157,9 @@ impl<T: CaptureBackend + ?Sized> CaptureBackend for Box<T> {
 
     fn release(&mut self) {
         (**self).release();
+    }
+
+    fn set_frame_interval(&mut self, interval: std::time::Duration) {
+        (**self).set_frame_interval(interval);
     }
 }

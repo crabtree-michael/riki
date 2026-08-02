@@ -19,12 +19,18 @@ rule as much as a technical one — the player's other windows are not ours to s
 windowed mode is required; exclusive fullscreen degrades or breaks window capture
 everywhere, so detect it and prompt once.
 
-**The primary backend is ScreenCaptureKit, and you probably cannot run it.** macOS is the
-shipping target (`ui-design.md` A3) but the dev box is Linux, so PipeWire is what keeps the
-pipeline developable and ScreenCaptureKit is what has to be correct. Two working rules
-follow: keep the `CaptureBackend` seam narrow — frames in, cropped regions out — so nothing
-platform-specific leaks up into `riki-cv`, and make every layer above it exercisable against
-recorded frames with no backend at all. macOS also gates capture behind the **Screen
+**The primary backend is ScreenCaptureKit, it exists, and you probably cannot run it.** macOS is
+the shipping target (`ui-design.md` A3) but the dev box is Linux, so PipeWire is what keeps the
+pipeline developable and ScreenCaptureKit is what has to be correct. It is now implemented
+(`crates/riki-capture/src/macos.rs`, [ADR-0033](../../../docs/adr/0033-screencapturekit-is-the-shipping-backend.md))
+and **compile-verified for `aarch64-apple-darwin` but never executed** — see the first Learning
+below for how to check it from Linux, and that ADR's Consequences for the six things that still
+need a Mac. Treat those six as unproven until someone records otherwise; "it compiles" is not
+"it captures".
+
+Two working rules follow: keep the `CaptureBackend` seam narrow — frames in, cropped regions out —
+so nothing platform-specific leaks up into `riki-cv`, and make every layer above it exercisable
+against recorded frames with no backend at all. macOS also gates capture behind the **Screen
 Recording** permission, which returns black frames rather than an error when denied; detect
 that and report it as a permission problem, not a CV failure.
 
@@ -67,6 +73,56 @@ The frame-time harness (Dota's 1% low, with and without Riki, on real hardware) 
 CI. It is a release gate, and its numbers get committed.
 
 ## Learnings
+
+**2026-08-02 — you can compile and lint the macOS backend on Linux, and you should.** The skill
+above says "the primary backend is `ScreenCaptureKit`, and you probably cannot run it". True — but
+*running* it and *checking* it are different, and the second one works here:
+
+```sh
+rustup target add aarch64-apple-darwin        # ~30 s, downloads a Darwin std
+cargo check   -p riki-capture --target aarch64-apple-darwin
+cargo clippy  -p riki-capture --target aarch64-apple-darwin --all-targets -- -D warnings
+cargo build   -p riki-capture --target aarch64-apple-darwin   # rlib only; never links
+```
+
+This type-checks the `#[cfg(target_os = "macos")]` module against Apple's real signatures. No macOS
+SDK is needed because the objc2 binding crates are pure Rust — the frameworks are only wanted at
+*link* time, which building an rlib never reaches. Linking a **binary** for Darwin still fails, so
+`cargo build -p riki-vision --target aarch64-apple-darwin` is not a thing you can do.
+
+*Why this matters more than it sounds:* code behind a `cfg` for another platform is **not**
+type-checked by an ordinary `cargo check`. Only syntax errors surface. Everything else — wrong
+types, missing features, renamed APIs — compiles silently on Linux and explodes on the target. The
+first cross-check of `macos.rs` found three real errors (block arguments needed
+`Some(&handler)`, `CMSampleBuffer::image_buffer` needed the `objc2-core-video` feature on
+`objc2-core-media`) and clippy then found seventeen more, including a deprecated CoreGraphics pair
+and every numeric cast. All of that would otherwise have been discovered by a user.
+
+**Do this for any `cfg`-gated platform code before you claim it is done.** It is the difference
+between "unverified" and "compile-verified", and only one of those is worth committing.
+
+**2026-08-02 — objc2 feature flags are per-class, and `default` pulls things a read-only observer
+must not link.** `objc2-screen-capture-kit`'s defaults include `SCRecordingOutput` and
+`SCContentSharingPicker`, which drag in AVFoundation — a recording API, in a process whose whole
+premise is ADR-0003. Use `default-features = false` and name the classes you need (`SCStream`,
+`SCShareableContent`), plus the *dependency* features that carry the types across crates
+(`objc2-core-media`, `dispatch2`, `block2`). Declare all of it under
+`[target.'cfg(target_os = "macos")'.dependencies]` so no other platform resolves it. Symptom of
+getting a feature wrong: a method simply does not exist, with no hint that a flag is why.
+
+**2026-08-02 — `cargo deny` does see target-scoped dependencies, so the audit is real.** With no
+`[graph] targets` in `deny.toml` cargo-deny walks *all* targets, so the fourteen macOS-only crates
+were licence-checked from Linux (`cargo deny list | grep objc2` to confirm they are in the graph).
+Do not add a `targets` key to narrow it — that would silently stop auditing the crates that ship on
+the platform users actually run.
+
+**2026-08-02 — put the decidable half of a platform backend above the `cfg`.** `window_match.rs`
+(which window is Dota's) and `pixels.rs` (BGRA→RGBA at a padded stride) are compiled on every
+platform and carry 23 tests that run on Linux. They are where the bugs actually live — selecting a
+browser tab titled "Dota 2", or assuming `bytesPerRow == width * 4`, which shears the image
+progressively down the frame — and inside a `cfg` block none of it would be executed by anything.
+This is the same move `health` already made for the black-frame policy, applied one layer down. The
+Windows backend should fill the same structures rather than write its own.
 
 **2026-08-02 — the dev box cannot build the `PipeWire` backend, let alone run it.** The skill above
 says `PipeWire` "keeps the pipeline developable day to day". On the machine this was written on it
