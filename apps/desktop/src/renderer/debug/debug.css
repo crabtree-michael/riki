@@ -156,6 +156,16 @@ body {
   background: var(--ins-bg);
   min-height: 0;
   overflow-y: auto;
+
+  /*
+    The three scroll containers, and the reason `app.ts` never rebuilds them.
+
+    `overflow-anchor: none` because we do our own anchoring in `scroll.ts` and Chromium's is a
+    second opinion arrived at during a later layout — with the whole subtree replaced every frame
+    the two have nothing to agree on, and a reader watching a row drift cannot tell which one moved
+    it.
+  */
+  overflow-anchor: none;
 }
 
 .ins-panel {

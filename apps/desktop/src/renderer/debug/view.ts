@@ -6,7 +6,7 @@
  * one the overlay's `view/` uses and it buys the same thing: every panel here is a Tier 1 test
  * against `happy-dom`, with no game, no window and no IPC (the `testing` skill's fifth project).
  *
- * ## Two rules the whole file follows
+ * ## Three rules the whole file follows
  *
  * **`textContent`, never `innerHTML`.** Everything on this screen came from a Dota client, a
  * detector's phrasing, or a rendered brief — none of it is ours, and the document's CSP would stop
@@ -16,6 +16,12 @@
  * showing a plausible zero: "never observed" and "observed to be zero" are different claims, and
  * `packages/world-model` goes to some trouble to keep them apart. Undoing that in the one view
  * built to inspect it would be the worst place to undo it.
+ *
+ * **Anything repeated carries a `data-ins-key`.** A tick, a turn, a fact, a row — each is stamped
+ * with an identity that survives the next frame, which is the whole of what `scroll.ts` needs to
+ * put the reader back where they were after the document is rebuilt underneath them. The key is
+ * derived from the frame (a `seq`, a `turnId`, a fact path), never from render order, because
+ * render order is exactly what a new tick changes.
  */
 
 import type {
@@ -54,6 +60,17 @@ export function el(tag: string, className?: string, text?: string): HTMLElement 
   return node;
 }
 
+/**
+ * Stamps the identity `scroll.ts` finds this node by after the next redraw.
+ *
+ * Locally unique is enough — `panel()` namespaces every key beneath it by the panel's title, so
+ * `row:spoken` in Counters cannot be confused with a `row:spoken` somewhere else in the column.
+ */
+function keyed(node: HTMLElement, key: string): HTMLElement {
+  node.dataset.insKey = key;
+  return node;
+}
+
 function stat(label: string, value: string): HTMLElement {
   const wrap = el('div', 'ins-stat');
   wrap.append(el('span', 'ins-stat-label', label), el('span', 'ins-stat-value', value));
@@ -72,7 +89,15 @@ function panel(title: string, note: string | null, body: HTMLElement): HTMLEleme
     head.append(document.createTextNode(' '), el('span', 'ins-panel-note', note));
   }
   wrap.append(head, body);
-  return wrap;
+
+  // Namespacing, in one pass rather than at every call site: the keys below are written to be
+  // unique within their own panel, and this is what makes them unique within the scrolling column.
+  // `Array.from` rather than iterating the NodeList: the renderer's `lib` is `DOM` without
+  // `DOM.Iterable`, under which a `for…of` over one is silently `any`.
+  for (const node of Array.from(wrap.querySelectorAll<HTMLElement>('[data-ins-key]'))) {
+    node.dataset.insKey = `${title}/${node.dataset.insKey ?? ''}`;
+  }
+  return keyed(wrap, title);
 }
 
 function empty(message: string): HTMLElement {
@@ -169,7 +194,7 @@ export function renderGates(gates: DebugGateState, now: number): HTMLElement {
     pill(gates.unprompted ? 'unprompted on' : 'unprompted off', gates.unprompted ? 'good' : 'on'),
   );
   row.append(el('span', 'ins-key', 'switches'), flags, el('span', 'ins-meta', ''));
-  body.append(row);
+  body.append(keyed(row, 'row:switches'));
 
   body.append(
     plainRow(
@@ -215,7 +240,10 @@ function plainRow(key: string, value: string, meta: string): HTMLElement {
     el('span', 'ins-value', value),
     el('span', 'ins-meta', meta),
   );
-  return row;
+  // The label is the identity: these rows are a fixed set per panel whose values change, so `key`
+  // is stable across frames in a way an index would not be. The unlabelled ones — an enemy's item
+  // line — are continuations of the row above and are anchored by it.
+  return key === '' ? row : keyed(row, `row:${key}`);
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -235,7 +263,7 @@ export function renderWorld(world: DebugWorld): HTMLElement {
       // on. The basis is the one that explains an age that looks wrong during a pause.
       meta.textContent = `${fact.source} ${fact.confidence.toFixed(2)} · ${formatAge(fact.ageMs)} ${fact.ageBasis} · ${fact.staleness}`;
       row.append(el('span', 'ins-key', fact.path), el('span', 'ins-value', fact.value), meta);
-      body.append(row);
+      body.append(keyed(row, `fact:${fact.path}`));
     }
   }
 
@@ -262,7 +290,7 @@ export function renderEnemies(world: DebugWorld): HTMLElement {
         enemy.staleness,
       ].join(' · ');
       row.append(el('span', 'ins-key', enemy.hero), el('span', 'ins-value', value), meta);
-      body.append(row);
+      body.append(keyed(row, `enemy:${enemy.hero}`));
       if (enemy.itemsSeen.length > 0) {
         body.append(plainRow('', `items: ${enemy.itemsSeen.join(', ')}`, ''));
       }
@@ -358,7 +386,9 @@ function renderTick(tick: DebugTick): HTMLElement {
   // Empty under the LLM coach, where the decision in the head above is the whole of what that coach
   // has to say about a moment — no detectors, no salience, no ladder to grid.
   for (const candidate of tick.candidates) wrap.append(renderCandidate(candidate));
-  return wrap;
+  // `seq` is the hub's own counter and never repeats within a session, which is what lets a reader
+  // stay on one tick while several more are prepended above it.
+  return keyed(wrap, `tick:${String(tick.seq)}`);
 }
 
 function renderCandidate(candidate: DebugCandidate): HTMLElement {
@@ -484,7 +514,7 @@ function renderTurn(turn: DebugTurn): HTMLElement {
     );
   }
 
-  return wrap;
+  return keyed(wrap, `turn:${turn.turnId}`);
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -541,7 +571,10 @@ export function renderProblems(problems: readonly DebugProblem[], now: number): 
         el('span', 'ins-problem-origin', problem.origin),
         el('span', 'ins-problem-message', problem.message),
       );
-      body.append(row);
+      // `at` is main's monotonic clock, so two problems from one origin in the same millisecond
+      // would collide. They would also be indistinguishable on screen, which is the only thing the
+      // key has to survive.
+      body.append(keyed(row, `problem:${String(problem.at)}:${problem.origin}`));
     }
   }
   return panel('Problems', null, body);

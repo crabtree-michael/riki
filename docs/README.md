@@ -122,6 +122,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0033](adr/0033-screencapturekit-is-the-shipping-backend.md) | `ScreenCaptureKit` is the shipping backend, and it is cross-compiled rather than run | Accepted — macOS captures; six things still need a Mac |
 | [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 | [0035](adr/0035-the-vision-leg-is-testable-because-a-fake-speaks-the-protocol.md) | The vision leg is testable because a fake speaks the protocol, not because the app has a second wiring | Accepted — `FakeVisionSidecar` at the `ChildProcessPort` seam; the codec's wire→world-model translation was missing entirely |
+| [0036](adr/0036-the-inspector-anchors-on-content-not-on-offset.md) | The inspector anchors on content, not on an offset | Accepted — the three columns survive the redraw; a prepending list makes a saved `scrollTop` wrong |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

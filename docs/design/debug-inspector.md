@@ -35,7 +35,7 @@ reported, and all of them reach `nullTelemetry()`.
 
 ## 2. What it shows
 
-Three columns, one document, redrawn whole at 4 Hz.
+Three columns, one document, redrawn whole at 4 Hz — without moving the reader (§2.3).
 
 | Panel | Answers |
 |---|---|
@@ -87,6 +87,29 @@ telemetry decorator was already in the right place.
 
 `DebugSession.coachMode` is in the header for a reason: under `llm` an empty Gate state panel and an
 empty Counters panel are *correct*, and without the label they read as a broken inspector.
+
+### 2.3 Reading it while it updates
+
+Redrawn whole means the document is thrown away four times a second, and the first version of this
+threw the reader's position away with it: scrolling up to study a gate ladder lasted 250 ms before
+the next frame returned you to the top. That made the window unreadable during the only time it is
+worth reading — while a match is running. ADR-0036 is the fix and it is two rules.
+
+**The three scrolling columns and the two header buttons are never rebuilt**, only refilled.
+`scrollTop` belongs to the element, so a column recreated each frame has no position to preserve;
+and a `<button>` recreated each frame takes keyboard focus to `<body>` with it. Everything inside a
+column is still rebuilt whole — the property that keeps a stale node from surviving a redraw is
+untouched.
+
+**Position is content, not a number.** The panels that grow render newest-first, so a new tick is
+prepended and every pixel offset below it is wrong the moment it lands. `renderer/debug/scroll.ts`
+notes the topmost row on screen by the `data-ins-key` `view.ts` stamps on it — a `seq`, a `turnId`,
+a fact path, never a render index — and puts that row back at the same height afterwards. The two
+edges are pinned instead: at the top means *follow the newest*, which newest-first is where new rows
+appear, and at the bottom means *keep the oldest row still* as the buffer grows above it.
+
+Freeze is still worth having and is now about the values rather than the scrollbar: text selection
+does not survive a redraw, and a gate ladder read live is read while it is replaced.
 
 ## 3. Shape
 
@@ -251,9 +274,9 @@ Then **Riki ▸ Open Inspector…** in the tray. `docs/runbooks/dev-setup.md` ha
    replay harness that dumped frames to disk would be the natural next thing, and the hub is already
    the right shape for it — `DebugSurfaceDeps.windows` being optional means a headless
    `pnpm dev:replay` can read frames straight off `hub.frame(now)`.
-5. **Frames are whole, not diffed.** Fine at 4 Hz for a few kilobytes; the cost is that text
-   selection and scroll position inside a panel are lost on every redraw, which is what the freeze
-   button is for.
+5. **Frames are whole, not diffed.** Fine at 4 Hz for a few kilobytes. Scroll position survives it
+   (§2.3, ADR-0036); text selection inside a panel does not, and that is what the freeze button is
+   for.
 6. **This is a tool, not a measurement.** It makes the thresholds in `packages/events/src/config.ts`
    *inspectable*; it does not tune them. That is still
    coaching-trigger-architecture.md §16 step 3, and it now has something to look at while it happens.

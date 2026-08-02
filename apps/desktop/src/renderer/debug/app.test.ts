@@ -324,6 +324,90 @@ describe('freeze', () => {
   });
 });
 
+describe('live updates and the reader', () => {
+  const columns = (): HTMLElement[] =>
+    Array.from(root.querySelectorAll<HTMLElement>('.ins-column'));
+
+  it('keeps the same three scroll containers across a redraw', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ ticks: [tickWith(['latched'])] }));
+    const before = columns();
+
+    view.apply(frame({ revision: 2, ticks: [tickWith(['muted'], 'rune_soon:bounty')] }));
+
+    // `scrollTop` belongs to the element. A column rebuilt from scratch arrives at the top with no
+    // position to restore, and no amount of restoring afterwards can invent one.
+    expect(columns()).toHaveLength(3);
+    expect(columns()[0]).toBe(before[0]);
+    expect(columns()[1]).toBe(before[1]);
+    expect(columns()[2]).toBe(before[2]);
+    // The contents are still redrawn whole, which is the part worth keeping.
+    expect(root.textContent).toContain('rune_soon:bounty');
+    expect(root.textContent).not.toContain('ult_ready:self');
+  });
+
+  it('does not send the reader back to the top when a frame arrives', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ ticks: [tickWith(['latched'])] }));
+
+    const triggers = columns()[1];
+    expect(triggers).toBeDefined();
+    if (triggers === undefined) return;
+    triggers.scrollTop = 240;
+
+    view.apply(frame({ revision: 2, ticks: [tickWith(['muted'])] }));
+
+    // The whole complaint, in one assertion: reading anything older than the newest tick was
+    // impossible while the match was running, because 4 Hz of frames each rebuilt the column.
+    expect(triggers.scrollTop).toBe(240);
+  });
+
+  it('does not take keyboard focus off a control mid-frame', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame());
+
+    const freeze = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((each) =>
+      each.textContent.includes('Freeze'),
+    );
+    expect(freeze).toBeDefined();
+    freeze?.focus();
+
+    view.apply(frame({ revision: 2 }));
+
+    // The two buttons are the only focusable things on the screen, so a redraw that replaced them
+    // would drop focus to `<body>` four times a second.
+    expect(document.activeElement).toBe(freeze);
+    expect(freeze?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('still redraws the header from the frame', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame());
+    expect(root.textContent).toContain('789');
+
+    view.apply(frame({ revision: 2, session: { ...frame().session, matchId: '790' } }));
+    expect(root.textContent).toContain('790');
+    expect(root.textContent).not.toContain('789');
+  });
+
+  it('gives every repeated row an identity that outlives the redraw', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ ticks: [tickWith(['latched'])] }));
+
+    // Namespaced by panel, so `row:spoken` in Counters cannot be mistaken for a same-named row
+    // elsewhere in the column when `scroll.ts` goes looking for it.
+    expect(root.querySelector('.ins-tick')?.getAttribute('data-ins-key')).toBe('Triggers/tick:1');
+    expect(root.querySelector('.ins-row')?.getAttribute('data-ins-key')).toBe(
+      'Gate state/row:switches',
+    );
+
+    const keys = Array.from(root.querySelectorAll('[data-ins-key]'), (node) =>
+      node.getAttribute('data-ins-key'),
+    );
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
 describe('turns', () => {
   it('shows the snapshot and brief as rendered, and what Riki said', () => {
     const view = mountInspector(root, fakeBridge());

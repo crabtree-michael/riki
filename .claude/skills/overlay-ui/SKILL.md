@@ -288,6 +288,35 @@ as "the coaching path did not fire" rather than "the renderer has no bridge". Do
 twice: reproduce it in ten seconds with a `preload-error` listener before assuming your feature is
 what broke.
 
+**2026-08-02 — a renderer whose behaviour *is* layout cannot be finished in `happy-dom`, and the
+window that finishes it costs ten minutes.** The inspector's scroll fix (ADR-0036) passed 38 Tier 1
+tests and was still wrong: rows are 165.5 px tall, Chromium snaps a scroll offset to a whole pixel,
+and restoring the anchor against wherever the last frame landed silently lost half a pixel per
+frame — 120 px down the screen over a minute at 4 Hz. `happy-dom` cannot show you this, because it
+reports every rect as zero and stores a fractional `scrollTop` quite happily; the stubs a Tier 1
+test writes agree with whatever the code believes.
+
+The check that found it, and it is reusable for any renderer question that is really a layout
+question — no Playwright, no harness, about fifteen lines:
+
+```sh
+pnpm typecheck && node scripts/copy-renderer-assets.mjs   # dist/renderer/<name>/ is now loadable
+# a throwaway page beside it that `import`s the compiled module, drives it, and sets window.__result
+xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+  node_modules/.pnpm/electron@*/node_modules/electron/dist/electron /tmp/harness
+# main.cjs: BrowserWindow → did-finish-load → executeJavaScript('window.__result') → writeFileSync
+```
+
+Three things that save a cycle each. Put the throwaway page **in `dist/renderer/<name>/`** so its
+relative `import './app.js'` and stylesheet resolve exactly as the real document's do — and skip the
+CSP meta, or the module will not load. Use `.cjs` under a `/tmp` directory with its own
+`package.json` for the Electron main, which sidesteps the top-level-`await` deadlock the `workspace`
+skill warns about. And **measure across hundreds of frames, not two**: the two-frame result looked
+perfect, and the drift only named itself at 240.
+
+*Why:* the renderer tests here are worth having and they are not sufficient for anything geometric.
+Budget the ten minutes; the alternative is shipping a fix for a jump that turns it into a crawl.
+
 ## See also
 
 `docs/design/overlay-architecture.md` (module structure, class signatures, the seams);
