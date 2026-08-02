@@ -71,6 +71,22 @@ pub enum DetectionPayload {
         /// False when the hash matched the previous pass and no CV work was done.
         changed: bool,
     },
+    #[serde(rename = "minimap.hero")]
+    MinimapHero {
+        /// Hero id in the app’s vocabulary, e.g. "npc_dota_hero_nevermore".
+        hero: String,
+        /// Which team the icon belongs to, from its colour key.
+        side: String,
+        at: NormalizedPoint,
+    },
+}
+
+/// A point in 0..1 crop coordinates, origin top-left, y downward.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedPoint {
+    pub x: f64,
+    pub y: f64,
 }
 
 /// Crop rectangle in 0..1 coordinates relative to the captured window.

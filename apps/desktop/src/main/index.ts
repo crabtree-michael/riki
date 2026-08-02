@@ -40,6 +40,7 @@ import type { Millis } from '../shared/overlay.js';
 import type { CoachModel, LlmCoachConfig } from '@riki/coach';
 import { createOpenAiCoachModel } from '@riki/coach';
 import { loadConfig, voiceEnabled } from '@riki/config';
+import { createFakeVisionSidecar, defaultVisionScript } from '@riki/protocol/testing';
 
 import {
   loadOrCreateGsiToken,
@@ -170,7 +171,25 @@ function buildShell(): RikiShell {
     clock,
     timers: systemTimers,
     platform: process.platform,
-    processes: createNodeChildProcessPort(),
+
+    /**
+     * The sidecar, or a fake standing where it would be.
+     *
+     * `RIKI_FAKE_VISION=1` is the only configuration in which the vision leg of the loop runs
+     * anywhere today: `crates/riki-vision` can capture on macOS alone and that backend has never
+     * been executed (ADR-0033), while its portable `--backend replay` has no atlas and so reports
+     * region digests and no facts. The fake speaks the same protocol over the same
+     * `ChildProcessPort`, so everything above this line — the handshake, the codec, supervision and
+     * restart, fusion, the trigger ladder — is the production path either way (ADR-0035).
+     *
+     * `loop` because a sidecar that goes permanently silent after a minute is one the health poll
+     * reports as `degraded` for the rest of the session, and `speed: 1` because a dev run wants the
+     * recorded 5 Hz rather than everything at once. A test builds its own with `speed: 0` and turns
+     * the crank itself.
+     */
+    processes: config.vision.fake
+      ? createFakeVisionSidecar({ script: defaultVisionScript(), speed: 1, loop: true })
+      : createNodeChildProcessPort(),
 
     // Supplied only when there is a key to build it with. `undefined` is what makes the tray's
     // Coach row report the LLM coach as unavailable rather than offering a mode that would start a

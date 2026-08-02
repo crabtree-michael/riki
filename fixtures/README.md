@@ -28,6 +28,12 @@ Hand-labelled screenshots plus label JSON, stored in git-lfs (see .gitattributes
 
 `synthetic/` is the exception: small hand-generated `.ppm` frames, committed plainly because .gitattributes puts only `*.png`/`*.jpg`/`*.jpeg`/`*.webp` in LFS. They are not screenshots and prove nothing about recognition accuracy — they exist so `riki-vision --backend replay --frames fixtures/frames/synthetic` can drive the real capture pipeline on a machine with no display. PPM because it needs no decoder in the shipped binary.
 
+## `vision/`
+
+Scripted sidecar sessions, JSONL, one `VisionStep` per line, replayed by `FakeVisionSidecar`. Each line's `event` is a literal `SidecarEvent` — the same bytes `crates/riki-vision` writes — rather than a compressed notation a builder expands, so the fixture keeps agreeing with the protocol only while it really does.
+
+Distinct from `frames/`, and the difference is the point: a frame exercises the *capture* pipeline in Rust, and a vision script exercises everything *after* it in TypeScript. Nothing here is captured — no machine in this project can capture a Dota window (ADR-0033, ADR-0035) — so the hero sightings are the shape a detector is specified to produce. Each file's header says what a real recording would settle.
+
 ## `realtime/`
 
 Recorded Realtime event transcripts, replayed by FakeRealtimeTransport. No live session is ever required by a test.

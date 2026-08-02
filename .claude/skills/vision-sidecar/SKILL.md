@@ -74,6 +74,39 @@ CI. It is a release gate, and its numbers get committed.
 
 ## Learnings
 
+**2026-08-02 — everything above the seam was developable against `ReplayBackend`, and none of it had
+ever produced a fact.** The entry below says "what is developable here is everything *above* the
+seam, against `ReplayBackend` — and that is now real, so use it." True for the *capture* pipeline
+and false for everything past it, in a way worth being precise about: `--backend replay` has no
+atlas, so every `CvFact` it emits is a `region.digest`, and a region hash is a fact about the
+capture pipeline rather than about the match. Applied to a real `WorldModelStore` it produced
+`{ accepted: 0, rejected: [{ why: 'unparsed' }] }` — because `apps/desktop`'s codec was emitting the
+wire shape verbatim and `readCvDetections` reads a flat record with a top-level `kind`. Nobody
+noticed for the life of the crate, because nothing had ever applied a sidecar message to a store.
+
+Three rules follow, and they apply to the next detector as much as to this one:
+
+- **A new detector is not done when the sidecar emits it.** It is done when a decoded message,
+  applied to a `createWorldModelStore()`, comes back with `rejected` empty. That is one line in a
+  Tier 1 test and it is the only assertion that spans both vocabularies.
+- **The sidecar reports pixels; it does not know where the map's origin is.** `minimap.hero` carries
+  a `NormalizedPoint` in the crop's own 0..1 coordinates, origin top-left, `y` downward.
+  `apps/desktop/src/main/sidecar/protocol-codec.ts` converts to Dota world units, once — including
+  the `y` flip, which mirrors the map north-to-south if you forget it. Keep it that way: the crate
+  cannot know the crop rectangle it was handed maps onto −8288…8288.
+- **One sighting per `CvFact`.** Confidence lives on the envelope, so a `heroes: [...]` payload gives
+  a whole pass one score and the weakest blob inherits the strongest one's. ADR-0035.
+
+**2026-08-02 — `FakeVisionSidecar` is how the layers above this crate get exercised now.**
+`@riki/protocol/testing` ships a `ChildProcessPort` that speaks the real protocol — handshake gate
+included, mirroring `handshake.rs` — with a scripted `VisionScript`, a hand-crank (`step()`/
+`drain()`, `speed: 0` by default) and a timed mode for `pnpm dev`. `RIKI_FAKE_VISION=1` plus
+`RIKI_VISION=on` runs the whole app on it. *Why:* when you implement a real minimap detector, the
+fake is where you write what it is *supposed* to emit before the atlas exists, and
+`apps/desktop/test/vision-coaching.test.ts` is the test that tells you the answer reaches a coaching
+turn. `fixtures/vision/enemy-rotation.jsonl` is the worked example, and its header lists what a real
+recording would settle.
+
 **2026-08-02 — you can compile and lint the macOS backend on Linux, and you should.** The skill
 above says "the primary backend is `ScreenCaptureKit`, and you probably cannot run it". True — but
 *running* it and *checking* it are different, and the second one works here:

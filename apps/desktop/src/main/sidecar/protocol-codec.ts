@@ -20,6 +20,16 @@
  * once, is what stops every consumer downstream from having to know that the number on the wire
  * belongs to somebody else's clock.
  *
+ * ## The two vocabularies
+ *
+ * The wire says `{ payload: { kind: 'minimap.hero', at: { x, y } } }` in the crop's own 0..1
+ * coordinates. `packages/world-model`'s `readCvDetections` reads a *flat* record with `kind` at the
+ * top level and positions in Dota world units. Those are different shapes on purpose — §4.3 wants
+ * the wire format and the in-process vocabulary free to diverge — and translating between them is
+ * the whole job of this file. ADR-0035 records what went wrong when nobody did: the codec emitted
+ * the wire shape verbatim, fusion could not read a single field of it, and every CV observation
+ * ever produced was counted as `unparsed`.
+ *
  * ## Nothing here throws
  *
  * A line that cannot be read is a counted `undecodable`, never an exception. Electron main holds
@@ -31,34 +41,93 @@ import {
   type AppIdentity,
   type CaptureConfig,
   type CvFact,
+  type NormalizedPoint,
   type Problem,
+  type RegionId,
   type SidecarIdentity,
   commands,
   decodeSidecarEvent,
   encodeMessage,
 } from '@riki/protocol';
-import type { MonoMs, Observation, SourceId } from '@riki/world-model';
+import type {
+  CvDetection as WorldCvDetection,
+  MonoMs,
+  Observation,
+  SourceId,
+} from '@riki/world-model';
 import type { DecodedLine, SidecarCodec } from './contracts.js';
 
 /**
- * A CV fact with its timestamp translated into our clock.
+ * A CV fact in the world model's own vocabulary, with the envelope the protocol makes mandatory.
  *
  * Confidence, provenance and a timestamp are all still non-optional — the protocol makes them so,
- * and nothing here is allowed to widen that.
+ * and nothing here is allowed to widen that. `readCvDetections` reads all three off the same flat
+ * record it reads `kind` from, which is why they are spread here rather than nested.
  */
-export interface CvDetection {
-  readonly regionId: CvFact['regionId'];
+export type CvDetection = WorldCvDetection & {
   readonly detector: string;
   readonly confidence: number;
   /** Local monotonic, derived from the sidecar's two timestamps. See the header. */
   readonly observedAt: MonoMs;
-  readonly payload: CvFact['payload'];
+};
+
+/**
+ * The crop-first pipeline reporting on itself: a region hash, its size, and whether it changed.
+ *
+ * Carried beside the detections rather than among them because it is **not a fact about the
+ * match** — there is no field in the world model a region hash could write, and putting it in
+ * `detections` is what made fusion reject every batch the sidecar has ever sent. It stays on the
+ * observation because it is the only evidence that capture is running at all when nothing on screen
+ * has moved (the vision-sidecar skill's "an unchanged region is still reported").
+ */
+export interface RegionDigest {
+  readonly regionId: RegionId;
+  readonly detector: string;
+  readonly confidence: number;
+  readonly observedAt: MonoMs;
+  readonly hash: string;
+  readonly width: number;
+  readonly height: number;
+  readonly meanLuma: number;
+  readonly changed: boolean;
 }
 
-/** The payload of an `Observation<'cv.detections'>` from the sidecar. */
+/**
+ * The payload of an `Observation<'cv.detections'>` from the sidecar.
+ *
+ * `detections` is the only key `readCvDetections` looks at; `digests` is deliberately invisible to
+ * fusion and exists for health, the inspector and a human reading a log.
+ */
 export interface CvDetectionsPayload {
   readonly detections: readonly CvDetection[];
+  readonly digests: readonly RegionDigest[];
 }
+
+/**
+ * How wide Dota's map is, in world units, for turning a minimap point into a position.
+ *
+ * ⚠ **Approximate and unverified.** The playable area is documented by the community as spanning
+ * about −8288…8288 on each axis; nobody here has run the game to confirm it, and the minimap crop
+ * in `DEFAULT_CAPTURE_REGIONS` is a guessed rectangle that certainly includes some HUD border. So
+ * the number below is a scale factor with real error in it.
+ *
+ * What that error does and does not break is worth being precise about, because it decides whether
+ * this is allowed to ship ahead of calibration:
+ *
+ * - **`enemy_missing` is unaffected.** It asks whether a position exists and how old it is, never
+ *   where it is (`packages/events/src/detect/map.ts`), so the whole vision → coaching edge works at
+ *   any scale.
+ * - **`nearbyEnemies` is affected**, because it compares a CV position against `self.position` from
+ *   GSI — which is in real world units — using a 2000-unit radius. A wrong scale makes "in the same
+ *   fight" mean the wrong distance.
+ *
+ * Emitting 0..1 minimap coordinates into a field measured in world units would have been far worse
+ * than an imprecise conversion: every enemy would sit within 1 unit of the origin and therefore
+ * within any radius, so `nearbyEnemies` would return the whole enemy team forever. That is the
+ * "silently into wrongness" failure dota2 §9 forbids, and it is the reason this constant exists
+ * rather than being left for calibration to supply later.
+ */
+export const MAP_WORLD_EXTENT_UNITS = 16_576;
 
 /**
  * How this build introduces itself.
@@ -158,26 +227,87 @@ export function createProtocolCodec(deps: ProtocolCodecDeps): SidecarCodec {
           return { kind: 'handled' };
 
         case 'cv.detections': {
+          const detections: CvDetection[] = [];
+          const digests: RegionDigest[] = [];
+
+          for (const fact of event.facts) {
+            const stamp = observedAt(at, event.emittedAtMonoMs, fact.capturedAtMonoMs);
+            if (fact.payload.kind === 'region.digest') {
+              const { hash, width, height, meanLuma, changed } = fact.payload;
+              digests.push({
+                regionId: fact.regionId,
+                detector: fact.detector,
+                confidence: fact.confidence,
+                observedAt: stamp,
+                hash,
+                width,
+                height,
+                meanLuma,
+                changed,
+              });
+              continue;
+            }
+            const detection = toDetection(fact, stamp);
+            if (detection !== null) detections.push(detection);
+          }
+
           const observation: Observation<'cv.detections'> = {
             kind: 'cv.detections',
             sourceId,
             seq,
             receivedAt: at,
-            payload: {
-              detections: event.facts.map((fact) => ({
-                regionId: fact.regionId,
-                detector: fact.detector,
-                confidence: fact.confidence,
-                observedAt: observedAt(at, event.emittedAtMonoMs, fact.capturedAtMonoMs),
-                payload: fact.payload,
-              })),
-            } satisfies CvDetectionsPayload,
+            payload: { detections, digests } satisfies CvDetectionsPayload,
             v: event.v,
           };
           return { kind: 'observation', observation };
         }
       }
     },
+  };
+}
+
+/**
+ * One protocol fact → the flat record `readCvDetections` knows how to read, or null for a payload
+ * that is not a fact about the match.
+ *
+ * The switch covers **every** `DetectionPayload` variant, including the `region.digest` its caller
+ * has already dealt with, and that redundancy is the point: adding a variant is then a
+ * non-exhaustive-switch error here, rather than a detection that silently reaches fusion and is
+ * counted as `unparsed`. That is exactly the failure this file just had (ADR-0035).
+ */
+function toDetection(fact: CvFact, observedAt: MonoMs): CvDetection | null {
+  const envelope = {
+    detector: fact.detector,
+    confidence: fact.confidence,
+    observedAt,
+  } as const;
+
+  switch (fact.payload.kind) {
+    case 'region.digest':
+      return null;
+    case 'minimap.hero': {
+      const { hero, side } = fact.payload;
+      const { x, y } = toWorldUnits(fact.payload.at);
+      return { kind: 'hero_position', side, hero, x, y, ...envelope };
+    }
+  }
+}
+
+/**
+ * A point in the minimap crop → Dota world units.
+ *
+ * Two transforms, and the second one is the easy thing to forget: the crop's origin is its
+ * top-left with `y` growing *downward* (an image), and the world's origin is the centre of the map
+ * with `y` growing *upward*. Getting only the first right mirrors the whole map north-to-south,
+ * which is not a wrong number so much as advice about the wrong lane.
+ *
+ * See `MAP_WORLD_EXTENT_UNITS` for how approximate the scale is and what that does and does not
+ * affect.
+ */
+export function toWorldUnits(at: NormalizedPoint): { readonly x: number; readonly y: number } {
+  return {
+    x: (at.x - 0.5) * MAP_WORLD_EXTENT_UNITS,
+    y: (0.5 - at.y) * MAP_WORLD_EXTENT_UNITS,
   };
 }
 

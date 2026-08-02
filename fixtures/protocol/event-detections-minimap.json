@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "type": "cv.detections",
+  "emittedAtMonoMs": 30412.75,
+  "facts": [
+    {
+      "regionId": "minimap",
+      "detector": "minimap-icon/v1",
+      "confidence": 0.91,
+      "capturedAtMonoMs": 30398.5,
+      "payload": {
+        "kind": "minimap.hero",
+        "hero": "npc_dota_hero_nevermore",
+        "side": "enemies",
+        "at": { "x": 0.62, "y": 0.71 }
+      }
+    },
+    {
+      "regionId": "minimap",
+      "detector": "minimap-icon/v1",
+      "confidence": 0.44,
+      "capturedAtMonoMs": 30398.5,
+      "payload": {
+        "kind": "minimap.hero",
+        "hero": "npc_dota_hero_tidehunter",
+        "side": "enemies",
+        "at": { "x": 0.19, "y": 0.08 }
+      }
+    },
+    {
+      "regionId": "minimap",
+      "detector": "region-digest/v1",
+      "confidence": 1,
+      "capturedAtMonoMs": 30398.5,
+      "payload": {
+        "kind": "region.digest",
+        "hash": "4c1f0b7d2ae95530",
+        "width": 346,
+        "height": 270,
+        "meanLuma": 0.1341,
+        "changed": true
+      }
+    }
+  ]
+}

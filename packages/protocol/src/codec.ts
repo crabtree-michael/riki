@@ -17,6 +17,7 @@ import {
   type AppIdentity,
   type CaptureConfig,
   type SidecarCommand,
+  SidecarCommand as SidecarCommandSchema,
   type SidecarEvent,
   SidecarEvent as SidecarEventSchema,
 } from './schemas/sidecar.js';
@@ -29,11 +30,23 @@ import {
  */
 const Envelope = z.object({ v: z.number(), type: z.string() });
 
-/** What one line of the sidecar's stdout turned out to be. Total: no case throws. */
-export type DecodedEvent =
-  | { readonly ok: true; readonly event: SidecarEvent }
+/** A line that failed to become a message. Shared by both directions. */
+type Undecoded =
   | { readonly ok: false; readonly reason: 'malformed'; readonly detail: string }
   | { readonly ok: false; readonly reason: 'version'; readonly theirs: number };
+
+/** What one line of the sidecar's stdout turned out to be. Total: no case throws. */
+export type DecodedEvent = { readonly ok: true; readonly event: SidecarEvent } | Undecoded;
+
+/**
+ * What one line of the sidecar's *stdin* turned out to be.
+ *
+ * The sidecar side of the pipe, in TypeScript, which for a long time nothing needed:
+ * `crates/riki-ipc`'s `transport.rs` was the only decoder of commands anywhere. `FakeVisionSidecar`
+ * needs one, and needs it to be this one — a fake that waved commands through without the version
+ * check and the handshake gate would be a fake that agrees with itself.
+ */
+export type DecodedCommand = { readonly ok: true; readonly command: SidecarCommand } | Undecoded;
 
 /** Serialise a message as one line, without the newline. */
 export function encodeMessage(message: SidecarCommand | SidecarEvent): string {
@@ -42,6 +55,20 @@ export function encodeMessage(message: SidecarCommand | SidecarEvent): string {
 
 /** Read one line of the sidecar's stdout. */
 export function decodeSidecarEvent(line: string): DecodedEvent {
+  const decoded = decodeLine(line, SidecarEventSchema);
+  return decoded.ok ? { ok: true, event: decoded.value } : decoded;
+}
+
+/** Read one line of the sidecar's stdin. The mirror of {@link decodeSidecarEvent}. */
+export function decodeSidecarCommand(line: string): DecodedCommand {
+  const decoded = decodeLine(line, SidecarCommandSchema);
+  return decoded.ok ? { ok: true, command: decoded.value } : decoded;
+}
+
+function decodeLine<T>(
+  line: string,
+  schema: z.ZodType<T>,
+): { readonly ok: true; readonly value: T } | Undecoded {
   let json: unknown;
   try {
     json = JSON.parse(line);
@@ -57,7 +84,7 @@ export function decodeSidecarEvent(line: string): DecodedEvent {
     return { ok: false, reason: 'version', theirs: envelope.data.v };
   }
 
-  const parsed = SidecarEventSchema.safeParse(json);
+  const parsed = schema.safeParse(json);
   if (!parsed.success) {
     // Same version, unreadable content: a `type` we do not have, or a field of the wrong shape.
     // Naming the type is what makes this actionable in a log.
@@ -67,7 +94,7 @@ export function decodeSidecarEvent(line: string): DecodedEvent {
       detail: `${envelope.data.type}: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
     };
   }
-  return { ok: true, event: parsed.data };
+  return { ok: true, value: parsed.data };
 }
 
 /**

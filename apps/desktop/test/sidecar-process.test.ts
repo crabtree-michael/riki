@@ -110,16 +110,22 @@ describeIfBuilt('the app and the real sidecar binary', () => {
 
     // And a real crop of a real frame arrived, with the three fields REPO_SKELETON §4 makes
     // non-optional actually filled in.
+    //
+    // A **digest**, not a detection: `riki-vision` runs crop → hash → change-gate and has no atlas
+    // to recognise anything with, so every fact it emits today is `region.digest` and the world
+    // model is right to learn nothing from it. `detections` being empty here is the honest state of
+    // the Rust side, and the fake is what covers the other half (ADR-0035).
     expect(observation.kind).toBe('cv.detections');
-    const detection = (observation.payload as CvDetectionsPayload).detections[0];
-    expect(detection?.detector).toBe('region-digest/v1');
-    expect(detection?.confidence).toBeGreaterThan(0);
-    expect(detection?.confidence).toBeLessThanOrEqual(1);
-    // Derived from the sidecar's two timestamps into our clock, so it cannot be in the future.
-    expect(detection?.observedAt).toBeLessThanOrEqual(observation.receivedAt);
+    const payload = observation.payload as CvDetectionsPayload;
+    expect(payload.detections).toStrictEqual([]);
 
-    expect(detection?.payload.kind).toBe('region.digest');
-    expect(detection?.payload.hash).toMatch(/^[0-9a-f]{16}$/);
+    const digest = payload.digests[0];
+    expect(digest?.detector).toBe('region-digest/v1');
+    expect(digest?.confidence).toBeGreaterThan(0);
+    expect(digest?.confidence).toBeLessThanOrEqual(1);
+    // Derived from the sidecar's two timestamps into our clock, so it cannot be in the future.
+    expect(digest?.observedAt).toBeLessThanOrEqual(observation.receivedAt);
+    expect(digest?.hash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('is reported as live once it is talking, and the handshake alone does not count', async () => {

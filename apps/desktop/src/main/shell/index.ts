@@ -308,11 +308,27 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   const logTail = deps.sources.logTail?.(config, worldClock) ?? null;
   if (logTail !== null) registrations.push(logTail);
 
+  /**
+   * Is there a sidecar to supervise?
+   *
+   * Three conditions and one of them is new. `vision.fake` (`RIKI_FAKE_VISION=1`) means the port
+   * this shell was handed is `FakeVisionSidecar` rather than `node:child_process`, so there is no
+   * binary to find and requiring a path would refuse the only configuration in which the vision
+   * leg can currently run at all — macOS is the only platform with a backend and it has never been
+   * executed (ADR-0033).
+   *
+   * Nothing else in this file branches on it, deliberately. The fake is a `ChildProcessPort`, so
+   * the codec, the supervisor, the restart policy and fusion are all the production path; if the
+   * shell had a second wiring for the fake, that path is what would go untested. Which port arrived
+   * is `main/index.ts`'s decision and this file cannot tell.
+   */
   const visionSources: string[] = [];
-  if (config.vision.enabled && config.vision.binaryPath !== null && deps.processes !== undefined) {
+  const visionBinary = config.vision.fake ? 'fake-vision' : (config.vision.binaryPath ?? undefined);
+
+  if (config.vision.enabled && visionBinary !== undefined && deps.processes !== undefined) {
     const sidecar = createSidecarSource({
       processes: deps.processes,
-      request: { command: config.vision.binaryPath, args: [] },
+      request: { command: visionBinary, args: [] },
       now: () => worldClock.now(),
       // The codec is what makes the child a source rather than a process that prints things: it
       // sends the handshake, translates the sidecar's clock into ours, and routes the failures

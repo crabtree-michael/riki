@@ -424,9 +424,51 @@
           },
           "required": ["kind", "hash", "width", "height", "meanLuma", "changed"],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "minimap.hero"
+            },
+            "hero": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Hero id in the app’s vocabulary, e.g. \"npc_dota_hero_nevermore\"."
+            },
+            "side": {
+              "type": "string",
+              "enum": ["allies", "enemies"],
+              "description": "Which team the icon belongs to, from its colour key."
+            },
+            "at": {
+              "$ref": "#/$defs/NormalizedPoint"
+            }
+          },
+          "required": ["kind", "hero", "side", "at"],
+          "additionalProperties": false
         }
       ],
       "description": "What a detector produced, by detector kind."
+    },
+    "NormalizedPoint": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "description": "A point in 0..1 crop coordinates, origin top-left, y downward."
     }
   }
 }

@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SidecarCommand, SidecarEvent } from './schemas/sidecar.js';
+import { DetectionPayload, SidecarCommand, SidecarEvent } from './schemas/sidecar.js';
 import { PROTOCOL_VERSION } from './version.js';
 
 const FIXTURES = fileURLToPath(new URL('../../../fixtures/protocol', import.meta.url));
@@ -29,9 +29,47 @@ function load(name: string): unknown {
   return JSON.parse(readFileSync(join(FIXTURES, name), 'utf8')) as unknown;
 }
 
+function hasFacts(message: unknown): boolean {
+  return Array.isArray((message as { facts?: unknown }).facts);
+}
+
+/** Every `type` the two unions can carry, read from the schema rather than from a list. */
+function typesOf(union: typeof SidecarCommand | typeof SidecarEvent): readonly string[] {
+  return union.options.map((option) => option.shape.type.value);
+}
+
 describe('the protocol fixture corpus', () => {
   it('has fixtures at all — an empty corpus would pass every assertion below', () => {
     expect(files.length).toBeGreaterThanOrEqual(9);
+  });
+
+  /**
+   * A count cannot say *which* message is missing, and it goes stale the moment somebody adds a
+   * message and a fixture for a different one. `voice-contract.test.ts` derives the expected set
+   * from the schema; this is that, here.
+   */
+  it('covers every message type in both unions', () => {
+    const covered = new Set(files.map((name) => (load(name) as { type: string }).type));
+    expect(
+      [...typesOf(SidecarCommand), ...typesOf(SidecarEvent)].filter((t) => !covered.has(t)),
+    ).toStrictEqual([]);
+  });
+
+  /**
+   * And every detection *payload* variant, which is the gap that let `minimap.hero` be added.
+   *
+   * `cv.detections` is one message type with a union inside it, so a corpus keyed on message type
+   * alone reports full coverage while a whole detector's wire shape has never been parsed by Rust.
+   */
+  it('covers every DetectionPayload variant', () => {
+    const covered = new Set(
+      files
+        .map(load)
+        .filter((m): m is { facts: { payload: { kind: string } }[] } => hasFacts(m))
+        .flatMap((m) => m.facts.map((fact) => fact.payload.kind)),
+    );
+    const variants = DetectionPayload.options.map((option) => option.shape.kind.value);
+    expect(variants.filter((kind) => !covered.has(kind))).toStrictEqual([]);
   });
 
   it.each(files)('%s round-trips through the schema unchanged', (name) => {

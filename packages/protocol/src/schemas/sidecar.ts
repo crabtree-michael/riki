@@ -75,6 +75,22 @@ export const CaptureRegion = z
   .meta({ id: 'CaptureRegion', description: 'One region the sidecar should crop and report.' });
 
 /**
+ * A point inside a cropped region, in that crop's own 0..1 coordinates.
+ *
+ * Image convention: the origin is the crop's top-left and `y` grows downward, because that is what
+ * a detector holding a buffer of pixels actually measures. Turning it into anything a game
+ * understands — Dota world units, a named lane — is the app's job and happens exactly once, in
+ * `apps/desktop/src/main/sidecar/protocol-codec.ts`. The sidecar reports pixels; it does not know
+ * where the map's origin is (ADR-0035).
+ */
+export const NormalizedPoint = z
+  .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+  .meta({
+    id: 'NormalizedPoint',
+    description: 'A point in 0..1 crop coordinates, origin top-left, y downward.',
+  });
+
+/**
  * What to capture.
  *
  * A window, identified the way a screen recorder identifies one. There is deliberately no
@@ -108,9 +124,22 @@ export const CaptureConfig = z
 /**
  * What one detector saw in one region.
  *
- * `region.digest` is the whole set today: the crop-first pipeline's own output, before any
- * recognition runs. It is what the region hash gate is computed from (dota2 §2.2), so reporting it
- * makes the capture path observable end to end without the digit and icon atlases existing yet.
+ * Two variants, and they are different *kinds* of thing rather than two detectors:
+ *
+ * - **`region.digest`** is the crop-first pipeline's own output, before any recognition runs. It is
+ *   what the region hash gate is computed from (dota2 §2.2), so reporting it makes the capture path
+ *   observable end to end without the digit and icon atlases existing yet. It carries no game fact
+ *   and nothing downstream writes it into the world model — see ADR-0035.
+ * - **`minimap.hero`** is the first variant that does carry one, and it is the *only* CV fact the
+ *   world model treats as authoritative: `enemies[].position` has no other source, because GSI
+ *   cannot see it and §8.2 fairness allows only what the minimap renders
+ *   (state-capture-architecture.md §5.3).
+ *
+ * **One sighting per fact, not a list per pass.** A minimap pass finds several heroes at several
+ * match scores, and confidence lives on `CvFact` rather than in here (see its header). A
+ * `minimap.heroes: [...]` payload would therefore have had one confidence for the whole batch,
+ * which is the confident-hallucination failure REPO_SKELETON §4 exists to prevent — the weakest
+ * blob in the pass would inherit the strongest one's score.
  */
 export const DetectionPayload = z
   .discriminatedUnion('kind', [
@@ -126,6 +155,17 @@ export const DetectionPayload = z
       changed: z
         .boolean()
         .describe('False when the hash matched the previous pass and no CV work was done.'),
+    }),
+    z.object({
+      kind: z.literal('minimap.hero'),
+      hero: z
+        .string()
+        .min(1)
+        .describe('Hero id in the app’s vocabulary, e.g. "npc_dota_hero_nevermore".'),
+      side: z
+        .enum(['allies', 'enemies'])
+        .describe('Which team the icon belongs to, from its colour key.'),
+      at: NormalizedPoint,
     }),
   ])
   .meta({ id: 'DetectionPayload', description: 'What a detector produced, by detector kind.' });
@@ -255,6 +295,7 @@ export const SidecarProtocol = z.object({ command: SidecarCommand, event: Sideca
 
 export type RegionId = z.infer<typeof RegionId>;
 export type NormalizedRect = z.infer<typeof NormalizedRect>;
+export type NormalizedPoint = z.infer<typeof NormalizedPoint>;
 export type CaptureRegion = z.infer<typeof CaptureRegion>;
 export type WindowTarget = z.infer<typeof WindowTarget>;
 export type CaptureConfig = z.infer<typeof CaptureConfig>;

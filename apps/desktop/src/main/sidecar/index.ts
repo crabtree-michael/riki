@@ -20,6 +20,12 @@
  * `vision: 'off'` remains the shipping default in `ShellConfig`, for the narrower reason that a
  * sidecar which cannot capture has nothing to contribute. Turning it on is how the handshake gets
  * exercised against a real process.
+ *
+ * ✅ **`RIKI_FAKE_VISION=1` supervises a peer that can.** `@riki/protocol/testing`'s
+ * `FakeVisionSidecar` is a `ChildProcessPort` that speaks the real protocol, so everything in this
+ * file runs unchanged against a sidecar that reports hero positions, problems and panics. It is the
+ * only configuration in which the vision → coaching edge executes today (ADR-0035), and
+ * `apps/desktop/test/vision-coaching.test.ts` is where it is asserted end to end.
  */
 
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';

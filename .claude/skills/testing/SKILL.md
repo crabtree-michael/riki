@@ -19,7 +19,7 @@ They ship as `testing/` subpath exports, so any package can import them.
 | Fake | Replaces | Behaviour |
 |---|---|---|
 | `FakeGsiSource` | The Dota client's POSTs | Replays `fixtures/gsi/*.jsonl` at recorded or accelerated timing |
-| `FakeVisionSidecar` | The Rust process | Scripted protocol messages, including crashes, stalls and low-confidence output |
+| `FakeVisionSidecar` | The Rust process | Scripted protocol messages, including crashes, stalls and low-confidence output. `@riki/protocol/testing`; plugs in as a `ChildProcessPort`, so the supervisor, the codec and fusion are all real |
 | `FakeRealtimeTransport` | OpenAI | Replays `fixtures/realtime/*`, records what we sent, injects errors and mid-response disconnects |
 | `FakeAudioDevice` | Mic + speakers | Feeds known PCM, captures output |
 
@@ -64,6 +64,31 @@ Coverage is reported, not gated at a blanket number — except in `packages/worl
 player's ear.
 
 ## Learnings
+
+**2026-08-02 — a fake is not only a convenience; sometimes it is the only thing that can run a leg
+of the loop at all, and building it is how you find the leg is broken.** `FakeVisionSidecar` was the
+last of the four to be written, and the reason mattered: `crates/riki-vision` captures on macOS
+alone (never executed), and its portable `--backend replay` emits only region digests, which carry
+no game fact. So **no machine anywhere had ever run vision → world model → coaching**. The first
+thing the fake did was reveal that `protocol-codec.ts` emitted the wire shape verbatim while
+`readCvDetections` reads a flat record — one batch applied to a real store gave
+`{ accepted: 0, rejected: [{ why: 'unparsed' }] }`, silently, forever (ADR-0035).
+
+Three things worth copying:
+
+- **Fake at the narrowest port, not at the convenient one.** `ChildProcessPort` means the
+  supervisor, the codec, the restart backoff and fusion are all the real thing. A fake of
+  `SidecarSource` would have been half the code and would have tested none of them.
+- **Write the negative control in the same file.** `apps/desktop/test/vision-coaching.test.ts`
+  asserts `enemy_missing` fires *and* that it does not when the crank is never turned. Without the
+  second, the first proves only that something fired.
+- **Assert against the real consumer, not against your belief about it.** The Tier 1 test that
+  caught the shape mismatch is one line — decode a message, `createWorldModelStore().apply(it)`,
+  expect `rejected` empty. Everything else in that file agreed with the codec because it was
+  written from the same misunderstanding.
+
+*Why:* "there is a fake for it" and "the path has run" are different claims, and this repo believed
+the first for both of the fakes that had no consumer test.
 
 **2026-08-01 — Tier 5 needs a display, and `xvfb-run` is enough of one.** Playwright's
 `_electron` launches a real window, so on a headless box (no `DISPLAY`, no `WAYLAND_DISPLAY`)

@@ -34,6 +34,28 @@ parsed.
 
 ## Learnings
 
+**2026-08-02 — a corpus keyed on message *type* reports full coverage while a payload union goes
+unparsed.** The previous entry below fixed "which message is missing" by deriving the expected set
+from the schema. That was not enough: `cv.detections` is one message type with a
+`DetectionPayload` union inside it, so the corpus was green while a whole detector's wire shape had
+never crossed into Rust. `contract.test.ts` now derives **both** — message types from each union's
+options, and payload variants from `DetectionPayload.options` — and fails by name. Copy the pattern
+to any union nested inside a message.
+
+The concrete cost of getting this wrong showed up the same day, in the other direction: adding a
+second `DetectionPayload` variant turned two irrefutable `let DetectionPayload::RegionDigest { .. } =`
+bindings in `crates/riki-vision/src/session.rs` into compile errors. **`cargo build -p riki-vision`
+passed** — both were behind `#[cfg(test)]` — so only `pnpm check` caught them. If you widen a
+generated enum, run `cargo test`, not `cargo build`.
+
+**2026-08-02 — the version check only ran in one direction, and the fake needed the other.**
+`decodeSidecarEvent` existed; nothing in TypeScript could decode a *command*, because `crates/riki-ipc`
+was the only reader of that half. `decodeSidecarCommand` is now its mirror over a shared
+`decodeLine`. *Why:* if you write a fake for a protocol peer, make it decode with the real decoder.
+`FakeVisionSidecar` runs the same version gate and the same schema the Rust side does, which is the
+only reason its handshake test means anything — a fake that waved its own app's commands through
+would agree with itself and nothing else.
+
 **2026-08-02 — this package now holds two protocols, and only one of them generates anything.**
 `schemas/sidecar.ts` crosses a *language* boundary and drives `pnpm codegen` → JSON Schema → Rust.
 `schemas/voice.ts` (the voice window's preload bridge, ADR-0010) crosses a process boundary but not

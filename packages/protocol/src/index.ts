@@ -31,7 +31,14 @@
 
 export { PROTOCOL_VERSION } from './version.js';
 export * from './schemas/sidecar.js';
-export { commands, decodeSidecarEvent, encodeMessage, type DecodedEvent } from './codec.js';
+export {
+  commands,
+  decodeSidecarCommand,
+  decodeSidecarEvent,
+  encodeMessage,
+  type DecodedCommand,
+  type DecodedEvent,
+} from './codec.js';
 
 export {
   VOICE_PROTOCOL_VERSION,

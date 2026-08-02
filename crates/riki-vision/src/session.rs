@@ -429,13 +429,20 @@ mod tests {
             fact.captured_at_mono_ms
         );
 
+        // `let ... else` rather than an irrefutable binding: `DetectionPayload` gained a
+        // `minimap.hero` variant for `FakeVisionSidecar` to emit (ADR-0035), and this crate has no
+        // atlas to produce one with — so a pass that reported anything but a digest is a bug here,
+        // and saying so beats failing to compile the next time the protocol grows a detector.
         let DetectionPayload::RegionDigest {
             hash,
             width,
             height,
             changed,
             ..
-        } = &fact.payload;
+        } = &fact.payload
+        else {
+            panic!("this crate has no recogniser; every fact it emits is a region digest");
+        };
         assert_eq!(hash.len(), 16);
         assert_eq!((*width, *height), (4, 4));
         assert!(changed, "the first sighting of a region is a change");
@@ -462,7 +469,9 @@ mod tests {
             .collect();
 
         assert_eq!(detections.len(), 2);
-        let DetectionPayload::RegionDigest { changed, .. } = &detections[1][0].payload;
+        let DetectionPayload::RegionDigest { changed, .. } = &detections[1][0].payload else {
+            panic!("this crate has no recogniser; every fact it emits is a region digest");
+        };
         assert!(!changed);
     }
 
