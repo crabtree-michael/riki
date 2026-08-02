@@ -3,5 +3,9 @@
     "extends": ".markdownlint.jsonc",
   },
   "globs": ["**/*.md"],
-  "ignores": ["node_modules/**", "target/**", "dist/**", "out/**", "coverage/**"],
+  // `**/node_modules/**`, not `node_modules/**`. pnpm puts a `node_modules` inside every workspace
+  // member, so the un-prefixed glob only ever excluded the root one — every dependency README under
+  // `packages/*/node_modules` was being linted as if it were ours. Nothing surfaced it until a
+  // dependency shipped a README that fails one of our rules, which `@openai/agents` does.
+  "ignores": ["**/node_modules/**", "**/target/**", "**/dist/**", "**/out/**", "**/coverage/**"],
 }

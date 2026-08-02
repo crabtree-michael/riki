@@ -38,6 +38,12 @@ Docs are split by kind, because "design doc" was covering four different things:
   mid-fight intensity signal, and the composition root where the two halves finally meet.
   **Built**, except the tuning — every coefficient in it is a starting point with no measurement
   behind it, which is open questions 19 and 20.
+- [**llm-coach-architecture.md**](design/llm-coach-architecture.md) — the second coach: an OpenAI
+  Agents SDK model that decides for itself whether Riki should speak and drafts the line, as a
+  runtime alternative to the thirteen gates rather than a stage inside them
+  ([ADR-0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md)). **Built.** Read §4.3 before
+  adding anything to the skip list — the six mechanical skips are the whole of what is allowed to
+  refuse, and §14 is what is still open.
 - [**hero-library.md**](design/hero-library.md) — the coaching knowledge the world model does not
   have: twenty top-tier heroes, six topics each, one line per note, surfaced as the `library` brief
   section and refreshed by nothing ([ADR-0027](adr/0027-the-hero-library-is-static.md)). **Built.**
@@ -105,6 +111,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0028](adr/0028-mute-has-one-producer-the-menu-row.md)    | Mute has one producer, and it is the menu row | Accepted — amends ui-design §2.3's click gesture |
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
+| [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

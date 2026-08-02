@@ -15,5 +15,8 @@
   },
   "scripts": {
     "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@riki/realtime": "workspace:*"
   }
 }

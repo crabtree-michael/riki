@@ -37,7 +37,11 @@ import { createConsoleLogTailer, defaultMatchers } from '@riki/log-tail';
 import type { Clock as WorldClock } from '@riki/world-model';
 
 import type { Millis } from '../shared/overlay.js';
-import { loadOrCreateGsiToken, loadSettings, resolvePaths } from './bootstrap.js';
+import type { CoachModel, LlmCoachConfig } from '@riki/coach';
+import { createOpenAiCoachModel } from '@riki/coach';
+import { resolveConfig } from '@riki/config';
+
+import { loadOrCreateGsiToken, loadSettings, resolvePaths, saveSettings } from './bootstrap.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -92,13 +96,24 @@ function buildShell(): RikiShell {
   const dataDir = app.getPath('userData');
   const paths = resolvePaths(appRoot);
 
+  const settings = loadSettings(dataDir);
+
+  // The environment layer, from the one module in the repo permitted to read it
+  // (REPO_SKELETON.md §6.2). This is the only call site, and it is what the API key and the coach
+  // model id arrive through — the coach *mode* deliberately does not, because a UI control that a
+  // stale shell variable can override is not a control (`@riki/config`, `shell/config.ts`).
+  const resolved = resolveConfig({ dotEnvDir: appRoot });
+
   const config: ShellConfig = resolveShellConfig({
     dataDir,
     gsiToken: loadOrCreateGsiToken(dataDir),
-    ...loadSettings(dataDir),
+    ...settings,
+    openAiKey: resolved.openAiKey,
+    coachSettings: resolved.coach,
   });
 
   const clock = createElectronClock();
+  const apiKey = config.coach.apiKey;
 
   return createRikiShell({
     config,
@@ -106,6 +121,22 @@ function buildShell(): RikiShell {
     timers: systemTimers,
     platform: process.platform,
     processes: createNodeChildProcessPort(),
+
+    // Supplied only when there is a key to build it with. `undefined` is what makes the tray's
+    // Coach row report the LLM coach as unavailable rather than offering a mode that would start a
+    // match and then say nothing all game.
+    ...(apiKey === null
+      ? {}
+      : {
+          coachModel: (coachConfig: LlmCoachConfig): CoachModel =>
+            createOpenAiCoachModel({ apiKey, config: coachConfig }),
+        }),
+
+    // What makes the tray's Coach row a setting rather than a gesture. The shell does no I/O, so it
+    // announces the change and this writes it.
+    onCoachModeChanged: (mode) => {
+      saveSettings(dataDir, { coach: { ...settings.coach, mode } });
+    },
 
     sources: {
       gsi: (cfg: ShellConfig, worldClock: WorldClock) =>

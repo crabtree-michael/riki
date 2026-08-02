@@ -7,10 +7,15 @@
  * Three paths meet here and only one of them is new:
  *
  * ```
- *   engine.onCoachEvent ──► openTurn({ by:'trigger', topic }) ──► speakUnprompted   ← proactive
+ *   driver.onProposal   ──► openTurn({ by:'trigger', topic }) ──► speakUnprompted   ← proactive
  *   push-to-talk        ──► openTurn({ by:'player' })         ──► endTurn           ← voice intent
- *   VoiceEvent          ──► ledger, and the engine's four switches                  ← routing
+ *   VoiceEvent          ──► ledger, and the driver's four switches                  ← routing
  * ```
+ *
+ * **`driver` is either coach and this file cannot tell which** (`contracts.ts`, `driver.ts`). That
+ * is the whole of what requirement 1's runtime toggle costs: one port, two adapters, and two places
+ * below where a proposal's `guidance` changes what happens — `inject`, and the empty-brief check.
+ * Everything else on this page predates the LLM coach and did not move.
  *
  * **`agent_said.topics` comes from the `CoachEvent` that opened the turn, never from the
  * transcript.** That is the one rule in this file that cannot be relaxed: nothing on this path
@@ -23,14 +28,19 @@
  * `brief.empty`, and this file closes the turn `'silent'` rather than opening a session turn with
  * nothing behind it and a model left to improvise.
  *
- * See docs/design/coaching-trigger-architecture.md §9.
+ * **…unless the proposal carries guidance.** That rule was written for a coach whose brief *is* the
+ * advice: with nothing rendered there is nothing to say, and a model handed an empty brief invents
+ * (realtime §11.6). An LLM proposal is the opposite case — the coach has already read the world and
+ * drafted a line, so an empty brief means the plan's sections had nothing to add to it, not that the
+ * turn has nothing behind it. Silencing it would throw away the judgement the mode exists for.
+ *
+ * See docs/design/coaching-trigger-architecture.md §9 and llm-coach-architecture.md §6.2.
  */
 
 import type { AdviceTopic, TurnId, TurnOutcome } from '@riki/context';
-import type { CoachEvent, SuppressionReason } from '@riki/events';
 import type { CaptureMode, TurnEndReason, VoiceEvent } from '@riki/realtime';
 import type { MonoMs } from '@riki/world-model';
-import type { CoachingAgent, CoachingAgentDeps, SessionTurn } from './contracts.js';
+import type { CoachProposal, CoachingAgent, CoachingAgentDeps, SessionTurn } from './contracts.js';
 
 /** Minutes to milliseconds, for the `mute` local command. */
 const MS_PER_MINUTE = 60_000;
@@ -57,7 +67,7 @@ export function resetCoachTurnIds(): void {
 }
 
 export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
-  const { context, engine, session, clock, telemetry } = deps;
+  const { context, driver, session, clock, telemetry } = deps;
 
   /**
    * The turn currently open, and what it is about.
@@ -74,22 +84,32 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
   let lastSuppression: string | null = null;
 
   /**
-   * The snapshot and the brief, as one system message.
+   * The snapshot, the brief and — under the LLM coach — the drafted line, as one system message.
    *
-   * Blank-line separated rather than concatenated: the two are different kinds of thing — a general
-   * view and the reason this turn exists — and the format is an interface to the model, so the
-   * separation is the same one the golden corpora render.
+   * Blank-line separated rather than concatenated: they are different kinds of thing — a general
+   * view, the reason this turn exists, and the point to make — and the format is an interface to the
+   * model, so the separation is the same one the golden corpora render.
+   *
+   * **The guidance is framed as an instruction and the brief is not**, which is the one asymmetry
+   * here. A brief is context the model reasons over; a drafted line is a decision another model
+   * already made, and presenting it as more context would invite the voice model to re-litigate it
+   * against a snapshot it can also see. `in your own voice` rather than `verbatim` is deliberate:
+   * the persona lives in the session preamble and this line does not have it, so a verbatim read
+   * would make a coaching turn sound different from an answer to a question — which is the closest
+   * call in this design and is llm-coach-architecture.md §14 row 1.
    */
-  function inject(snapshotText: string, briefText: string): string {
-    if (briefText === '') return snapshotText;
-    if (snapshotText === '') return briefText;
-    return `${snapshotText}\n\n${briefText}`;
+  function inject(snapshotText: string, briefText: string, guidance: string | null): string {
+    const blocks = [snapshotText, briefText];
+    if (guidance !== null && guidance !== '') {
+      blocks.push(`coach — say this now, in your own voice, in one or two sentences:\n${guidance}`);
+    }
+    return blocks.filter((block) => block !== '').join('\n\n');
   }
 
   function close(turnId: TurnId, outcome: TurnOutcome, now: MonoMs): void {
     context.closeTurn(turnId, outcome, now);
     if (open?.turnId === turnId) open = null;
-    engine.setAgentSpeaking(false);
+    driver.setAgentSpeaking(false);
   }
 
   /**
@@ -102,11 +122,14 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
    * novelty-gate read. What survives the dedupe is the transition — the moment Riki started being
    * quiet for a new reason — which is the thing anybody reading the record is looking for.
    */
-  function recordSuppression(reason: SuppressionReason, event: CoachEvent | null): void {
-    telemetry?.suppressed(reason, event?.id ?? null);
-    const key = `${reason}:${event?.key ?? ''}`;
-    if (key === lastSuppression) return;
-    lastSuppression = key;
+  function recordSuppression(reason: string): void {
+    telemetry?.suppressed(reason, null);
+    // Deduplicated on the reason alone. Under the deterministic coach that reason is one of thirteen
+    // and the key it used to carry made the dedupe per-condition; under the LLM coach it is a
+    // sentence, which is already per-condition and then some — two consecutive declines phrased
+    // differently are two transitions, which is the right answer for a coach whose reasons are prose.
+    if (reason === lastSuppression) return;
+    lastSuppression = reason;
 
     context.ledger.append({
       kind: 'turn_closed',
@@ -116,7 +139,7 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
     });
   }
 
-  async function speakAbout(event: CoachEvent): Promise<void> {
+  async function speakAbout(proposal: CoachProposal): Promise<void> {
     if (disposed) return;
 
     lastSuppression = null;
@@ -126,29 +149,41 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
     const turn = context.openTurn(
       {
         turnId,
-        cause: { by: 'trigger', event: event.id, salience: event.salience },
-        topic: event.topic,
+        cause: { by: 'trigger', event: proposal.id, salience: proposal.salience },
+        topic: proposal.topic,
       },
       now,
     );
 
     if (turn.brief.empty) {
-      telemetry?.emptyBrief(event.id);
-      telemetry?.coachingTurn(event.id, event.salience, false);
-      // The cooldown the engine armed on emit is *not* released. Retracting it would re-fire this
-      // detection on the next version bump, render another empty brief, and loop
-      // (coaching-trigger-architecture.md §5.6).
-      close(turnId, 'silent', clock.now());
-      return;
+      telemetry?.emptyBrief(proposal.id);
+      // With guidance in hand there is still something to say, so an empty brief is a *thinner*
+      // turn rather than no turn. Without it the brief was the advice, and this is the silent path
+      // coaching-architecture.md §6.5 specifies. The cooldown the engine armed on emit is not
+      // released either way: retracting it would re-fire the same detection on the next version
+      // bump, render another empty brief, and loop (coaching-trigger §5.6).
+      if (proposal.guidance === null) {
+        telemetry?.coachingTurn(proposal.id, proposal.salience, false);
+        close(turnId, 'silent', clock.now());
+        return;
+      }
     }
 
-    open = { turnId, topics: [event.topic] };
-    engine.setAgentSpeaking(true);
-    telemetry?.coachingTurn(event.id, event.salience, true);
+    open = { turnId, topics: [proposal.topic] };
+    driver.setAgentSpeaking(true);
+    telemetry?.coachingTurn(proposal.id, proposal.salience, true);
+    telemetry?.coachMode?.(driver.mode);
 
     await session.speakUnprompted(
-      { turnId, snapshotText: inject(turn.snapshot.text, turn.brief.text) },
-      { eventId: event.id, salience: event.salience },
+      {
+        turnId,
+        snapshotText: inject(
+          turn.snapshot.text,
+          turn.brief.empty ? '' : turn.brief.text,
+          proposal.guidance,
+        ),
+      },
+      { eventId: proposal.id, salience: proposal.salience },
     );
   }
 
@@ -167,10 +202,10 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
           case 'quiet-mode':
             // "Only when I ask" — the off switch for the primary path, and the most important
             // control in the product now that Riki speaks unprompted (coaching §7.1).
-            engine.setQuietMode(true);
+            driver.setQuietMode(true);
             return;
           case 'mute':
-            engine.setMuted((clock.now() + DEFAULT_MUTE_MINUTES * MS_PER_MINUTE) as MonoMs);
+            driver.setMuted((clock.now() + DEFAULT_MUTE_MINUTES * MS_PER_MINUTE) as MonoMs);
             return;
           case 'stop':
             void session.abort();
@@ -184,11 +219,11 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
 
       case 'speech':
         // Never speak while the player is talking (dota2 §6.4).
-        engine.setPlayerSpeaking(voice.event === 'resumed');
+        driver.setPlayerSpeaking(voice.event === 'resumed');
         return;
 
       case 'turn':
-        if (voice.event === 'responseStarted') engine.setAgentSpeaking(true);
+        if (voice.event === 'responseStarted') driver.setAgentSpeaking(true);
         if (voice.event === 'responseEnded') close(voice.turnId, 'spoke', clock.now());
         return;
 
@@ -232,16 +267,16 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
 
   return {
     start(): () => void {
-      const stopEngine = engine.start();
-      const stopCoach = engine.onCoachEvent((event) => {
-        void speakAbout(event);
+      const stopDriver = driver.start();
+      const stopCoach = driver.onProposal((proposal) => {
+        void speakAbout(proposal);
       });
-      const stopSilent = engine.onSuppressed(recordSuppression);
+      const stopSilent = driver.onDeclined(recordSuppression);
       const stopVoice = session.onEvent(route);
 
-      disposers.push(stopEngine, stopCoach, stopSilent, stopVoice);
+      disposers.push(stopDriver, stopCoach, stopSilent, stopVoice);
       return (): void => {
-        stopEngine();
+        stopDriver();
         stopCoach();
         stopSilent();
         stopVoice();
@@ -257,7 +292,7 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
      */
     beginPlayerTurn(mode: CaptureMode): TurnId {
       const turnId = session.beginTurn(mode, clock.now());
-      engine.setAgentSpeaking(true);
+      driver.setAgentSpeaking(true);
       open = { turnId, topics: [] };
       return turnId;
     },
@@ -284,7 +319,10 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
       );
       const injected: SessionTurn = {
         turnId,
-        snapshotText: inject(turn.snapshot.text, turn.brief.empty ? '' : turn.brief.text),
+        // No guidance: a player-initiated turn does not go through either coach, so there is no
+        // drafted line and the widest `BRIEF_PLAN` row is the whole of the answer. Whether the LLM
+        // coach should also answer questions is llm-coach-architecture.md §14 row 2, held open.
+        snapshotText: inject(turn.snapshot.text, turn.brief.empty ? '' : turn.brief.text, null),
       };
       // Unlike a coaching turn, an empty brief here is not a reason to stay quiet: the player
       // asked, and the snapshot alone is still an answer.
@@ -296,13 +334,17 @@ export function createCoachingAgent(deps: CoachingAgentDeps): CoachingAgent {
       disposed = true;
       for (const stop of disposers) stop();
       disposers.length = 0;
-      engine.dispose();
+      driver.dispose();
       open = null;
     },
   };
 }
 
 export * from './contracts.js';
+export { staticCoachDriver, llmCoachDriver, proposalOf } from './driver.js';
+export type { StaticCoachDriver, LlmCoachDriver } from './driver.js';
+export { createSnapshotNarrator } from './narrator.js';
+export type { SnapshotNarratorDeps } from './narrator.js';
 export { toContextReader, toContextSnapshot, observedFrom } from './world-view.js';
 export type { WorldViewOptions } from './world-view.js';
 export { toEventTapeReader } from './tape.js';

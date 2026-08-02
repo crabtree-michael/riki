@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../realtime" }]
+  "references": [{ "path": "../context" }, { "path": "../events" }, { "path": "../world-model" }]
 }

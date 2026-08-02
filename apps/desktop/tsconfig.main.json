@@ -6,6 +6,8 @@
   "include": ["src/main/**/*.ts"],
   "references": [
     { "path": "./tsconfig.shared.json" },
+    { "path": "../../packages/coach" },
+    { "path": "../../packages/config" },
     { "path": "../../packages/context" },
     { "path": "../../packages/events" },
     { "path": "../../packages/gsi" },

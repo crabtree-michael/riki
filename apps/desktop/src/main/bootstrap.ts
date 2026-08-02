@@ -73,6 +73,33 @@ export function loadSettings(dataDir: string): ShellConfigOverrides {
   return typeof raw === 'object' && raw !== null ? raw : {};
 }
 
+/**
+ * Persist a change the player made in the UI. Read-modify-write, and **total**.
+ *
+ * This is what makes the tray's Coach row a *setting* rather than a gesture: without it the toggle
+ * is runtime-only and every restart silently reverts to the committed default, which is the failure
+ * mode of a preference that looks like it stuck. `shell/config.ts` names `settings.json` as the one
+ * source of the coach mode precisely because this writes it.
+ *
+ * A failed write is swallowed on purpose. The alternative is an exception on the path a tray click
+ * runs on, and losing a preference is a far smaller harm than taking the app down for it — the mode
+ * is already applied in memory by the time this is called, so the click still did what it looked
+ * like it did.
+ */
+export function saveSettings(dataDir: string, patch: Readonly<Record<string, unknown>>): void {
+  try {
+    const current = loadSettings(dataDir) as Record<string, unknown>;
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(
+      join(dataDir, SETTINGS_FILE),
+      `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch {
+    // See above: a preference that failed to persist is not worth a crash.
+  }
+}
+
 export interface ShellPaths {
   readonly preload: string;
   readonly overlayEntry: string;

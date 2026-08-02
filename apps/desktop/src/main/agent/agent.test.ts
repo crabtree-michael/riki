@@ -27,6 +27,7 @@ import type { AbilityState, FieldPath, HeroId, MapPosition, MonoMs } from '@riki
 import { fieldPath, heroField } from '@riki/world-model';
 import type { CoachingSessionPort, SessionTurn, SpeakReason } from './contracts.js';
 import { createCoachingAgent, resetCoachTurnIds } from './index.js';
+import { staticCoachDriver } from './driver.js';
 import { toContextReader } from './world-view.js';
 import { toEventTapeReader } from './tape.js';
 
@@ -150,9 +151,13 @@ function harness(world = coachableWorld(), brief?: BriefRenderer) {
   });
 
   const session = fakeSession();
-  const agent = createCoachingAgent({ world: reader, context, engine, session, clock });
+  // The deterministic coach behind the port, which is what `shell/index.ts` builds too. Asserting
+  // through the adapter rather than around it is the point: the composition root has no path to an
+  // `EventEngine` any more, so a test that kept one would be testing a wiring nobody ships.
+  const driver = staticCoachDriver(engine);
+  const agent = createCoachingAgent({ world: reader, context, driver, session, clock });
 
-  return { world, engine, context, session, agent, clock };
+  return { world, engine, driver, context, session, agent, clock };
 }
 
 function entries(context: RikiContext): readonly LedgerEntry[] {

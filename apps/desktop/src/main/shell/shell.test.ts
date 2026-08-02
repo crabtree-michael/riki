@@ -26,12 +26,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { createFakeCoachModel } from '@riki/coach/testing';
+import { ApiKey, type CoachMode } from '@riki/config';
 import type { Timers } from '@riki/context';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
+import type { EventEngine } from '@riki/events';
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
 
 import type { Millis } from '../../shared/overlay.js';
+import type { CoachDriver, StaticCoachDriver } from '../agent/index.js';
 import { resetCoachTurnIds } from '../agent/index.js';
 import { createFakeWindow, fakeWindowFactory, type FakeOverlayWindow } from '../testing/fakes.js';
 import type { Clock as UiClock } from '../session/contracts.js';
@@ -40,7 +44,7 @@ import { NO_RESTART, type SourceRegistration } from '../state/index.js';
 import type { TrayAction, TraySurface } from '../tray/index.js';
 import type { KeySource } from '../trigger/index.js';
 import { HOLD_THRESHOLD_MS } from '../trigger/index.js';
-import { createRikiShell, resolveShellConfig, type RikiShell } from './index.js';
+import { createRikiShell, resolveShellConfig, type RikiShell, type ShellDeps } from './index.js';
 import { createSilentSession, type SilentSession } from './silent-session.js';
 
 const FIXTURE = 'fixtures/gsi/laning-phase.jsonl';
@@ -314,7 +318,8 @@ describe('a recorded match, end to end', () => {
     expect(match?.matchId).toBe('7891234567');
     // Real objects, not stubs: this is the first time they have existed outside a unit test.
     expect(match?.context.ledgerRecord.all()).toBeDefined();
-    expect(match?.engine.counters()).toBeDefined();
+    // The static coach is the default and the shell built it behind the driver port.
+    expect(match?.driver.mode).toBe('static');
   });
 
   it('renders a snapshot the model could actually read', async () => {
@@ -337,16 +342,15 @@ describe('a recorded match, end to end', () => {
     const { shell } = use();
     await replay();
 
-    const counters = shell.match?.engine.counters();
-    expect(counters).toBeDefined();
-    const detected = Object.values(counters?.detected ?? {}).reduce((a, b) => a + b, 0);
-    const suppressed = Object.values(counters?.suppressed ?? {}).reduce((a, b) => a + b, 0);
+    const counters = engineOf(shell).counters();
+    const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
+    const suppressed = Object.values(counters.suppressed).reduce((a, b) => a + b, 0);
     // Both zero would mean the engine never ran, which is exactly the failure this file exists to
     // catch. Non-zero on both sides means more: detection *and* the gate stack ran, and the
     // default really is silence — the corpus produces more refusals than utterances.
     expect(detected).toBeGreaterThan(0);
     expect(suppressed).toBeGreaterThan(0);
-    expect(detected).toBeGreaterThan(counters?.spoken ?? 0);
+    expect(detected).toBeGreaterThan(counters.spoken);
   });
 
   it('never speaks without a brief behind it', async () => {
@@ -360,9 +364,26 @@ describe('a recorded match, end to end', () => {
       // The snapshot and the brief, blank-line separated as one injected system message.
       expect(spoken.turn.snapshotText).toContain('\n\n');
     }
-    expect(session.turns.length).toBe(shell.match?.engine.counters().spoken ?? 0);
+    expect(session.turns.length).toBe(engineOf(shell).counters().spoken);
   });
 });
+
+/**
+ * The deterministic coach's counters, from behind the driver port.
+ *
+ * Narrowing rather than casting: if the shell ever built the LLM coach by default this throws with
+ * a message saying so, which is what a silent `as` would not.
+ */
+function engineOf(shell: RikiShell): EventEngine {
+  // Typed as the *port*, not as the static adapter: narrowing a value already declared to be
+  // `StaticCoachDriver` proves nothing, and the whole point of this helper is that it fails loudly
+  // if the shell ever defaults to the other coach.
+  const driver: CoachDriver | undefined = shell.match?.driver;
+  if (driver?.mode !== 'static') {
+    throw new Error(`expected the static coach, got ${String(driver?.mode)}`);
+  }
+  return (driver as StaticCoachDriver).engine;
+}
 
 describe('the interaction path', () => {
   it('speaks unprompted during the recorded match, with no gesture behind it', async () => {
@@ -391,7 +412,7 @@ describe('the interaction path', () => {
     // trigger policy, which is the one confusion that would make the stand-in worse than useless.
     timers.flush();
     expect(shell.runtime.snapshot().phase.kind).toBe('idle');
-    expect(shell.match?.engine.counters().spoken).toBeGreaterThan(0);
+    expect(engineOf(shell).counters().spoken).toBeGreaterThan(0);
   });
 
   it('barges in: one key press during Riki speaking goes straight to Listening', async () => {
@@ -445,5 +466,127 @@ describe('shutdown', () => {
 
     expect(current.window.destroyed).toBe(true);
     expect(current.timers.depth).toBe(0);
+  });
+});
+
+/**
+ * The toggle, which is the whole of "the mode switch is a UI control".
+ *
+ * These build their own shell rather than using the shared harness, because the thing under test is
+ * a *construction* choice — whether a model factory was supplied — and the harness deliberately
+ * supplies none.
+ */
+describe('the coach toggle', () => {
+  function shellWith(options: {
+    readonly coachModel?: ShellDeps['coachModel'];
+    readonly onCoachModeChanged?: (mode: CoachMode) => void;
+    readonly mode?: CoachMode;
+    /** Both halves are required for `llm` to be reachable; a test names the one it is about. */
+    readonly key?: boolean;
+  }): { shell: RikiShell; dataDir: string } {
+    const clock = testClock();
+    const timers = testTimers();
+    const dataDir = mkdtempSync(join(tmpdir(), 'riki-toggle-'));
+    const worldClock = { now: (): MonoMs => clock.now() as MonoMs };
+    const gsi = createFakeGsiSource({
+      lines: parseGsiFixture(readFileSync(FIXTURE, 'utf8')),
+      clock: worldClock,
+    });
+
+    const shell = createRikiShell({
+      config: resolveShellConfig({
+        dataDir,
+        gsiToken: 'test-token',
+        ...(options.key === true ? { openAiKey: new ApiKey('sk-test-not-a-real-key') } : {}),
+        ...(options.mode === undefined ? {} : { coach: { mode: options.mode } }),
+      }),
+      clock,
+      timers,
+      platform: 'darwin',
+      sources: {
+        gsi: (): SourceRegistration => ({
+          policy: NO_RESTART,
+          source: {
+            id: gsi.id,
+            start: () => gsi.start(),
+            stop: () => gsi.stop(),
+            subscribe: (listener: (o: Observation) => void) => gsi.subscribe(listener),
+            health: (now): SourceHealth => gsi.health(now),
+          },
+        }),
+      },
+      windowFactory: fakeWindowFactory(createFakeWindow()),
+      tray: silentTray(),
+      keys: testKeys(),
+      session: createSilentSession({ clock: worldClock, timers }),
+      ...(options.coachModel === undefined ? {} : { coachModel: options.coachModel }),
+      ...(options.onCoachModeChanged === undefined
+        ? {}
+        : { onCoachModeChanged: options.onCoachModeChanged }),
+    });
+
+    return { shell, dataDir };
+  }
+
+  it('refuses the LLM coach with a model factory but no key', () => {
+    const { shell, dataDir } = shellWith({ coachModel: () => createFakeCoachModel() });
+    // Both halves are needed. Asking for `llm` must come back `static`: a toggle that ticked anyway
+    // would leave a match running in a mode that says nothing all game, with the UI claiming
+    // otherwise.
+    expect(shell.setCoachMode('llm')).toBe('static');
+    expect(shell.coachMode).toBe('static');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('switches to the LLM coach when one can be built, and announces it for persistence', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+      onCoachModeChanged: (mode) => changes.push(mode),
+    });
+
+    expect(shell.setCoachMode('llm')).toBe('llm');
+    expect(shell.coachMode).toBe('llm');
+    expect(changes).toEqual(['llm']);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('announces nothing when the mode did not actually change', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+      onCoachModeChanged: (mode) => changes.push(mode),
+    });
+
+    expect(shell.setCoachMode('static')).toBe('static');
+    // Already static. Writing `settings.json` on every no-op click would be a file write per tray
+    // open, and a changed-at timestamp that means nothing.
+    expect(changes).toEqual([]);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('announces the resolved mode, not the requested one', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({ onCoachModeChanged: (mode) => changes.push(mode) });
+
+    // Asking for `llm` with nothing to build it resolves to `static`, which is already the mode —
+    // so there is no change and nothing is persisted. A settings file saying `llm` here would send
+    // the player back into the same dead end on every restart.
+    expect(shell.setCoachMode('llm')).toBe('static');
+    expect(changes).toEqual([]);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('starts in the mode the settings file asked for', () => {
+    const { shell, dataDir } = shellWith({
+      mode: 'llm',
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+    });
+
+    expect(shell.coachMode).toBe('llm');
+    rmSync(dataDir, { recursive: true, force: true });
   });
 });

@@ -35,7 +35,17 @@ export * from './memory/index.js';
 export * from './coaching/index.js';
 export * from './assembler.js';
 
-// `./reference/` is deliberately **not** exported. The hero library is read by the `library` brief
-// section and by nothing else, so keeping it off the barrel makes the brief the only route by which
-// a hero note can reach the model — which is the same property every other section has for free, by
-// virtue of reading a world model this package does not re-export either.
+// `./reference/` is deliberately **not on this barrel**, and it is reachable on its own subpath —
+// `@riki/context/reference`. The distinction is the whole of the rule that used to say "not
+// exported at all".
+//
+// That rule existed because the brief was the only thing that could ask for a hero note, so keeping
+// the library off the barrel made the `library` section the single route by which one could reach
+// the model. `packages/coach` changes the premise (ADR-0029): a coach that decides for itself what a
+// moment is about has to be able to ask what a hero usually does, and it cannot be pushed the answer
+// to a question it has not asked. So there is a second route, and it is a named subpath rather than
+// a barrel entry so that it is a declared dependency at the manifest level and shows up in a
+// `grep '@riki/context/reference'` — which the forty other things on this barrel do not.
+//
+// What has not changed: nothing here fetches, and `eslint.config.js` still forbids `fs`, `path` and
+// `http` in this package. hero-library.md §6's price for a live library is still a package boundary.

@@ -24,14 +24,16 @@
  * them. `wouldSpeak` takes a character count for exactly this reason.
  */
 
+import type { CoachTelemetry } from '@riki/coach';
 import type { ReferenceDataPort } from '@riki/context';
+import type { CoachMode } from '@riki/config';
 import type { AgentTelemetry } from '../agent/index.js';
 import type { TelemetrySink } from '../session/contracts.js';
 import type { StateTelemetry } from '../state/index.js';
 import type { SilentSessionTelemetry } from './silent-session.js';
 
 export interface ShellTelemetry
-  extends StateTelemetry, TelemetrySink, AgentTelemetry, SilentSessionTelemetry {
+  extends StateTelemetry, TelemetrySink, AgentTelemetry, SilentSessionTelemetry, CoachTelemetry {
   /** The sidecar's stderr, a line at a time. A panic trace arrives here and nowhere else. */
   sidecarStderr(line: string): void;
   /** The sidecar answered the handshake. `backend` is what it can capture with, if anything. */
@@ -50,6 +52,23 @@ export interface ShellTelemetry
   hotkeyUnavailable(accelerator: string, hasKeyUp: boolean): void;
   /** Bound, but key-up is synthetic: tap-to-latch works and hold-to-push does not (§6.4). */
   pushToTalkUnavailable(): void;
+  /**
+   * Which coach a match is running under. Emitted on construction and on every live switch.
+   *
+   * Widened from `AgentTelemetry`'s optional method to a required one here, because the shell is the
+   * thing that knows: a record that cannot say which coach spoke makes any comparison between them
+   * unreadable after the fact.
+   */
+  coachMode(mode: CoachMode): void;
+  /**
+   * The LLM coach was asked for — from the tray, or from `settings.json` at startup — with no key
+   * behind it, or with no model factory wired.
+   *
+   * Reported **once**, when the driver would have been built, and never per turn. dota2 §9's rule:
+   * degrade loudly to the developer and quietly to the player. A coach that silently does nothing is
+   * the failure REPO_SKELETON.md §7.1 describes as discovering it ten minutes into a game.
+   */
+  coachUnavailable(reason: string): void;
 }
 
 /**
@@ -81,6 +100,13 @@ export function nullTelemetry(): ShellTelemetry {
     sidecarProtocolMismatch: () => undefined,
     hotkeyUnavailable: () => undefined,
     pushToTalkUnavailable: () => undefined,
+    coachMode: () => undefined,
+    coachUnavailable: () => undefined,
+    consulted: () => undefined,
+    spoke: () => undefined,
+    declined: () => undefined,
+    skipped: () => undefined,
+    modelFailed: () => undefined,
   };
 }
 

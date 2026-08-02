@@ -1,9 +1,9 @@
 {
-  "name": "@riki/context",
+  "name": "@riki/coach",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Snapshot renderer, agent tool surface, session preamble assembly, and the conversation ledger",
+  "description": "The LLM coach: an OpenAI agent that judges for itself when Riki should speak",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -16,14 +16,16 @@
       "riki-source": "./src/testing/index.ts",
       "types": "./src/testing/index.ts",
       "default": "./dist/testing/index.js"
-    },
-    "./reference": {
-      "riki-source": "./src/reference/index.ts",
-      "types": "./src/reference/index.ts",
-      "default": "./dist/reference/index.js"
     }
   },
   "scripts": {
     "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.14.2",
+    "@riki/context": "workspace:*",
+    "@riki/events": "workspace:*",
+    "@riki/world-model": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

@@ -242,8 +242,16 @@ export default tseslint.config(
                 'desktop-renderer',
                 'desktop-shared',
               ],
-              disallow: ['openai'],
-              message: 'The openai SDK may only be imported by packages/realtime.',
+              // Two OpenAI SDKs, two owners, and **both have to be named**. `boundaries/external`
+              // matches the package name, so `disallow: ['openai']` says nothing whatever about
+              // `@openai/agents` — the rule read as if it covered the SDK and did not, and
+              // `packages/coach` imported the Agents SDK straight past it. Verified by declaring
+              // the dependency on a disallowed package and linting, which is the only check that
+              // means anything here (the `workspace` skill records why).
+              disallow: ['openai', '@openai/*'],
+              message:
+                'The openai SDK may only be imported by packages/realtime, and @openai/* only by ' +
+                'packages/coach.',
             },
             {
               // §11.2. `electron` is the one that bites: a machine that can construct a window is
@@ -270,6 +278,14 @@ export default tseslint.config(
             {
               from: [['package', { name: 'realtime' }]],
               allow: ['openai'],
+            },
+            {
+              // The judgement loop is a pure function of a `CoachStimulus` everywhere except
+              // `openai-model.ts`, which is what keeps the package testable with a fake model and
+              // no key. This allow is what the broad `@openai/*` disallow above is carved out for;
+              // later rules win, which is the same shape the `realtime` → `openai` allow uses.
+              from: [['package', { name: 'coach' }]],
+              allow: ['@openai/*'],
             },
             {
               from: ['package'],
