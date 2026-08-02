@@ -53,6 +53,14 @@ export interface ShellTelemetry
   /** Bound, but key-up is synthetic: tap-to-latch works and hold-to-push does not (§6.4). */
   pushToTalkUnavailable(): void;
   /**
+   * The Realtime session could not be opened for this match.
+   *
+   * Not fatal and deliberately not a chip fault: detection, the gates and the brief all still run,
+   * so what the player has is a Riki that is thinking and not talking. The message is an `Error`'s
+   * own text and never carries config — `packages/config` keeps the key out of one by construction.
+   */
+  sessionOpenFailed(message: string): void;
+  /**
    * Which coach a match is running under. Emitted on construction and on every live switch.
    *
    * Widened from `AgentTelemetry`'s optional method to a required one here, because the shell is the
@@ -100,6 +108,7 @@ export function nullTelemetry(): ShellTelemetry {
     sidecarProtocolMismatch: () => undefined,
     hotkeyUnavailable: () => undefined,
     pushToTalkUnavailable: () => undefined,
+    sessionOpenFailed: () => undefined,
     coachMode: () => undefined,
     coachUnavailable: () => undefined,
     consulted: () => undefined,

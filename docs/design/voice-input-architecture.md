@@ -1083,8 +1083,7 @@ plan against.
 
 ## 12. What this needs from `packages/protocol`
 
-⚠ **Coordination event.** None of this is added yet; step 2 owns it and zod is the source of
-truth. The messages this component needs across the voice window's preload bridge:
+**Landed** in `packages/protocol/src/schemas/voice.ts`, with the corpus in `fixtures/protocol/voice/` and a contract test that fails if a message type has no fixture. The table below is what was asked for; three rows changed on the way and the reasons are under it.
 
 | Message | Direction | Payload |
 |---|---|---|
@@ -1096,11 +1095,31 @@ truth. The messages this component needs across the voice window's preload bridg
 | `voice.event` | renderer → main | `VoiceEvent` |
 | `voice.tool.call` / `result` | both | `RawToolCall` / `ToolResultMessage` |
 
-Two of these carry values another package owns (`WindowPlan` from `packages/context`,
-`RawToolCall` from its tools tier). They should be schematised once, in `packages/protocol`, and
-imported — not re-declared here. Until step 2 lands, the contract files mirror the ~20 lines they
-need and mark them ⚠ transitional, which is the pattern `packages/context` and `packages/gsi`
-already established.
+What changed against that table:
+
+- **`voice.tool.call` / `result` are gone.** [ADR-0023](../adr/0023-coaching-replaces-command-execution.md)
+  deleted the pull model they belonged to; the session is configured with `tools: []` and a stray
+  tool call is counted and ignored rather than answered. Consent went with them, so `VoiceCommand`
+  is `interrupt | abort`.
+- **`voice.turn.speak` was added.** The proactive path is the *primary* one under ADR-0023 and it is
+  not a turn begin/end pair — no capture, no gesture, straight to a response.
+- **`voice.level.enable` was added.** Overlay §5.5 says level frames cross while the chip can show
+  bars *and not otherwise*; without a message saying which, "not otherwise" has no producer and an
+  idle Riki pays 30 IPC messages a second forever.
+
+Two constraints the table did not anticipate, both recorded in the schema's header:
+
+- **No `MonoMs` crosses.** Main and the renderer do not share a `performance.timeOrigin`, so an
+  absolute uptime from one is meaningless to the other *and looks entirely plausible in a log*.
+  `ClientSecret` carries `expiresInMs`; level frames are stamped by main on receipt.
+- **Main allocates the turn id.** `CoachingAgent.beginPlayerTurn` must return one synchronously
+  (the overlay's ≤100 ms budget), and an id allocated in the renderer could only come back
+  asynchronously. `TurnController.beginTurn` takes it as an argument.
+
+`WindowPlan` is schematised here rather than re-declared, as this section asked. The structural
+mirrors in `packages/realtime` remain: that package is the renderer-side implementation and the
+adapter at the bridge is where the two meet, which keeps `@riki/realtime` free of a zod dependency
+on the hot path.
 
 ---
 

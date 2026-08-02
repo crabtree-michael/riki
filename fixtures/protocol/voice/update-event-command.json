@@ -1,0 +1,5 @@
+{
+  "v": 1,
+  "type": "voice.event",
+  "event": { "kind": "command", "command": "quiet-mode", "confidence": 0.91 }
+}

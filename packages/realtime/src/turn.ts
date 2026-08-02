@@ -47,8 +47,15 @@ export interface TurnController {
   /**
    * Opens the gate. Synchronous, because nothing on the trigger path may await — the overlay's
    * ≤100 ms budget is spent on scheduling otherwise (overlay-architecture.md §9.1).
+   *
+   * `turnId` is supplied when someone upstream has already allocated one and needs the same value
+   * back. That is the voice window's case and it is not optional there: this controller runs in a
+   * renderer, `CoachingAgent.beginPlayerTurn` runs in main and must return an id *synchronously*,
+   * and an id allocated here could only reach main asynchronously. Every subsequent call —
+   * `endTurn`, and the `submitted` event — is matched on it, so two allocators means `endTurn`
+   * silently returns early and the turn never submits.
    */
-  beginTurn(mode: CaptureMode, now: MonoMs): TurnId;
+  beginTurn(mode: CaptureMode, now: MonoMs, turnId?: TurnId): TurnId;
 
   /**
    * Closes the gate, waits for `speech_stopped` bounded by `commitGraceMs`, injects the turn's
@@ -163,10 +170,10 @@ export function createTurnController(
   };
 
   return {
-    beginTurn() {
+    beginTurn(_mode, _now, supplied) {
       // Synchronous and cheap: this sits on the trigger path, where the overlay's ≤100 ms budget
       // forbids an `await` between the key press and the window being shown (overlay §9.1).
-      const turnId = nextTurnId();
+      const turnId = supplied ?? nextTurnId();
       active = turnId;
       deps.capture.open();
       deps.onTurnId?.(turnId);

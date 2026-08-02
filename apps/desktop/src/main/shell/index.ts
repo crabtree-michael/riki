@@ -37,11 +37,13 @@
  * Building it per match rather than resetting one is deliberate. A reset has to remember every
  * piece of state that exists; a fresh object cannot forget one.
  *
- * ## What is not wired, and why
+ * ## Speech
  *
- * **Speech.** See `silent-session.ts`: the Realtime session runs in a renderer that does not exist
- * yet, and there is no permitted way to reach the API key until `packages/config` lands. Every
- * stage up to the point of speaking is real and running.
+ * `MatchScopedSession` is the seam, and it has two implementations. `main/voice/`'s
+ * `createVoiceSession` opens a real Realtime session in a hidden renderer (ADR-0010);
+ * `silent-session.ts` fakes the timing and opens nothing. `main/index.ts` picks on whether
+ * `packages/config` found an API key, and **nothing else in this file changes between them** —
+ * which is the property that made the stand-in worth writing and is worth keeping.
  *
  * ## The inspector
  *
@@ -118,11 +120,13 @@ import type { KeySource } from '../trigger/index.js';
 import { createGestureRecognizer, createTriggerPump } from '../trigger/index.js';
 import type { ShellConfig } from './config.js';
 import { createFileMemoryStore } from './memory-store.js';
+import { buildPreambleInput } from './preamble.js';
 import { createSilentSession } from './silent-session.js';
 import { NULL_REFERENCE_DATA, nullTelemetry, type ShellTelemetry } from './telemetry.js';
 
 export * from './config.js';
 export { createFileMemoryStore } from './memory-store.js';
+export { buildPreambleInput } from './preamble.js';
 export { createSilentSession, NOMINAL_SPEECH_MS } from './silent-session.js';
 export type { SilentSession, SilentSessionDeps } from './silent-session.js';
 export { nullTelemetry, NULL_REFERENCE_DATA } from './telemetry.js';
@@ -130,6 +134,15 @@ export type { ShellTelemetry } from './telemetry.js';
 
 /** How often health is polled and pushed to the tray. §8.1 wants a timer, not a subscription. */
 export const HEALTH_POLL_MS = 2_000;
+
+/**
+ * How long preamble enrichment may take before the session opens without it.
+ *
+ * `packages/context` drops enrichment priority-first when this expires, so a slow lookup costs the
+ * fifth enemy's matchup note rather than the whole preamble. Generous, because this runs once per
+ * match while the draft is still on screen and nothing is waiting on it.
+ */
+export const PREAMBLE_DEADLINE_MS = 3_000;
 
 /**
  * Sources arrive as a factory rather than as values so the shell can decide *whether* to build
@@ -158,8 +171,14 @@ export interface ShellDeps {
   readonly processes?: ChildProcessPort;
   readonly platform: string;
   readonly telemetry?: ShellTelemetry;
-  /** Defaults to `createSilentSession`. The voice window replaces this and nothing else. */
-  readonly session?: CoachingSessionPort;
+  /**
+   * Defaults to `createSilentSession`.
+   *
+   * `main/voice/`'s `createVoiceSession` is the real one, and it is the *only* thing that changes
+   * between a Riki that speaks and one that does not — every stage above this line is identical.
+   * `index.ts` chooses between them on whether `packages/config` found an API key.
+   */
+  readonly session?: MatchScopedSession;
   readonly environment?: MachineEnvironment;
   /**
    * How the LLM coach reaches OpenAI, as a factory rather than a value.
@@ -167,7 +186,7 @@ export interface ShellDeps {
    * A factory because a `CoachModel` owns a pooled transport and is disposed with the coach, so one
    * per match — and because a test substitutes `FakeCoachModel` here without the shell learning what
    * an `Agent` is. `undefined` means the mode cannot be `llm`: `apps/desktop/src/main/index.ts`
-   * supplies one only when `config.coach.apiKey` is non-null, which is where the no-key degradation
+   * supplies one only when `config.openai.apiKey` is non-null, which is where the no-key degradation
    * is decided and reported.
    */
   readonly coachModel?: (config: LlmCoachConfig) => CoachModel;
@@ -187,6 +206,21 @@ export interface ShellDeps {
    * *collects* is testable with no window, and the window itself is Tier 5's business.
    */
   readonly debugWindows?: DebugWindowFactory;
+}
+
+/**
+ * A `CoachingSessionPort` with a match lifetime.
+ *
+ * The agent's port is deliberately narrower — open a turn, speak, abort, hear the events — and it
+ * has no business knowing that a Realtime session exists, let alone when one opens. But *something*
+ * has to open one, and the shell is what knows when a match starts: `SessionContext` is frozen at
+ * `match_started` (ADR-0011) and the ledger and the coaching memory are per-match (ADR-0012,
+ * ADR-0013). So the two extra methods live here rather than in `agent/contracts.ts`.
+ */
+export interface MatchScopedSession extends CoachingSessionPort {
+  /** The preamble, already rendered. Opening is best-effort: a failure is a fault, not a throw. */
+  openMatch(preambleText: string): Promise<void>;
+  closeMatch(reason: string): Promise<void>;
 }
 
 /** The coaching root, which lives for one match. */
@@ -211,7 +245,7 @@ export interface RikiShell {
   readonly runtime: SessionRuntime;
   readonly overlay: OverlaySurface;
   readonly trayController: TrayController;
-  readonly session: CoachingSessionPort;
+  readonly session: MatchScopedSession;
   /** Null between matches. See "Two lifetimes" above. */
   readonly match: MatchRuntime | null;
   /** Which coach is running, or would run at the next match. */
@@ -323,7 +357,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   });
 
   const trayController = createTrayController(deps.tray, { debug: config.debug.enabled });
-  const session: CoachingSessionPort =
+  const session: MatchScopedSession =
     deps.session ?? createSilentSession({ clock: worldClock, timers });
 
   const voiceCommands = createVoiceBridge({
@@ -432,7 +466,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
    * instead of being discovered as a coach that never speaks.
    */
   function llmAvailable(): boolean {
-    return config.coach.apiKey !== null && deps.coachModel !== undefined;
+    return config.openai.apiKey !== null && deps.coachModel !== undefined;
   }
 
   function resolveMode(wanted: CoachMode): CoachMode {
@@ -574,7 +608,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
     // unprompted speech off never hears a first trigger slip through on launch. It is one of the
     // two controls both coaches honour identically (`llm-coach-architecture.md` §4.3).
-    driver.setQuietMode(!config.unprompted);
+    driver.setQuietMode(!config.privacy.unprompted);
     let stopAgent = agent.start();
     telemetry.coachMode(driver.mode);
 
@@ -607,7 +641,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
         clock: worldClock,
         telemetry,
       });
-      driver.setQuietMode(!config.unprompted);
+      driver.setQuietMode(!config.privacy.unprompted);
       stopAgent = agent.start();
       telemetry.coachMode(driver.mode);
     }
@@ -627,9 +661,43 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
         agent.dispose();
       },
     };
+
+    // The Tier 1 preamble, then the session. Both are async and neither may block this function:
+    // `openMatch` runs on the lifecycle callback, and an await here would delay every later
+    // observation behind a network round trip.
+    //
+    // Not awaited also means the first coaching turn can be handed over before the session is
+    // open. That is the reason `main/voice/session.ts` queues directives until `voice.ready` —
+    // without it the first advice of a match would be the one that reliably disappeared.
+    void openSession(matchId as MatchId, context);
+  }
+
+  /**
+   * The preamble, assembled once and frozen (ADR-0011), and the Realtime session it configures.
+   *
+   * Failures are swallowed into telemetry deliberately. Every one of them — no API key, a refused
+   * mint, an empty draft — leaves a Riki that still detects, still gates, still assembles briefs
+   * and simply does not speak, which is a strictly better outcome than a match that does not start.
+   */
+  async function openSession(matchId: MatchId, context: RikiContext): Promise<void> {
+    try {
+      const memory = await memoryStore.load();
+      const now = worldClock.now();
+      const assembled = await context.openSession(
+        buildPreambleInput(matchId, state.world, memory, now),
+        (now + PREAMBLE_DEADLINE_MS) as MonoMs,
+      );
+      // Still the right match? A quick restart can land here after `closeMatch`, and opening a
+      // session for a match that has ended would leave one running with nothing to say.
+      if (match?.matchId !== matchId) return;
+      await session.openMatch(assembled.preamble.text);
+    } catch (error: unknown) {
+      telemetry.sessionOpenFailed(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function closeMatch(): void {
+    if (match !== null) void session.closeMatch('match ended');
     match?.dispose();
     match = null;
   }
@@ -693,7 +761,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           // The driver's mode rather than the shell's `coachMode`: between matches there is no
           // driver, and "which coach *would* run" is a different claim from "which one is running".
           coachMode: match?.driver.mode ?? 'none',
-          unprompted: config.unprompted,
+          unprompted: config.privacy.unprompted,
           healthLevel: health.level,
           healthSummary: health.summary,
           sources: health.sources.map((source) => ({

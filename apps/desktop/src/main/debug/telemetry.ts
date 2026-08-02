@@ -203,5 +203,9 @@ export function withDebugTelemetry(deps: DebugTelemetryDeps): ShellTelemetry {
       delegate.pushToTalkUnavailable();
       problem('hotkey', 'key-up is synthetic: tap-to-latch works, hold-to-push does not');
     },
+
+    sessionOpenFailed(message: string): void {
+      delegate.sessionOpenFailed(message);
+    },
   };
 }

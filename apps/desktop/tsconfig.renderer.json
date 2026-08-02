@@ -1,10 +1,21 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  // The chip. DOM types, and deliberately no `@types/node`: "no Node in the renderer" is a lint
-  // boundary and a `sandbox: true` window, but here it is also a type error, which is cheaper.
+  // The two renderers. DOM types, and deliberately no `@types/node`: "no Node in the renderer" is
+  // a lint boundary and a `sandbox: true` window, but here it is also a type error, which is
+  // cheaper.
+  //
+  // The package references are the **voice** renderer's only (ADR-0010): it hosts the microphone,
+  // the peer connection and the bridge decoder, so it needs `@riki/audio`, `@riki/realtime` and
+  // `@riki/protocol`. The overlay renderer must reach none of them and a lint rule says so — see
+  // `renderer/**` in eslint.config.js, which is now scoped to exclude `renderer/voice/**`.
   "extends": "./tsconfig.base.json",
   "include": ["src/renderer/**/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "../../packages/audio" },
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/realtime" }
+  ],
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
     "types": []

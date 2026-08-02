@@ -34,6 +34,37 @@ parsed.
 
 ## Learnings
 
+**2026-08-02 — this package now holds two protocols, and only one of them generates anything.**
+`schemas/sidecar.ts` crosses a *language* boundary and drives `pnpm codegen` → JSON Schema → Rust.
+`schemas/voice.ts` (the voice window's preload bridge, ADR-0010) crosses a process boundary but not
+a language one, so `MODULES` in `scripts/codegen.mjs` does not list it and `crates/riki-ipc` never
+sees it. Adding a schema file does **not** wire it into codegen — the module list is explicit, which
+is what makes that safe.
+
+Consequences for the fixture rule. `fixtures/protocol/*.json` is the cross-language corpus and
+`contract.test.ts` asserts every name matches `^(command|event)-`, so voice fixtures live in
+`fixtures/protocol/voice/` — a subdirectory, which the `.endsWith('.json')` filter skips — with
+their own test. Same rule, narrower guarantee: a same-build bridge cannot disagree across
+languages, but it can absolutely drift from its own schema, and zod stripping unknown keys is what
+turns that into a failing round trip instead of a silent misread.
+
+**2026-08-02 — a corpus that covers eight of nine message types looks exactly as green as one that
+covers all nine.** The sidecar corpus asserts `files.length >= 9` — a count, which cannot tell you
+*which* message is missing and goes stale the moment someone adds a message and a fixture for a
+different one. `voice-contract.test.ts` derives the expected set from the schema itself
+(`union.options.map((o) => o.shape.type.value)`) and compares it to the types present in the corpus,
+so a new message with no fixture fails by name. Worth copying into `contract.test.ts` next time
+that file is touched.
+
+**2026-08-02 — two properties of the voice bridge are asserted as *shape*, not as rules.** There is
+no field on any message that could carry the API key (ADR-0015 — this is REPO_SKELETON §5.4's
+"the key is absent from the preload bridge surface", as a property rather than a discipline), and
+no field carries a monotonic timestamp, because main and a renderer do not share a
+`performance.timeOrigin`. Both tests walk the union's shapes rather than reading the source, so
+they fail on a field added later. *Why:* the second one is the trap — two `MonoMs` values from two
+processes are both plausible-looking uptimes, and the difference between them is however long the
+renderer took to start. Durations cross; timestamps do not.
+
 **2026-08-02 — `pnpm codegen` needs a TypeScript build in the middle, and it has to happen inside
 the package.** Node cannot execute the schemas: under NodeNext the source writes `../version.js`
 for `../version.ts`, and `--experimental-strip-types` does not remap that. So the generator

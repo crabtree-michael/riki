@@ -17,6 +17,8 @@
     "typecheck": "tsc --build"
   },
   "dependencies": {
-    "@riki/realtime": "workspace:*"
+    "@riki/gsi": "workspace:*",
+    "@riki/realtime": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

@@ -39,9 +39,15 @@ import type { Clock as WorldClock } from '@riki/world-model';
 import type { Millis } from '../shared/overlay.js';
 import type { CoachModel, LlmCoachConfig } from '@riki/coach';
 import { createOpenAiCoachModel } from '@riki/coach';
-import { resolveConfig } from '@riki/config';
+import { loadConfig, voiceEnabled } from '@riki/config';
 
-import { loadOrCreateGsiToken, loadSettings, resolvePaths, saveSettings } from './bootstrap.js';
+import {
+  loadOrCreateGsiToken,
+  loadOrCreateInstallId,
+  loadSettings,
+  resolvePaths,
+  saveSettings,
+} from './bootstrap.js';
 import { createElectronDebugWindowFactory } from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
@@ -50,8 +56,10 @@ import { gsiRegistration, logTailRegistration } from './state/index.js';
 import { createNodeChildProcessPort } from './sidecar/index.js';
 import { createElectronTray } from './tray/index.js';
 import { createElectronKeySource } from './trigger/index.js';
+import { createElectronVoiceWindowFactory, createVoiceSession } from './voice/index.js';
+import type { MatchScopedSession } from './shell/index.js';
 import type { RikiShell, ShellConfig } from './shell/index.js';
-import { createRikiShell, resolveShellConfig } from './shell/index.js';
+import { createRikiShell } from './shell/index.js';
 
 /**
  * The one clock, in Electron's terms.
@@ -97,27 +105,68 @@ function buildShell(): RikiShell {
   const dataDir = app.getPath('userData');
   const paths = resolvePaths(appRoot);
 
-  const settings = loadSettings(dataDir);
-
-  // The environment layer, from the one module in the repo permitted to read it
-  // (REPO_SKELETON.md §6.2). This is the only call site, and it is what the API key and the coach
-  // model id arrive through — the coach *mode* deliberately does not, because a UI control that a
-  // stale shell variable can override is not a control (`@riki/config`, `shell/config.ts`).
-  const resolved = resolveConfig({ dotEnvDir: appRoot });
-
-  const config: ShellConfig = resolveShellConfig({
+  // Every layer, in one call, from the one module in the repo permitted to read the environment
+  // (REPO_SKELETON.md §6.2): CLI flags, `RIKI_*`, `.env`, `settings.json`, defaults. It is
+  // validated and it throws on the first bad key — which is why it is inside `buildShell` and
+  // therefore inside the `try` in `whenReady`. A `ConfigError` reaches `fail()` and the app exits
+  // naming the variable, rather than half-booting with a broken setting and discovering it ten
+  // minutes into a game (REPO_SKELETON.md §7).
+  //
+  // The coach *mode* is not among the things the environment can set, deliberately: a UI control a
+  // stale shell variable can override is not a control (`packages/config`'s `keys.ts`).
+  //
+  // `process.argv` is Electron's, so unrecognised switches are ignored, and the upward search for
+  // `.env` finds the repo root from `apps/desktop` in a dev run.
+  const config: ShellConfig = loadConfig({
     dataDir,
     gsiToken: loadOrCreateGsiToken(dataDir),
-    ...settings,
-    openAiKey: resolved.openAiKey,
-    coachSettings: resolved.coach,
+    argv: process.argv.slice(1),
   });
 
   const clock = createElectronClock();
-  const apiKey = config.coach.apiKey;
+  const apiKey = config.openai.apiKey;
+
+  /**
+   * The one line that decides whether Riki speaks.
+   *
+   * With no `RIKI_OPENAI_API_KEY` the app boots with voice disabled and says so (ADR-0006) — which
+   * is the mode every test, every fixture run and CI are in — and the silent stand-in keeps the
+   * whole coaching pipeline observable through the ledger and the counters. With a key, the same
+   * pipeline ends in a hidden renderer that actually talks.
+   *
+   * `createVoiceSession` is handed the key by injection and never reads the environment; it is the
+   * only thing in the process that touches `ClientSecretBroker`, and what crosses the preload
+   * bridge is an ephemeral secret (ADR-0015).
+   */
+  const session: MatchScopedSession | undefined = voiceEnabled(config)
+    ? createVoiceSession({
+        config,
+        windows: createElectronVoiceWindowFactory({
+          preloadPath: paths.voicePreload,
+          entryPath: paths.voiceEntry,
+        }),
+        clock: { now: () => clock.now() as never },
+        safetyIdentifier: loadOrCreateInstallId(dataDir),
+        // Node 22's global. Narrowed to `FetchLike` by the port, so `packages/realtime` still
+        // names no vendor and is still testable with a stub.
+        fetch: (url, init) => fetch(url, init),
+        // ⚠ Every one of these is a no-op, and it is the largest remaining gap in this path.
+        // `packages/telemetry` still exports `{}` and `console.*` is confined to it — so a failed
+        // mint, a bridge decode error and a self-interruption all happen silently in a release
+        // build. The *events* reach the chip; the counters reach nothing. One object literal once
+        // that package exists.
+        telemetry: {
+          speaking: () => undefined,
+          fault: () => undefined,
+          state: () => undefined,
+          bridgeProblem: () => undefined,
+        },
+      })
+    : undefined;
 
   return createRikiShell({
     config,
+    ...(session === undefined ? {} : { session }),
     clock,
     timers: systemTimers,
     platform: process.platform,
@@ -136,7 +185,10 @@ function buildShell(): RikiShell {
     // What makes the tray's Coach row a setting rather than a gesture. The shell does no I/O, so it
     // announces the change and this writes it.
     onCoachModeChanged: (mode) => {
-      saveSettings(dataDir, { coach: { ...settings.coach, mode } });
+      // Read-modify-write through `bootstrap.ts` rather than from `config`: the resolved value has
+      // already had the environment and the defaults folded into it, so writing it back would
+      // persist settings the player never chose.
+      saveSettings(dataDir, { coach: { ...loadSettings(dataDir).coach, mode } });
     },
 
     sources: {

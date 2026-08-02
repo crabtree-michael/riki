@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "voice.event",
+  "event": {
+    "kind": "transcript",
+    "role": "player",
+    "turnId": "coach_7",
+    "text": "should I buy a blink",
+    "final": true
+  }
+}

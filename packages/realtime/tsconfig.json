@@ -1,13 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
-  // `rootDir: "src"`, like every other package, so the emit is flat: `dist/index.js` is what
-  // `exports.default` promises and what Electron main actually loads (ADR-0025).
+  // `rootDir: "src"` and a flat `dist/`, exactly like the other nine packages — which is not
+  // cosmetic. Electron main resolves this package through `exports.default` (`./dist/index.js`,
+  // ADR-0025), and while `rootDir` was `"."` — to bring `test/` into a project ESLint could see —
+  // the emit landed at `dist/src/index.js` and every runtime import of a *value* from here failed
+  // with ERR_MODULE_NOT_FOUND. Nothing noticed for nine steps because main imported only types.
   //
-  // This package is the only one with an integration-test directory outside `src/`, and an earlier
-  // version claimed it here with `rootDir: "."`. That silently moved the output to `dist/src/` —
-  // invisible to `tsc` and Vitest, which both read source through the `riki-source` condition, and
-  // an `ERR_MODULE_NOT_FOUND` the first time the app booted. `test/tsconfig.json` claims those
-  // files instead, which is the same split the repo-level `test/` project already uses.
+  // `test/` now has its own project, `tsconfig.test.json`, which is what keeps ESLint's type-aware
+  // rules able to lint it without pulling it into this one's output.
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"

@@ -364,8 +364,23 @@ export default tseslint.config(
       ],
     },
   },
+  // The rule this exception exists for is still the rule: a renderer that can reach a package is a
+  // renderer that can grow business logic, and `shared/` has to stay importable by one.
+  //
+  // `renderer/voice/**` is excluded because ADR-0010 puts the microphone, the Web Audio graph and
+  // the WebRTC peer connection in a renderer of their own — `getUserMedia` and Chromium's echo
+  // canceller exist nowhere else — so it *is* the host for `@riki/audio` and `@riki/realtime`, and
+  // it decodes the preload bridge with `@riki/protocol`. The `no-restricted-imports` block below
+  // keeps the other three packages out of it, so the exception is three names wide rather than
+  // open.
+  //
+  // There is a second consequence and it is the one that bites: the voice renderer is bundled and
+  // the overlay is not (ADR-0034). A `@riki/*` import added to the overlay would fail at *run
+  // time* with an unresolved bare specifier, in a window with no DevTools open — this rule failing
+  // at lint time is where that gets explained.
   {
     files: ['apps/desktop/src/renderer/**/*.ts', 'apps/desktop/src/shared/**/*.ts'],
+    ignores: ['apps/desktop/src/renderer/voice/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -374,7 +389,34 @@ export default tseslint.config(
             {
               group: ['@riki/*'],
               message:
-                'The view knows only the view model, and shared/ has to be importable by it — neither may reach a package (overlay-architecture.md §11.2).',
+                'The view knows only the view model, and shared/ has to be importable by it — neither may reach a package (overlay-architecture.md §11.2). The voice renderer is the one exception (ADR-0010) and it is bundled for exactly this reason (ADR-0034).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/renderer/voice/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // The three it may have are `@riki/audio`, `@riki/realtime` and `@riki/protocol`.
+              // The rest would put the world model, the coaching brief or the trigger policy in a
+              // renderer, and every one of those is main's and testable without a window.
+              group: [
+                '@riki/context',
+                '@riki/events',
+                '@riki/gsi',
+                '@riki/log-tail',
+                '@riki/world-model',
+                '@riki/config',
+              ],
+              message:
+                'The voice renderer hosts the session and the audio graph, and nothing else. The world model, the brief and the trigger policy stay in main, where they are testable without a window (voice-input-architecture.md §2.2).',
             },
           ],
         },

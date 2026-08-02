@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createFakeCoachModel } from '@riki/coach/testing';
-import { ApiKey, type CoachMode } from '@riki/config';
+import { ApiKey, type CoachMode, type ConfigLayer } from '@riki/config';
 import type { Timers } from '@riki/context';
 import { GATES, SUPPRESSION_REASONS } from '@riki/events';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
@@ -214,7 +214,12 @@ interface Harness {
 
 let harness: Harness | null = null;
 
-function build(overrides: { readonly debug?: boolean } = {}): Harness {
+/**
+ * @param layer The config layer, defaulting to "unprompted speech on" because almost every test
+ *   below exercises that path. The shipped default is the opposite and is asserted in "the privacy
+ *   default", which builds its own shell with `{}`.
+ */
+function build(layer: ConfigLayer = { 'privacy.unprompted': true }): Harness {
   const clock = testClock();
   const timers = testTimers();
   const window = createFakeWindow();
@@ -231,11 +236,7 @@ function build(overrides: { readonly debug?: boolean } = {}): Harness {
   const session = createSilentSession({ clock: worldClock, timers });
 
   const shell = createRikiShell({
-    config: resolveShellConfig({
-      dataDir,
-      gsiToken: 'test-token',
-      ...(overrides.debug === true ? { debug: { enabled: true } } : {}),
-    }),
+    config: resolveShellConfig({ dataDir, gsiToken: 'test-token', layer }),
     clock,
     timers,
     platform: 'darwin',
@@ -302,8 +303,8 @@ function use(): Harness {
 
 /** Every line of the fixture, at the timing it records, then the microtasks the coaching path
  * defers on. */
-async function replay(): Promise<void> {
-  const { gsi, clock } = use();
+async function replayInto(harnessed: Harness): Promise<void> {
+  const { gsi, clock } = harnessed;
   for (let index = 0; ; index += 1) {
     if (!gsi.step()) break;
     clock.advance(gapAfter(index));
@@ -312,7 +313,35 @@ async function replay(): Promise<void> {
   await Promise.resolve();
 }
 
+async function replay(): Promise<void> {
+  await replayInto(use());
+}
+
 // -------------------------------------------------------------------------------------------
+
+describe('the privacy default', () => {
+  it('says nothing unprompted, because RIKI_UNPROMPTED ships off', async () => {
+    // Not a unit test of `DEFAULTS` — `packages/config` has that. This is the end of the wire:
+    // the default reaches `EventEngine.setQuietMode` and the whole detected-and-gated pipeline
+    // still produces zero turns. The harness above turns it on precisely because it has to.
+    const quiet = build({});
+    try {
+      await quiet.shell.start();
+      await replayInto(quiet);
+
+      expect(quiet.shell.match).not.toBeNull();
+      const counters = engineOf(quiet.shell).counters();
+      // Something *was* detected, so the zero below is quiet mode and not an inert pipeline.
+      const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
+      expect(detected).toBeGreaterThan(0);
+      expect(counters.spoken).toBe(0);
+      expect(quiet.session.turns).toHaveLength(0);
+    } finally {
+      await quiet.shell.stop();
+      rmSync(quiet.dataDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the shell starts', () => {
   it('warms the overlay window before anything can ask it to show', () => {
@@ -493,7 +522,7 @@ describe('the inspector (main/debug)', () => {
     /** One full fixture replay, returning the two things the coaching path is judged on. */
     async function run(debug: boolean): Promise<{ spoken: number; texts: readonly string[] }> {
       resetCoachTurnIds();
-      const built = build({ debug });
+      const built = build({ 'privacy.unprompted': true, 'debug.enabled': debug });
       await built.shell.start();
       try {
         for (let index = 0; ; index += 1) {
@@ -537,7 +566,7 @@ describe('the inspector (main/debug)', () => {
         rmSync(current.dataDir, { recursive: true, force: true });
       }
       resetCoachTurnIds();
-      harness = build({ debug: true });
+      harness = build({ 'privacy.unprompted': true, 'debug.enabled': true });
       await harness.shell.start();
     });
 
@@ -718,8 +747,14 @@ describe('the coach toggle', () => {
       config: resolveShellConfig({
         dataDir,
         gsiToken: 'test-token',
-        ...(options.key === true ? { openAiKey: new ApiKey('sk-test-not-a-real-key') } : {}),
-        ...(options.mode === undefined ? {} : { coach: { mode: options.mode } }),
+        ...(options.key === true ? { apiKey: new ApiKey('sk-test-aaaa-bbbb-cccc-dddd') } : {}),
+        // The mode's one source is `settings.json` (ADR-0031), which in `@riki/config`'s terms is
+        // the layer beneath the environment. There is no environment variable and no flag for it,
+        // so a layer entry is how a test asks for it — the same way the app's own file does.
+        layer: {
+          'privacy.unprompted': true,
+          ...(options.mode === undefined ? {} : { 'coach.mode': options.mode }),
+        },
       }),
       clock,
       timers,

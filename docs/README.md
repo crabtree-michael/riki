@@ -120,6 +120,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
 | [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default, read-only by construction |
 | [0033](adr/0033-screencapturekit-is-the-shipping-backend.md) | `ScreenCaptureKit` is the shipping backend, and it is cross-compiled rather than run | Accepted — macOS captures; six things still need a Mac |
+| [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

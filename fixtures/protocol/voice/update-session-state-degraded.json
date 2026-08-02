@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "voice.session.state",
+  "state": "degraded",
+  "fault": {
+    "kind": "offline",
+    "message": "Lost the Realtime connection. Reconnecting.",
+    "persistent": false,
+    "retryable": true
+  }
+}
