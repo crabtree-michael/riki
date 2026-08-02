@@ -25,7 +25,7 @@ import type { TrayGlyph } from '../../shared/overlay.js';
 
 export type { CoachMode };
 
-export type TrayAction = 'toggle-mute' | 'toggle-coach' | 'quit';
+export type TrayAction = 'toggle-mute' | 'toggle-coach' | 'open-debug' | 'quit';
 
 export interface TrayMenuItem {
   readonly kind: 'action' | 'label' | 'separator';
@@ -51,6 +51,16 @@ export interface TrayModel {
    * static coach anyway needs to be told why, and the tray is the only place Riki can tell them.
    */
   readonly coach: { readonly mode: CoachMode; readonly available: boolean };
+  /**
+   * Whether the inspector row is offered — `config.debug.enabled`, and false by default.
+   *
+   * The second of the four absent rows to earn its way back, and it comes back on the *other*
+   * argument from the coach row above: that one describes a state the app is in, this one opens a
+   * real window (`main/debug/`). It stays conditional because a debug row in a shipped build is the
+   * same mistake in a different direction — an affordance most people should never see, and one
+   * that costs something to keep armed (`shell/config.ts`'s `DebugConfig`).
+   */
+  readonly debug: boolean;
 }
 
 /** ui-design.md §2.3. `⌥⌘M` on macOS, the primary target; Electron maps `Alt+Command` per platform. */
@@ -70,6 +80,14 @@ export function projectMenu(model: TrayModel): readonly TrayMenuItem[] {
     },
     { kind: 'separator' },
     coachRow(model.coach),
+    // Last before Quit, and below the coach row rather than above it: this is a developer
+    // affordance and the rows above it are the product.
+    ...(model.debug
+      ? ([
+          { kind: 'separator' },
+          { kind: 'action', id: 'open-debug', label: 'Open Inspector…', enabled: true },
+        ] as const)
+      : []),
     { kind: 'separator' },
     { kind: 'action', id: 'quit', label: 'Quit Riki', enabled: true },
   ];

@@ -50,6 +50,10 @@ describe('.env.example', () => {
   it.each([
     ['RIKI_CAPTIONS', 'off'],
     ['RIKI_UNPROMPTED', 'off'],
+    // The inspector holds rendered snapshots, briefs and coach transcripts in memory while it is
+    // on. That makes its default a privacy decision as much as a performance one, which puts it in
+    // this table rather than only in a header (docs/design/debug-inspector.md §6).
+    ['RIKI_DEBUG', 'off'],
   ])('defaults %s to %s', (key, expected) => {
     expect(value(key)).toBe(expected);
   });
@@ -69,6 +73,7 @@ describe('.env.example', () => {
       'RIKI_LOG_LEVEL',
       'RIKI_REPLAY_FIXTURE',
       'RIKI_FAKE_VISION',
+      'RIKI_DEBUG',
     ];
     for (const key of required) {
       expect(example, `${key} missing from .env.example`).toMatch(new RegExp(`^${key}=`, 'm'));

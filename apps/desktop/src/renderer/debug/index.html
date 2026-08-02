@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The inspector window's document.
+
+      Same policy as the overlay's, and it is not relaxed because this is a dev tool: no network,
+      no remote content, no inline script. This renderer displays live match state and the text
+      that was composed to send to a model, so it is a surface that should be *less* willing to
+      load something from outside, not more.
+
+      `index.js` is this directory's compiled `index.ts`, put here beside the document by
+      `scripts/copy-renderer-assets.mjs`.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:"
+    />
+    <title>Riki Inspector</title>
+    <link rel="stylesheet" href="./debug.css" />
+  </head>
+  <body>
+    <div class="riki-debug" id="riki-debug"></div>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

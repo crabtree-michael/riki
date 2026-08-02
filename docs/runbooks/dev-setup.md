@@ -83,6 +83,35 @@ is [REPO_SKELETON.md](../../REPO_SKELETON.md) §10 step 3 and is still a skeleto
 `RIKI_GSI_PORT` and friends are ignored, and `RIKI_OPENAI_API_KEY` has nowhere to go — which is
 why there is no voice yet.
 
+## Seeing why Riki said nothing
+
+Riki is built to fail quiet, so a working one and a broken one look the same from outside. The
+**inspector** is the window that tells them apart: the world model with every fact's provenance and
+age, every detection with all thirteen gates' verdicts on it, the snapshot and brief exactly as
+composed for each turn, and every fault the app reports but currently cannot log.
+
+It is off by default and turned on in the same `settings.json` as everything else:
+
+```jsonc
+{ "debug": { "enabled": true } }
+```
+
+Restart the app, then **Riki ▸ Open Inspector…** in the tray. The row is not rendered at all when
+the flag is off.
+
+Two things about reading it:
+
+- **Freeze early.** Frames arrive at 4 Hz and an interesting gate ladder lasts one tick. The Freeze
+  button holds the drawn frame while main keeps collecting, so unfreezing shows the present rather
+  than resuming a replay.
+- **`not_in_match` ticks are hidden by default,** with a count of how many. During a draft or a
+  post-game screen the detectors keep firing and gate 1 refuses every one; those ticks are correct
+  and there are thousands of them. Switch the filter off if gate 1 is what you are debugging.
+
+Leave it off otherwise. With it on the app holds rendered snapshots, briefs and coach transcripts in
+memory, and evaluates all thirteen gates against every candidate rather than the winner alone —
+[`docs/design/debug-inspector.md`](../design/debug-inspector.md) §6 has the reasoning.
+
 ## What is not scaffolded yet
 
 `pnpm dev:replay`, `pnpm test:e2e`, and `pnpm build` print what they are blocked on and exit

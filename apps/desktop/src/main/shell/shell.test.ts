@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeCoachModel } from '@riki/coach/testing';
 import { ApiKey, type CoachMode } from '@riki/config';
 import type { Timers } from '@riki/context';
+import { GATES, SUPPRESSION_REASONS } from '@riki/events';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
 import type { EventEngine } from '@riki/events';
@@ -123,14 +124,22 @@ function testTimers(): TestTimers {
   };
 }
 
-function silentTray(): TraySurface & { readonly statuses: readonly string[]; quit(): void } {
+function silentTray(): TraySurface & {
+  readonly statuses: readonly string[];
+  /** Every row label the tray has been asked to render, so a conditional row is assertable. */
+  readonly labels: readonly string[];
+  quit(): void;
+} {
   const statuses: string[] = [];
+  const labels: string[] = [];
   const actions = new Set<(action: TrayAction) => void>();
   return {
     statuses,
+    labels,
     render(_glyph, _tooltip, menu) {
       const label = menu[0]?.label;
       if (label !== undefined) statuses.push(label);
+      for (const item of menu) if (item.label !== undefined) labels.push(item.label);
     },
     onAction(listener) {
       actions.add(listener);
@@ -186,7 +195,7 @@ interface Harness {
 
 let harness: Harness | null = null;
 
-function build(): Harness {
+function build(overrides: { readonly debug?: boolean } = {}): Harness {
   const clock = testClock();
   const timers = testTimers();
   const window = createFakeWindow();
@@ -203,7 +212,11 @@ function build(): Harness {
   const session = createSilentSession({ clock: worldClock, timers });
 
   const shell = createRikiShell({
-    config: resolveShellConfig({ dataDir, gsiToken: 'test-token' }),
+    config: resolveShellConfig({
+      dataDir,
+      gsiToken: 'test-token',
+      ...(overrides.debug === true ? { debug: { enabled: true } } : {}),
+    }),
     clock,
     timers,
     platform: 'darwin',
@@ -446,6 +459,194 @@ describe('the interaction path', () => {
     // renderer therefore stops exactly here, visibly.
     expect(window.isVisible()).toBe(true);
     expect(shell.runtime.snapshot().phase).toEqual({ kind: 'armed', gesture: 'latch' });
+  });
+});
+
+describe('the inspector (main/debug)', () => {
+  it('does not exist unless it was asked for', () => {
+    // Off by default, and the default is what every other test in this file runs under. With it off
+    // the shell installs no observing policy, builds no hub, and holds no rendered brief in memory.
+    expect(use().shell.debug).toBeNull();
+  });
+
+  it('changes nothing about what Riki does', async () => {
+    /** One full fixture replay, returning the two things the coaching path is judged on. */
+    async function run(debug: boolean): Promise<{ spoken: number; texts: readonly string[] }> {
+      resetCoachTurnIds();
+      const built = build({ debug });
+      await built.shell.start();
+      try {
+        for (;;) {
+          if (!built.gsi.step()) break;
+          built.clock.advance(250);
+          await Promise.resolve();
+        }
+        await Promise.resolve();
+        // `engineOf` rather than an inline cast: it throws if the shell ever defaults to the LLM
+        // coach, which would otherwise make both runs report the same `-1` and let this test pass
+        // while measuring nothing.
+        return {
+          spoken: engineOf(built.shell).counters().spoken,
+          texts: built.session.turns.map((entry) => entry.turn.snapshotText),
+        };
+      } finally {
+        await built.shell.stop();
+        rmSync(built.dataDir, { recursive: true, force: true });
+      }
+    }
+
+    const off = await run(false);
+    const on = await run(true);
+
+    // The claim the whole component is built around. `observing-policy.ts` and
+    // `observing-context.ts` both return their delegate's value unchanged, and this is what that
+    // means end to end: the same fixture produces the same utterances either way. If it ever does
+    // not, the inspector is not measuring the app — it is changing it, and in a product whose
+    // failure mode is Riki talking when it should not, that is the bug that matters.
+    expect(on.spoken).toBe(off.spoken);
+    expect(on.texts).toEqual(off.texts);
+    expect(on.spoken).toBeGreaterThan(0);
+  });
+
+  describe('with it on', () => {
+    beforeEach(async () => {
+      const current = harness;
+      harness = null;
+      if (current !== null) {
+        await current.shell.stop();
+        rmSync(current.dataDir, { recursive: true, force: true });
+      }
+      resetCoachTurnIds();
+      harness = build({ debug: true });
+      await harness.shell.start();
+    });
+
+    it('collects without a window, which is the shape a replay wants', () => {
+      const { shell } = use();
+      expect(shell.debug).not.toBeNull();
+      // No `DebugWindowFactory` is passed here on purpose: everything the inspector gathers is a
+      // Tier 1/Tier 4 concern, and a window is Tier 5's business.
+      expect(shell.debug?.isOpen()).toBe(false);
+    });
+
+    it('shows the world the judge is actually reading', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const frame = shell.debug?.hub.frame(clock.now());
+      expect(frame?.session.matchId).toBe('7891234567');
+      expect(frame?.session.coachingRoot).toBe(true);
+      expect(frame?.world.version).toBeGreaterThan(0);
+
+      // Facts that came out of a recorded POST, each with the envelope `packages/world-model` goes
+      // to some trouble to keep attached: no row here can be read without its provenance.
+      const facts = frame?.world.facts ?? [];
+      expect(facts.length).toBeGreaterThan(0);
+      for (const fact of facts) {
+        expect(fact.source).not.toBe('');
+        expect(fact.confidence).toBeGreaterThan(0);
+        expect(['fresh', 'aging', 'stale', 'expired']).toContain(fact.staleness);
+        expect(['wall', 'game']).toContain(fact.ageBasis);
+      }
+      expect(facts.map((fact) => fact.path)).toContain('meta.phase');
+    });
+
+    it('shows the gate ladder for every candidate, which nothing else can', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const frame = shell.debug?.hub.frame(clock.now());
+      const ticks = frame?.ticks ?? [];
+      expect(ticks.length).toBeGreaterThan(0);
+
+      const withCandidates = ticks.filter((tick) => tick.candidates.length > 0);
+      expect(withCandidates.length).toBeGreaterThan(0);
+
+      for (const tick of withCandidates) {
+        for (const candidate of tick.candidates) {
+          // Thirteen verdicts per candidate, every tick — including for the candidates that lost
+          // the ranking and never reached a gate in the shipping path (§5.5).
+          expect(candidate.ladder).toHaveLength(SUPPRESSION_REASONS.length);
+          expect(candidate.ladder.map((gate) => gate.reason)).toEqual(GATES.map((g) => g.reason));
+        }
+      }
+
+      // And at least one refusal is attributable to a named gate, rather than the whole corpus
+      // being "nothing was detected".
+      const refused = ticks.filter((tick) => !tick.decision.speak && tick.decision.key !== null);
+      expect(refused.length).toBeGreaterThan(0);
+    });
+
+    it('shows what the coach was given', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const turns = shell.debug?.hub.frame(clock.now()).turns ?? [];
+      expect(turns.length).toBeGreaterThan(0);
+
+      for (const turn of turns) {
+        // The snapshot and the brief as they were rendered — the pair that exists nowhere else a
+        // person can read, and the whole reason the assembler is decorated rather than the agent.
+        expect(turn.snapshotText.length).toBeGreaterThan(0);
+        expect(turn.snapshotTokens).toBeGreaterThan(0);
+        expect(turn.cause).toBe('trigger');
+        expect(turn.eventId).not.toBeNull();
+        // An empty brief would have been closed `silent` without reaching the session; every turn
+        // here got past that, so all of them have text behind them.
+        expect(turn.briefEmpty).toBe(false);
+        expect(turn.briefText.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('shows what became of a turn once it closes', async () => {
+      const { shell, clock, timers } = use();
+      await replay();
+
+      // A turn is `open` until `closeTurn`, which for the silent session is the nominal speech
+      // duration expiring. Asserting the outcome without flushing would be asserting that the
+      // fixture happens to run long enough, which is a fact about the fixture.
+      expect(shell.debug?.hub.frame(clock.now()).turns.every((t) => t.outcome === 'open')).toBe(
+        true,
+      );
+      timers.flush();
+
+      const closed = shell.debug?.hub.frame(clock.now()).turns.filter((t) => t.outcome !== 'open');
+      expect(closed?.length).toBeGreaterThan(0);
+      expect(closed?.map((turn) => turn.outcome)).toContain('spoke');
+    });
+
+    it('carries the engine state behind a refusal', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const gates = shell.debug?.hub.frame(clock.now()).session.gates;
+      // None of this is reachable through `EventEngine`'s public surface; it arrives on the
+      // `GateContext` the policy decorator sees.
+      expect(gates?.asOfMs).not.toBeNull();
+      expect(gates?.speakThreshold).toBeGreaterThan(0);
+      expect(gates?.unprompted).toBe(true);
+      expect(gates?.latched).toBeInstanceOf(Array);
+    });
+
+    it('counts what was detected against what was spoken', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const counters = shell.debug?.hub.frame(clock.now()).counters;
+      const detected = (counters?.detected ?? []).reduce((sum, row) => sum + row.count, 0);
+      const suppressed = (counters?.suppressed ?? []).reduce((sum, row) => sum + row.count, 0);
+
+      // §5.4's tuning signal, per reason rather than as one number — which is the difference
+      // between "Riki said nothing" and "Riki noticed nothing".
+      expect(detected).toBeGreaterThan(0);
+      expect(suppressed).toBeGreaterThan(0);
+      expect(counters?.ticks).toBeGreaterThan(0);
+    });
+
+    it('offers the tray row it now has somewhere to send', () => {
+      const { tray } = use();
+      expect(tray.labels).toContain('Open Inspector…');
+    });
   });
 });
 

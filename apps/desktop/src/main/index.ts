@@ -42,6 +42,7 @@ import { createOpenAiCoachModel } from '@riki/coach';
 import { resolveConfig } from '@riki/config';
 
 import { loadOrCreateGsiToken, loadSettings, resolvePaths, saveSettings } from './bootstrap.js';
+import { createElectronDebugWindowFactory } from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -169,6 +170,13 @@ function buildShell(): RikiShell {
     keys: createElectronKeySource({
       accelerator: config.hotkey.talk,
       now: () => clock.now(),
+    }),
+
+    // Constructed unconditionally and consulted only when `config.debug.enabled` — the factory
+    // creates no window until something calls `open()`, so an unused one costs a closure.
+    debugWindows: createElectronDebugWindowFactory({
+      preloadPath: paths.debugPreload,
+      entryPath: paths.debugEntry,
     }),
   });
 }

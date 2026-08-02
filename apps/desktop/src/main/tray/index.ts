@@ -49,12 +49,21 @@ export interface TrayController extends TrayEffectSink {
   dispose(): void;
 }
 
-export function createTrayController(surface: TraySurface): TrayController {
+export interface TrayControllerOptions {
+  /** Offers the inspector row. `config.debug.enabled`; false, and therefore absent, by default. */
+  readonly debug?: boolean;
+}
+
+export function createTrayController(
+  surface: TraySurface,
+  options: TrayControllerOptions = {},
+): TrayController {
   let model: TrayModel = {
     glyph: 'idle',
     muted: false,
     status: 'starting',
     coach: { mode: 'static', available: false },
+    debug: options.debug ?? false,
   };
   let disposed = false;
 

@@ -49,6 +49,12 @@ Docs are split by kind, because "design doc" was covering four different things:
   section and refreshed by nothing ([ADR-0027](adr/0027-the-hero-library-is-static.md)). **Built.**
   Read §3 before editing content — the policy is what keeps a static library from ageing into being
   wrong rather than merely old.
+- [**debug-inspector.md**](design/debug-inspector.md) — the dev-only window that answers *what does
+  Riki believe, what did it nearly say, and why did it stay quiet*: the world model with every
+  fact's provenance, every candidate against all thirteen gates, the snapshot and brief as composed
+  for each turn, and every fault the app reports and currently cannot log. **Built**, off by default
+  ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md)). Read it before adding a hook to
+  `packages/events` or `packages/context` for visibility — the reason it needed none is §3.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -112,6 +118,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
 | [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
+| [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default, read-only by construction |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

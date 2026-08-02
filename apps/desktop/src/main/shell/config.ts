@@ -84,12 +84,31 @@ export interface CoachConfig {
   readonly apiKey: ApiKey | null;
 }
 
+export interface DebugConfig {
+  /**
+   * The inspector window — dev-only, and **off unless asked for**.
+   *
+   * Not a placeholder default. With it off the shell installs no observing policy, so the extra
+   * gate evaluations in `main/debug/observing-policy.ts` never run; it adds no tray row, so there
+   * is no menu item that opens a window most people do not want; and it builds no hub, so no
+   * rendered snapshot, brief or coach transcript is held in memory at all. Each of those is a
+   * reason on its own, and the third is the one that makes the default a privacy decision rather
+   * than a performance one.
+   *
+   * There is no settings surface yet (`src/renderer/settings/` is a skeleton), so this is turned on
+   * by `{"debug": {"enabled": true}}` in `settings.json` under the app's data directory, or by
+   * `RIKI_DEBUG` — see `.env.example`.
+   */
+  readonly enabled: boolean;
+}
+
 export interface ShellConfig {
   readonly gsi: GsiConfig;
   readonly vision: VisionConfig;
   readonly logTail: LogTailConfig;
   readonly hotkey: HotkeyConfig;
   readonly coach: CoachConfig;
+  readonly debug: DebugConfig;
   /** Directory for durable memory (ADR-0013). `app.getPath('userData')` in production. */
   readonly dataDir: string;
   /** dota2 §6.4's off switch, persisted. `RIKI_UNPROMPTED=off` is the same setting. */
@@ -108,6 +127,7 @@ export const DEFAULTS: Omit<ShellConfig, 'gsi' | 'dataDir'> & {
   // deterministic coach is the one whose behaviour is known, tunable against a fixture corpus and
   // free; defaulting to the other one would ship an unmeasured judgement and a bill.
   coach: { mode: 'static', model: null, apiKey: null },
+  debug: { enabled: false },
   unprompted: true,
 };
 
@@ -125,6 +145,7 @@ export interface ShellConfigOverrides {
    * where the only writer is `resolveConfig`.
    */
   readonly coach?: Partial<Omit<CoachConfig, 'apiKey'>>;
+  readonly debug?: Partial<DebugConfig>;
   readonly unprompted?: boolean;
 }
 
@@ -169,6 +190,7 @@ export function resolveShellConfig(input: ResolveShellConfigInput): ShellConfig 
       model: input.coach?.model ?? input.coachSettings?.model ?? DEFAULTS.coach.model,
       apiKey: input.openAiKey ?? null,
     },
+    debug: { enabled: input.debug?.enabled ?? DEFAULTS.debug.enabled },
     unprompted: input.unprompted ?? DEFAULTS.unprompted,
   };
 }

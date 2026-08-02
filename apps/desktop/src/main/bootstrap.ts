@@ -103,6 +103,9 @@ export function saveSettings(dataDir: string, patch: Readonly<Record<string, unk
 export interface ShellPaths {
   readonly preload: string;
   readonly overlayEntry: string;
+  /** The inspector's own preload and document. A window gets one bridge, never both. */
+  readonly debugPreload: string;
+  readonly debugEntry: string;
   readonly trayIcons: string;
 }
 
@@ -123,6 +126,8 @@ export function resolvePaths(appRoot: string): ShellPaths {
   return {
     preload: join(appRoot, 'dist', 'preload', 'index.js'),
     overlayEntry: join(appRoot, 'dist', 'renderer', 'overlay', 'index.html'),
+    debugPreload: join(appRoot, 'dist', 'preload', 'debug.js'),
+    debugEntry: join(appRoot, 'dist', 'renderer', 'debug', 'index.html'),
     trayIcons: join(appRoot, 'resources', 'tray'),
   };
 }

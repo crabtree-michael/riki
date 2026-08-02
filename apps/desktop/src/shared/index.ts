@@ -8,4 +8,6 @@
  */
 
 export type * from './overlay.js';
+export type * from './debug.js';
+export { DEBUG_LIMITS, DEBUG_FRAME_INTERVAL_MS } from './debug.js';
 export * from './channels.js';

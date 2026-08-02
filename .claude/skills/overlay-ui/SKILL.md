@@ -226,6 +226,38 @@ one that is easy to miss: the filename must end in `Template` **and** `nativeIma
 must be called. Without the flag AppKit draws the black pixels literally, which is invisible in
 dark mode — and a menu-bar icon nobody can see reads as an app that did not start.
 
+**2026-08-02 — ⚠ the preload bridge has never loaded, and `window.rikiOverlay` does not exist.**
+Measured, not inferred: launch a `BrowserWindow` with `preload: dist/preload/index.js` and the
+overlay document, subscribe to `webContents.on('preload-error')`, and it fires with
+`Cannot use import statement outside a module`. `Object.keys(window).filter(k => k.startsWith('riki'))`
+is `[]`. So `renderer/overlay/index.ts`'s `start()` takes its `bridge === undefined` early return on
+every launch, the chip has never drawn in a real window, and **no test can see it** — the renderer
+tests inject a fake bridge and there is no Tier 5 harness.
+
+Two causes stack, and fixing either alone is not enough:
+
+- `apps/desktop/package.json` is `"type": "module"`, so `tsc` emits `dist/preload/*.js` as ESM.
+  Electron loads preload scripts as CommonJS. Setting `module: CommonJS` in `tsconfig.preload.json`
+  (plus `verbatimModuleSyntax: false`, and a `dist/preload/package.json` of `{"type":"commonjs"}`)
+  does produce CJS — and then you hit the second cause.
+- **A sandboxed preload must be a single self-contained file.** With `sandbox: true` the preload
+  loader gives you a subset of Node and *no relative `require`*: the CJS build fails with
+  `module not found: ./overlay-bridge.js`. Both preloads import a sibling and two `shared/` value
+  modules (`channels.js`, `intents.js`), so neither can ever load unbundled.
+
+So this needs a **preload bundling step**, which REPO_SKELETON.md §8.1 defers to "when Vite lands".
+The three routes, none of them free: bundle preload (correct, adds the build dependency the repo
+deliberately has not taken); make each preload self-contained by inlining the channel names and the
+intent allow-list (cheap, but duplicates the allow-list that exists specifically to be checked at
+two boundaries); or `sandbox: false`, which Electron does allow ESM preloads under and which gives
+up a security property overlay-architecture.md §6.2 requires — not acceptable.
+
+*Why:* this is invisible from every direction. `pnpm dev` starts cleanly, the window warms, the
+tray works, `pnpm check` is green, and the only symptom is a chip that never appears — which reads
+as "the coaching path did not fire" rather than "the renderer has no bridge". Do not spend the time
+twice: reproduce it in ten seconds with a `preload-error` listener before assuming your feature is
+what broke.
+
 ## See also
 
 `docs/design/overlay-architecture.md` (module structure, class signatures, the seams);

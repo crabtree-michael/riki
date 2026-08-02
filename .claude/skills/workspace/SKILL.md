@@ -60,6 +60,24 @@ and the gap between reading it and pushing is long enough for another agent to t
 number. Re-check after your final `git pull --rebase`; renumbering afterwards means moving a
 file and chasing its inbound links.
 
+**2026-08-02 — top-level `await` in an ESM Electron main deadlocks `app.whenReady()`.**
+Writing a throwaway `main.mjs` to drive the app is the fastest way to check something Vitest cannot
+reach, and this eats the first twenty minutes of it. `await app.whenReady()` at module top level
+never resolves: the process starts, runs the module body, and hangs until the timeout kills it, with
+no error and no output. `app.whenReady().then(() => { ... })` in the same file, same binary, works —
+verified by running both back to back. Electron will not fire `ready` until the ESM main module has
+finished evaluating, and a top-level await on `ready` is therefore a cycle. The same applies to a
+top-level `await import(...)` before the `whenReady` registration.
+
+Two smaller traps in the same ten minutes: **Electron main's `process.stdout` does not survive the
+`xvfb-run` pipe** on a headless box — write results to a file instead, or you will read an empty log
+and conclude the script never ran. And `pnpm exec electron <dir>` resolves the shim relative to a cwd
+that a compound command may have reset; use the absolute
+`node_modules/.pnpm/electron@*/node_modules/electron/dist/electron`.
+
+*Why:* the failure looks exactly like a hung app, so the natural next move is to debug the app.
+Both are one-line facts about the harness.
+
 ## Updating a skill
 
 Every area has a skill in `.claude/skills/`. When you finish a task, ask: *did I learn

@@ -65,6 +65,7 @@ function model(overrides: Partial<TrayModel> = {}): TrayModel {
     muted: false,
     status: 'ready',
     coach: { mode: 'static', available: true },
+    debug: false,
     ...overrides,
   };
 }
@@ -109,6 +110,19 @@ describe('the menu projection (ui-design.md §2.3)', () => {
     // with no way to find out why nothing changed.
     expect(row?.enabled).toBe(false);
     expect(row?.label).toContain('RIKI_OPENAI_API_KEY');
+  });
+
+  it('hides the inspector row unless debug is on, and offers it when it is', () => {
+    const idsOf = (debug: boolean): (string | undefined)[] =>
+      projectMenu(model({ debug }))
+        .filter((item) => item.kind === 'action')
+        .map((item) => item.id);
+
+    // The second deferred row to come back, and it comes back because it now opens something
+    // (main/debug/). It stays conditional: a debug row in a shipped build is the same mistake in
+    // the other direction. It sits last, below the coach row, because that one is the product.
+    expect(idsOf(false)).toEqual(['toggle-mute', 'toggle-coach', 'quit']);
+    expect(idsOf(true)).toEqual(['toggle-mute', 'toggle-coach', 'open-debug', 'quit']);
   });
 
   it('says what is wrong in the tooltip when the glyph is `attention`', () => {
