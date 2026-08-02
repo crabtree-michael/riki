@@ -132,7 +132,6 @@ function silentTray(): TraySurface & { readonly statuses: readonly string[]; qui
       actions.add(listener);
       return () => actions.delete(listener);
     },
-    onClick: () => () => undefined,
     destroy: () => undefined,
     quit() {
       for (const listener of [...actions]) listener('quit');

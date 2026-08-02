@@ -74,7 +74,9 @@ behaviour:
  !   attention     mic permission revoked / no audio device / auth expired
 ```
 
-Left-click → toggle mute. Right-click → menu:
+Either click → menu. Mute is the menu's own row and has no click gesture of its own (ADR-0028:
+a tray icon with a context menu opens it on left-click too, so "left-click → toggle mute" muted
+Riki every time someone looked at the status line):
 
 ```
  ┌──────────────────────────────┐

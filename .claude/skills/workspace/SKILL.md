@@ -83,6 +83,16 @@ should be worked, promote it into the body as a rule. Full rules: `REPO_SKELETON
 
 ## Learnings
 
+**2026-08-02 — `git log --all` searches nothing if you never fetched, and says so confidently.**
+A clone here can sit on a `main` that is several commits behind `origin/main` with **no
+remote-tracking refs at all** — `git branch -a` shows only `main` and a bare `origin/HEAD`. In that
+state `git log --all -S 'someSymbol'`, `git ls-files`, and `git cat-file -p HEAD:path` all return
+empty for code that exists on the remote, and empty reads as proof of absence. Three separate
+searches agreed the file had never existed; `git fetch --all` produced it immediately, along with
+two branches nobody mentioned. *Why:* the "pull before you start" rule above is not just about
+merge conflicts — an unfetched clone makes *absence* unfalsifiable. Before reporting that something
+is missing or was never written, run `git fetch --all` and say in the report that you did.
+
 **2026-08-01 — A lint rule you cannot see fail is decoration.** The `boundaries/*` rules in
 `eslint.config.js` are how §6.2's design decisions actually hold, and three of the four
 silently passed when first written. Two causes, both non-obvious:

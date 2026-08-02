@@ -66,6 +66,24 @@ unit tests.
 
 ## Learnings
 
+**2026-08-02 — a tray with a context menu has no left-click to spend.** `tray.setContextMenu(...)`
+makes the icon open that menu on click, on every platform; macOS opens it on *either* button and
+emits `click` as well. So `ui-design.md` §2.3's original "Left-click → toggle mute. Right-click →
+menu" was not two gestures — it was one, and wiring mute to `click` meant every glance at the
+status line toggled mute, with the menu that opened rendering the pre-toggle checkbox so the state
+looked merely laggy. Fixed in ADR-0028: mute is the menu row only, and `TraySurface.onClick` is
+gone rather than left unwired. *Why:* if you add a tray gesture, check what `setContextMenu`
+already claims before assuming a button is free — and note that this class of bug survives its own
+test suite. The test asserting it read `treats a left-click and the mute row as the same request`,
+which is the bug written down as an expectation, and it passed.
+
+**2026-08-02 — a port method with no subscriber cannot be regression-tested from below.** Once
+`onClick` was off `TraySurface`, no test could call it, so "clicking does not mute" is unassertable
+by construction. The guard that does work is one level up — proxy the surface, and assert the
+controller subscribes to exactly `['onAction']`. *Why:* it fails on *any* re-added subscription
+whatever it is wired to, which is the actual failure mode; verify it by reintroducing the wiring
+and watching it go red, because a test written after a fix passes trivially either way.
+
 **2026-08-01 — renderer code cannot name a DOM type yet.** `apps/desktop/tsconfig.json` is one
 project with `lib: ["ES2023"]`, so `export type X = HTMLElement` is `error TS2304` — measured,
 not inferred. Any view code you write against the DOM will not compile until step 6 splits the

@@ -11,6 +11,12 @@
  * state subsystem and mute is a condition rather than a phase (overlay §4.2) — so they arrive
  * through `setStatus` and `setMuted` instead. Three small writers beat one wide model that half
  * the app has to know how to build.
+ *
+ * **Mute has exactly one producer: the `toggle-mute` menu row.** Left-click is not a mute gesture.
+ * On macOS a tray icon with a context menu opens that menu on left-click *and* emits `click`, so
+ * wiring `click` to mute meant every attempt to read the status line silently muted Riki — and the
+ * menu it opened rendered from the pre-toggle model, so the checkbox disagreed with the state.
+ * ADR-0028; ui-design.md §2.3 was amended to match.
  */
 
 import type { TrayGlyph, Unsubscribe } from '../../shared/overlay.js';
@@ -30,8 +36,6 @@ export type { ElectronTrayOptions } from './electron-tray.js';
 export interface TraySurface {
   render(glyph: TrayGlyph, tooltip: string, menu: readonly TrayMenuItem[]): void;
   onAction(listener: (action: TrayAction) => void): Unsubscribe;
-  /** Left-click → toggle mute (§2.3). Separate from `onAction` because it has no menu row. */
-  onClick(listener: () => void): Unsubscribe;
   destroy(): void;
 }
 
@@ -53,9 +57,6 @@ export function createTrayController(surface: TraySurface): TrayController {
   }
 
   const muteListeners = new Set<() => void>();
-  const stopClick = surface.onClick(() => {
-    for (const listener of [...muteListeners]) listener();
-  });
   const stopAction = surface.onAction((action) => {
     if (action !== 'toggle-mute') return;
     for (const listener of [...muteListeners]) listener();
@@ -83,10 +84,11 @@ export function createTrayController(surface: TraySurface): TrayController {
     },
 
     /**
-     * Every action *except* mute, which has two producers and its own subscription.
+     * Every action *except* mute, which keeps its own subscription.
      *
-     * Splitting them is what stops `quit` from being reachable by a stray left-click: the click
-     * handler above is deliberately wired to one action and not to a generic dispatch.
+     * The split survives even though `toggle-mute` now has a single producer: mute is the one
+     * action with a state consequence the shell has to mirror back (`setMuted`), and routing it
+     * through the generic action channel is how it would pick up a second producer again.
      */
     onAction(listener): Unsubscribe {
       return surface.onAction((action) => {
@@ -103,7 +105,6 @@ export function createTrayController(surface: TraySurface): TrayController {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      stopClick();
       stopAction();
       muteListeners.clear();
       surface.destroy();

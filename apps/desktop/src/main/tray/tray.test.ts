@@ -23,7 +23,6 @@ interface Rendered {
 interface RecordingSurface extends TraySurface {
   readonly renders: readonly Rendered[];
   readonly last: Rendered;
-  click(): void;
   choose(action: TrayAction): void;
   readonly destroyed: boolean;
 }
@@ -31,7 +30,6 @@ interface RecordingSurface extends TraySurface {
 function recordingSurface(): RecordingSurface {
   const renders: Rendered[] = [];
   const actions = new Set<(action: TrayAction) => void>();
-  const clicks = new Set<() => void>();
   let destroyed = false;
 
   return {
@@ -51,15 +49,8 @@ function recordingSurface(): RecordingSurface {
       actions.add(listener);
       return () => actions.delete(listener);
     },
-    onClick(listener): Unsubscribe {
-      clicks.add(listener);
-      return () => clicks.delete(listener);
-    },
     destroy() {
       destroyed = true;
-    },
-    click() {
-      for (const listener of [...clicks]) listener();
     },
     choose(action) {
       for (const listener of [...actions]) listener(action);
@@ -125,26 +116,54 @@ describe('the controller', () => {
     expect(surface.last.glyph).toBe('attention');
   });
 
-  it('treats a left-click and the mute row as the same request', () => {
+  /**
+   * The regression behind ADR-0028, and the only test here that can still catch it.
+   *
+   * Mute used to have two producers: the menu row, and `surface.onClick`. On macOS opening the menu
+   * *is* a left-click, so reading the status line silently muted Riki. The channel is gone from
+   * `TraySurface` now, which means no test can call it — so what is asserted instead is the thing
+   * that went wrong one level up: how many channels the controller subscribes to at all.
+   *
+   * Re-add a click subscription in `createTrayController` and this fails, whatever it is wired to.
+   */
+  it('subscribes to one channel, so mute cannot acquire a second producer', () => {
+    const reads: string[] = [];
+    const surface = new Proxy(recordingSurface(), {
+      get(target, prop, receiver): unknown {
+        if (typeof prop === 'string') reads.push(prop);
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    createTrayController(surface);
+
+    expect(reads.filter((prop) => prop.startsWith('on'))).toEqual(['onAction']);
+  });
+
+  it('toggles mute from the menu row and from nothing else', () => {
     const surface = recordingSurface();
     const tray = createTrayController(surface);
 
     let toggles = 0;
     tray.onToggleMute(() => (toggles += 1));
 
-    surface.click();
+    tray.set('active');
+    tray.setStatus('Watching the game.');
+    surface.choose('quit');
+    expect(toggles).toBe(0);
+
     surface.choose('toggle-mute');
-    expect(toggles).toBe(2);
+    expect(toggles).toBe(1);
   });
 
-  it('does not let a stray click reach Quit', () => {
+  it('keeps the mute row off the generic action channel, so Quit stays out of reach', () => {
     const surface = recordingSurface();
     const tray = createTrayController(surface);
 
     const seen: TrayAction[] = [];
     tray.onAction((action) => seen.push(action));
 
-    surface.click();
+    surface.choose('toggle-mute');
     expect(seen).toEqual([]);
 
     surface.choose('quit');

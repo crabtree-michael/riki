@@ -102,6 +102,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0025](adr/0025-packages-export-source-to-the-toolchain.md) | Packages export source to the toolchain and `dist` to Node | Accepted — what made `pnpm dev` possible without a bundler |
 | [0026](adr/0026-the-coaching-root-is-built-per-match.md) | The coaching root is built per match, not per app | Accepted — the lifetime step 6 had to decide   |
 | [0027](adr/0027-the-hero-library-is-static.md)            | The hero library is static; nothing refreshes it | Accepted — no network at runtime          |
+| [0028](adr/0028-mute-has-one-producer-the-menu-row.md)    | Mute has one producer, and it is the menu row | Accepted — amends ui-design §2.3's click gesture |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

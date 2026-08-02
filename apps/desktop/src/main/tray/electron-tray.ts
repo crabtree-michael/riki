@@ -12,6 +12,9 @@
  *   outlives the function that made it. A `Tray` that is only referenced by a local is garbage
  *   collected and the icon silently disappears, usually minutes later — which is why the shell
  *   holds the controller for the life of the app rather than re-creating it.
+ * - **`setContextMenu` claims the left-click.** Once a context menu is set, clicking the icon opens
+ *   that menu on every platform, and macOS *also* emits `click`. There is no `click` left to give a
+ *   second meaning to, so this file no longer subscribes to one at all (ADR-0028).
  *
  * The right-click menu is rebuilt on every render rather than mutated. Electron's `Menu` is
  * immutable once built, and the alternative — tracking which item changed — is bookkeeping in
@@ -41,12 +44,6 @@ function iconFor(dir: string, glyph: TrayGlyph): Electron.NativeImage {
 export function createElectronTray(options: ElectronTrayOptions): TraySurface {
   const tray = new Tray(iconFor(options.iconDir, 'idle'));
   const actionListeners = new Set<(action: TrayAction) => void>();
-  const clickListeners = new Set<() => void>();
-
-  const onClick = (): void => {
-    for (const listener of [...clickListeners]) listener();
-  };
-  tray.on('click', onClick);
 
   function toTemplate(items: readonly TrayMenuItem[]): MenuItemConstructorOptions[] {
     return items.map((item): MenuItemConstructorOptions => {
@@ -81,18 +78,9 @@ export function createElectronTray(options: ElectronTrayOptions): TraySurface {
       return () => actionListeners.delete(listener);
     },
 
-    onClick(listener): Unsubscribe {
-      clickListeners.add(listener);
-      return () => clickListeners.delete(listener);
-    },
-
     destroy(): void {
       actionListeners.clear();
-      clickListeners.clear();
-      if (!tray.isDestroyed()) {
-        tray.off('click', onClick);
-        tray.destroy();
-      }
+      if (!tray.isDestroyed()) tray.destroy();
     },
   };
 }
