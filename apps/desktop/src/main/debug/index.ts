@@ -24,9 +24,11 @@
  * Three properties hold the whole thing together, and each is enforced somewhere rather than
  * remembered:
  *
- * - **It cannot change what the app does.** Both decorators return their delegate's value unchanged
- *   (`observing-policy.ts`, `observing-context.ts`), the telemetry decorator calls its delegate
- *   first and always, and the renderer's bridge has no method that reaches anything mutable.
+ * - **It changes nothing on its own.** Both decorators return their delegate's value unchanged
+ *   (`observing-policy.ts`, `observing-context.ts`) and the telemetry decorator calls its delegate
+ *   first and always, so with the window open and untouched the app behaves exactly as it does with
+ *   the flag off. The one thing that *can* change behaviour is a `control` intent, which only
+ *   arrives when somebody clicks and can only reach a row in `controls.ts`' registry (ADR-0037).
  * - **It costs nothing when off.** `config.debug.enabled` is false by default; with it false the
  *   shell builds no hub, installs no decorator, adds no tray row and creates no window, so the
  *   extra gate evaluations in `observing-policy.ts` never run.
@@ -45,6 +47,7 @@ import type { Timers } from '@riki/context';
 
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugHub, DebugSurface, DebugWindow, DebugWindowFactory } from './contracts.js';
+import type { DebugControlPort } from './controls.js';
 import { createDebugHub } from './hub.js';
 
 export * from './contracts.js';
@@ -57,6 +60,15 @@ export { withDebugTelemetry } from './telemetry.js';
 export type { DebugTelemetryDeps } from './telemetry.js';
 export { projectCounters, projectWorld, renderValue } from './projections.js';
 export type { WorldProjectionDeps } from './projections.js';
+export { createDebugControls } from './controls.js';
+export type {
+  CoachModeControl,
+  DebugControlOutcome,
+  DebugControlPort,
+  DebugControls,
+  DebugControlsDeps,
+  UnpromptedControl,
+} from './controls.js';
 export { createElectronDebugWindowFactory } from './electron-window.js';
 export type { ElectronDebugWindowOptions } from './electron-window.js';
 
@@ -74,6 +86,14 @@ export interface DebugSurfaceDeps {
   readonly timers: Timers;
   readonly now: () => number;
   readonly intervalMs?: number;
+  /**
+   * Absent means **display but do not control** — every `control` intent is refused and recorded.
+   *
+   * Optional for the same reason `windows` is: the collection half of this component is testable
+   * with neither, and a headless replay wants frames without a way to move a threshold underneath
+   * itself. It is also what keeps a shell built before this port existed compiling unchanged.
+   */
+  readonly controls?: DebugControlPort;
 }
 
 /**
@@ -118,11 +138,39 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     cancelPump = null;
   }
 
+  /**
+   * A control change, and then a frame straight back.
+   *
+   * Not waiting out the interval matters more here than anywhere else in this component: a control
+   * whose value visibly lags the click by up to 250 ms reads as a control that did not work, and the
+   * first thing anybody does with one that looks broken is click it again.
+   *
+   * A refusal — an unknown id, a locked gate, the wrong value type — becomes an `inspector` problem
+   * rather than a silence. `controls` being absent is the same case: the panel is displayed from
+   * whatever `DebugSources.controls` returns, so a window that could show controls but not move them
+   * has to say so somewhere.
+   */
+  function applyControl(id: string, value: boolean | number | string): void {
+    const outcome = deps.controls?.apply(id, value) ?? {
+      ok: false,
+      reason: 'this inspector has no control port',
+    };
+    if (!outcome.ok) {
+      hub.recordProblem('inspector', `${id}: ${outcome.reason ?? 'refused'}`, deps.now());
+    }
+    sendFrame();
+  }
+
   const stopIntent = window.onIntent((intent) => {
     // The window remounting after a crash: answer immediately rather than making it wait out the
     // interval on an empty document.
     if (intent.kind === 'ready') sendFrame();
     if (intent.kind === 'fault') hub.recordProblem('inspector', intent.message, deps.now());
+    if (intent.kind === 'control') applyControl(intent.id, intent.value);
+    if (intent.kind === 'reset-controls') {
+      deps.controls?.reset();
+      sendFrame();
+    }
   });
 
   const stopClosed = window.onClosed(() => {
@@ -131,6 +179,7 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
 
   return {
     hub,
+    controls: deps.controls ?? null,
 
     async open(): Promise<void> {
       if (disposed) return;

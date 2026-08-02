@@ -58,6 +58,7 @@ const CALLS: Record<keyof ShellTelemetry, readonly unknown[]> = {
   sidecarProtocolMismatch: [3, 2],
   hotkeyUnavailable: ['Control+`', false],
   pushToTalkUnavailable: [],
+  debugOverride: ['trigger.speakThreshold', '0.05'],
   sessionOpenFailed: ['the Realtime API rejected the key'],
   coachMode: ['llm'],
   coachUnavailable: ['no API key'],

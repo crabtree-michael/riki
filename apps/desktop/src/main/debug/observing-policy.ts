@@ -48,8 +48,6 @@ export interface ObservingPolicyDeps {
    * most able to cause.
    */
   readonly gates?: readonly Gate[];
-  /** `cfg.tapeSalience`, so the report can say which candidates reached the event tape. */
-  readonly tapeSalience: number;
   /** The world model's version at the moment of the tick. */
   readonly worldVersion: () => number;
 }
@@ -84,9 +82,12 @@ export function createObservingPolicy(deps: ObservingPolicyDeps): TriggerPolicy 
           actWithinSeconds: candidate.detection.actWithinSeconds,
           text: candidate.detection.text,
           // The engine's own tape rule (`engine.ts`): above the floor, and past gate 1. Recomputed
-          // rather than observed because the tape is written before the policy is consulted.
+          // rather than observed because the tape is written before the policy is consulted, and
+          // the floor is read off `ctx.cfg` rather than injected so that it is by construction the
+          // config the engine used on this tick — which since ADR-0037 is a value the Controls
+          // panel can move underneath it.
           taped:
-            candidate.salience >= deps.tapeSalience &&
+            candidate.salience >= ctx.cfg.tapeSalience &&
             !refusedBy(gates, 'not_in_match', candidate, ctx),
           ladder: gates.map((gate) => ({
             reason: gate.reason,

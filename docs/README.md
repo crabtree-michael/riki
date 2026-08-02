@@ -50,11 +50,14 @@ Docs are split by kind, because "design doc" was covering four different things:
   Read §3 before editing content — the policy is what keeps a static library from ageing into being
   wrong rather than merely old.
 - [**debug-inspector.md**](design/debug-inspector.md) — the dev-only window that answers *what does
-  Riki believe, what did it nearly say, and why did it stay quiet*: the world model with every
-  fact's provenance, every candidate against all thirteen gates, the snapshot and brief as composed
-  for each turn, and every fault the app reports and currently cannot log. **Built**, off by default
-  ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md)). Read it before adding a hook to
-  `packages/events` or `packages/context` for visibility — the reason it needed none is §3.
+  Riki believe, what did it nearly say, why did it stay quiet*, and *what happens if I move this
+  number*: the world model with every fact's provenance, every candidate against all thirteen gates,
+  the snapshot and brief as composed for each turn, every fault the app reports and currently cannot
+  log, and a live control for every number in `packages/events/src/config.ts`. **Built**, off by
+  default ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md),
+  [ADR-0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md)). Read it before
+  adding a hook or a setter to `packages/events` or `packages/context` — the reason it needed
+  neither is §3 and §4.2.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -118,11 +121,12 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
 | [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
-| [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default, read-only by construction |
+| [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default; the read-only half is amended by ADR-0037 |
 | [0033](adr/0033-screencapturekit-is-the-shipping-backend.md) | `ScreenCaptureKit` is the shipping backend, and it is cross-compiled rather than run | Accepted — macOS captures; six things still need a Mac |
 | [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 | [0035](adr/0035-the-vision-leg-is-testable-because-a-fake-speaks-the-protocol.md) | The vision leg is testable because a fake speaks the protocol, not because the app has a second wiring | Accepted — `FakeVisionSidecar` at the `ChildProcessPort` seam; the codec's wire→world-model translation was missing entirely |
 | [0036](adr/0036-the-inspector-anchors-on-content-not-on-offset.md) | The inspector anchors on content, not on an offset | Accepted — the three columns survive the redraw; a prepending list makes a saved `scrollTop` wrong |
+| [0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md) | The inspector is a control surface, within a registry | Accepted — amends ADR-0032's read-only half; inert unless clicked, and `packages/events` still has no setter |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

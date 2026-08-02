@@ -186,6 +186,11 @@ export function createDebugHub(): DebugHub {
         },
 
         problems: [...problems],
+
+        // Not reset with the match, deliberately: an override is a property of the tuning session,
+        // and a threshold that silently snapped back to the config at the horn would be the most
+        // confusing thing this window could do to somebody halfway through measuring something.
+        controls: sources.controls?.() ?? [],
       };
     },
 

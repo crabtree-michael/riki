@@ -1,8 +1,27 @@
 /**
  * Mounts the inspector and drives it from the bridge.
  *
- * Everything stateful about the view is here and it is three things: the last frame drawn, whether
- * drawing is frozen, and whether `not_in_match` ticks are hidden. `view.ts` is pure.
+ * Everything stateful about the view is here and it is four things: the last frame drawn, whether
+ * drawing is frozen, whether `not_in_match` ticks are hidden, and which Controls groups are
+ * expanded. `view.ts` is pure.
+ *
+ * ## One listener, not four hundred
+ *
+ * The Controls panel (ADR-0037) is the only interactive surface inside a column, and a column's
+ * children are replaced four times a second. Per-node listeners would be created and discarded at
+ * that rate for the life of the window, so `view.ts` marks its buttons with `data-control` and this
+ * file puts a single delegated `click` on the root. The value crosses as a string and is decoded
+ * here against `data-kind`, which is the same shape as every other boundary in this app: the sender
+ * describes, the receiver decides.
+ *
+ * ## Focus has to be restored by hand
+ *
+ * The header's two buttons persist and keep their own focus. Everything in the Controls panel does
+ * not: its buttons live inside a column, so a redraw replaces the node the user is standing on and
+ * takes keyboard focus to `<body>` with it — which makes holding `+` down, or tabbing to a control
+ * at all, impossible. Every actionable node carries a stable `data-focus` key and `draw()` puts
+ * focus back on the node that has it. It is the focus counterpart of what `scroll.ts` does for
+ * position, and it is eight lines.
  *
  * ## Freeze is why this window is usable
  *
@@ -32,12 +51,13 @@
  * Text selection is still lost on every redraw, and that is what the freeze button is for.
  */
 
-import type { DebugFrame, RikiDebugBridge } from '../../shared/debug.js';
+import type { DebugControlValue, DebugFrame, RikiDebugBridge } from '../../shared/debug.js';
 import type { ViewOptions } from './view.js';
 import { captureScroll, restoreScroll } from './scroll.js';
 import {
   DEFAULT_VIEW_OPTIONS,
   el,
+  renderControls,
   renderCounters,
   renderDerived,
   renderEnemies,
@@ -102,10 +122,23 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
       return;
     }
 
+    // Read before the columns are refilled and restored at the end, for the same reason `scroll.ts`
+    // captures a position: the node the reader is standing on is about to be replaced. Keyed off
+    // `document.activeElement`, so focus that was outside this widget reads as null and is not
+    // stolen.
+    const focused = document.activeElement;
+    const focusKey =
+      focused instanceof HTMLElement && root.contains(focused)
+        ? (focused.dataset.focus ?? null)
+        : null;
+
     const frame = latest;
     drawHeader(frame);
 
     fill(stateColumn, [
+      // First, above the state it governs. Everything below this panel is a reading of whatever it
+      // currently says, which is the order it should be read in.
+      renderControls(frame.controls, options),
       renderGates(frame.session.gates, frame.at),
       renderWorld(frame.world),
       renderEnemies(frame.world),
@@ -122,6 +155,25 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
       root.replaceChildren(header, body);
       attached = true;
     }
+
+    if (focusKey !== null) {
+      const restored = root.querySelector(`[data-focus="${cssEscape(focusKey)}"]`);
+      if (restored instanceof HTMLElement) restored.focus();
+    }
+  }
+
+  /**
+   * `CSS.escape`, or a good-enough fall-back.
+   *
+   * The keys are ours — a control id, a group name, an enum option — so the characters in them are
+   * known and tame. This is here because `happy-dom` does not implement `CSS.escape`, and a Tier 1
+   * test that threw on the first redraw after a click would be a test failure with no defect
+   * behind it.
+   */
+  function cssEscape(value: string): string {
+    return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(value)
+      : value.replace(/["\\]/g, '\\$&');
   }
 
   function offline(message: string): void {
@@ -155,6 +207,68 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
     freeze.setAttribute('aria-pressed', String(frozen));
     freeze.textContent = frozen ? 'Frozen' : 'Freeze';
   }
+
+  /**
+   * A control's value crosses the DOM as a string; this turns it back.
+   *
+   * Refusing rather than guessing when `kind` is missing or the number will not parse. The other
+   * side of this wire is `parseDebugIntent`, which refuses the same things again — but a `NaN` that
+   * left here would be a stepper that silently stopped working, which is harder to notice than one
+   * that never sent.
+   */
+  function decodeControl(
+    kind: string | undefined,
+    raw: string | undefined,
+  ): DebugControlValue | null {
+    if (raw === undefined) return null;
+    if (kind === 'boolean') return raw === 'true';
+    if (kind === 'enum') return raw;
+    if (kind !== 'number') return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function toggleGroup(name: string): readonly string[] {
+    return options.openGroups.includes(name)
+      ? options.openGroups.filter((each) => each !== name)
+      : [...options.openGroups, name];
+  }
+
+  /**
+   * The Controls panel's whole event surface: one listener, on the root, for the window's life.
+   *
+   * Nothing here changes local state except the group expansion, which is view state and never
+   * leaves the renderer. Everything else is sent and then *forgotten* — the panel redraws from the
+   * next frame, so a value that main clamped, snapped or refused appears as what main decided rather
+   * than as what was clicked. That is the same rule the overlay follows: the renderer draws what it
+   * is told and never predicts.
+   */
+  function onClick(event: Event): void {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest('button');
+    if (button === null || button.hasAttribute('disabled')) return;
+
+    const group = button.dataset.group;
+    if (group !== undefined) {
+      options = { ...options, openGroups: toggleGroup(group) };
+      draw();
+      return;
+    }
+
+    if (button.dataset.reset !== undefined) {
+      bridge.send({ kind: 'reset-controls' });
+      return;
+    }
+
+    const id = button.dataset.control;
+    if (id === undefined) return;
+    const value = decodeControl(button.dataset.kind, button.dataset.value);
+    if (value === null) return;
+    bridge.send({ kind: 'control', id, value });
+  }
+
+  root.addEventListener('click', onClick);
 
   const stop = bridge.onCommand((command) => {
     if (command.kind === 'teardown') {
@@ -193,6 +307,7 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
 
     dispose(): void {
       stop();
+      root.removeEventListener('click', onClick);
       root.replaceChildren();
       attached = false;
     },

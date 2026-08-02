@@ -31,6 +31,11 @@ export const DEBUG_BRIDGE_KEY = 'rikiDebug';
 export const DEBUG_CHANNELS = {
   /** main → renderer, 4 Hz while the window is open: a whole `DebugFrame`, or a teardown. */
   command: 'riki:debug:command',
-  /** renderer → main. Two members, neither of which can change anything about the running app. */
+  /**
+   * renderer → main. Four members: `ready`, `fault`, and the two that move a setting (ADR-0037).
+   *
+   * Validated against `parseDebugIntent` at both ends, and a `control` is validated a second time
+   * in main against the registry — shape is not authority.
+   */
   intent: 'riki:debug:intent',
 } as const;

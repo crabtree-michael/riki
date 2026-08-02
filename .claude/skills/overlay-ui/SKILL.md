@@ -35,10 +35,10 @@ Hidden must render **no window at all** — idle costs nothing, and a test asser
   (chip, motion, ballistics, tokens). Fakes for every injected seam are in `main/testing/fakes.ts`
   and chip models for renderer tests in `renderer/overlay/testing/models.ts` — use them rather than
   writing new ones.
-- **Nothing launches it yet.** There is no app entry, no bundler, no `pnpm build`/`dev`, and no
-  Tier 5 harness, so the chip has never been rendered on a screen and every claim in §12 of the
-  design doc is still unverified. `index.html` expects a compiled `index.js` beside it; the build
-  that produces one belongs to the `apps/desktop` shell.
+- **`pnpm dev` launches it, and there is still no Tier 5 harness.** The app entry, the asset copy
+  and `scripts/bundle.mjs` all landed, so a window can be put on a screen — but nothing automated
+  does it, so §12's claims are verified only as far as somebody has looked. The Learnings section
+  below has a fifteen-minute recipe for looking.
 - **The chip can carry no clickable affordance.** `setIgnoreMouseEvents(true)` means the window
   receives no pointer event at all, so `Esc ✕` and `Fix ▸` in `ui-design.md` §5.1 are keyboard
   hints rendered as text, not buttons.
@@ -54,6 +54,10 @@ Hidden must render **no window at all** — idle costs nothing, and a test asser
   spike is a blocking risk and must precede real depth here.
 - **Renderer code may not import from `main/`.** The preload bridge is the only path,
   `contextIsolation` stays on, and no Node reaches the renderer. A lint boundary enforces it.
+- **The inspector is the one renderer that can change the app** (ADR-0037), and it does it through a
+  registry in `main/debug/controls.ts` rather than through a wider bridge. If you need a new setting
+  exposed there, add a row — do not add an intent. `parseDebugIntent` checks *shape*; main checks
+  whether the id is registered and unlocked, and the two are deliberately not the same check.
 - Push-to-talk is the default trigger, with a tap/hold gesture. Detect hotkey conflicts at
   bind time rather than failing silently in-game.
 - Multi-monitor and non-default HUD scales are normal cases here, not edge cases.
@@ -65,6 +69,45 @@ state machine itself pure and unit-tested; drive transitions in e2e, assert arit
 unit tests.
 
 ## Learnings
+
+**2026-08-02 — drive a real window from a throwaway `main.mjs`; it is fifteen minutes and it is the
+only thing that checks the renderer↔main round trip.** Every window in this app is Tier-5-untested
+(there is no Playwright harness), and unit tests cover both halves of a bridge and never its
+installation. This works, headless, and produces a screenshot:
+
+```sh
+mkdir -p /tmp/probe && cat > /tmp/probe/package.json <<'EOF'
+{ "name": "probe", "version": "0.0.0", "main": "main.mjs", "type": "module" }
+EOF
+# main.mjs: app.whenReady().then(async () => { ... }) — never a top-level await (workspace skill)
+xvfb-run -a -s "-screen 0 1400x1000x24" \
+  node_modules/.pnpm/electron@*/node_modules/electron/dist/electron --no-sandbox /tmp/probe
+```
+
+Inside it, `await import('<repo>/apps/desktop/dist/main/debug/index.js')` gives you the real
+factories, and `webContents.executeJavaScript(...)` is how you *act* as the user —
+`document.querySelector('[data-focus="…"]').click()` goes through the real preload, the real IPC
+channel and the real allow-list. `webContents.capturePage()` then writes a PNG you can actually
+look at, which is what caught that every Controls row was four lines tall. Write results to a file:
+main's `process.stdout` does not survive the `xvfb-run` pipe. Build first — `pnpm typecheck &&
+pnpm assets && pnpm bundle` — because it drives `dist/`, not `src/`.
+
+*Why:* this is how the inspector's one unverified hop (main → renderer over IPC) got verified, and
+how the stale ⚠ in `debug-inspector.md` §9 was found to have been fixed by ADR-0034 two commits
+earlier. Nothing in the test suite could have told you either.
+
+**2026-08-02 — a document redrawn whole cannot hold an `<input>`, and loses focus every frame.**
+The inspector rebuilds itself at 4 Hz (ADR-0032), so the Controls panel (ADR-0037) is buttons only:
+a text field being typed into has its value replaced mid-keystroke, and a stepper click is atomic.
+Focus is the subtler half — a redraw replaces the node the user is standing on, so tabbing to a
+control or holding a key down is impossible unless focus is restored by hand. Every actionable node
+carries a `data-focus` key and `draw()` re-focuses the matching node afterwards; it is eight lines.
+
+Two traps in those eight lines: `happy-dom` does **not** implement `CSS.escape`, so a naive
+`querySelector` with a template key throws on the first redraw after a click and reads as a test
+failure with no defect behind it; and one delegated `click` listener on the root is worth writing
+rather than per-node listeners, which would otherwise be created and discarded four times a second
+for the life of the window.
 
 **2026-08-02 — the overlay's preload script had never loaded, since the step that wrote it.**
 Electron loads a preload as **CommonJS**; `apps/desktop/package.json` is `"type": "module"` and

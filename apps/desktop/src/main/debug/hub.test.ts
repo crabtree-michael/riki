@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { DebugControl } from '../../shared/debug.js';
 import { DEBUG_LIMITS } from '../../shared/debug.js';
 import type { DebugGateInput, DebugTickInput, DebugTurnOpenedInput } from './contracts.js';
 import { createDebugHub, toCounts } from './hub.js';
@@ -69,6 +70,26 @@ function turn(overrides: Partial<DebugTurnOpenedInput> = {}): DebugTurnOpenedInp
     briefOmitted: [],
     briefEmpty: false,
     ...overrides,
+  };
+}
+
+/** One control, as `controls.ts` would describe it. The hub passes these through untouched. */
+function control(): DebugControl {
+  return {
+    id: 'trigger.speakThreshold',
+    group: 'Thresholds',
+    label: 'speak threshold',
+    kind: 'number',
+    value: 0.05,
+    base: 0.3,
+    overridden: true,
+    min: 0,
+    max: 1,
+    step: 0.05,
+    options: [],
+    unit: null,
+    note: null,
+    locked: null,
   };
 }
 
@@ -248,6 +269,19 @@ describe('problems and the match boundary', () => {
     // the next one starts.
     expect(frame.problems).toEqual([{ at: 900, origin: 'sidecar', message: 'thread panicked' }]);
   });
+
+  it('keeps the controls across a match reset too', () => {
+    const hub = createDebugHub();
+    hub.observe({ controls: () => [control()] });
+
+    hub.resetMatch();
+
+    // An override belongs to the tuning session rather than to the match. A threshold that snapped
+    // back to the config at the horn would be the most confusing thing this window could do to
+    // somebody halfway through measuring something — and the panel is pulled, so the only way to
+    // get this wrong would be to stop pulling it.
+    expect(hub.frame(1_000).controls).toHaveLength(1);
+  });
 });
 
 describe('pulled sources', () => {
@@ -290,10 +324,12 @@ describe('pulled sources', () => {
         suppressed: [{ key: 'latched', count: 9 }],
         spoken: 1,
       }),
+      controls: () => [control()],
     });
 
     const frame = hub.frame(1_000);
     expect(frame.session.matchId).toBe('789');
+    expect(frame.controls).toEqual([control()]);
     expect(frame.session.gates.unprompted).toBe(true);
     expect(frame.world.facts[0]?.ageMs).toBe(100);
     // Ages are computed against the frame's `now`, not stored — a stored age is already wrong.

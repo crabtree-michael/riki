@@ -3,8 +3,8 @@
  *
  * The inspector is the dev-only window that answers *what does Riki currently believe, what did it
  * nearly say, and why did it stay quiet* — the questions the golden corpora in `fixtures/golden/`
- * can only answer about a moment somebody wrote down in advance. Its design is
- * docs/design/debug-inspector.md.
+ * can only answer about a moment somebody wrote down in advance — and, since ADR-0037, *what
+ * happens if I move this number*. Its design is docs/design/debug-inspector.md.
  *
  * Three properties of this file are load-bearing:
  *
@@ -61,6 +61,16 @@ export interface DebugFrame {
   readonly turns: readonly DebugTurn[];
   readonly counters: DebugCounters;
   readonly problems: readonly DebugProblem[];
+  /**
+   * Every setting the window may move, with its current value — see `DebugControl`.
+   *
+   * In the frame rather than fetched once on mount, because a control's value can change without
+   * the window asking: `coach.mode` degrades to `static` when `llm` has no key behind it, and both
+   * coach controls are also driven from the tray. A list that were cached in the renderer would
+   * disagree with the app the first time either happened, and a control that lies about its own
+   * value is worse than no control.
+   */
+  readonly controls: readonly DebugControl[];
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -366,6 +376,63 @@ export interface DebugProblem {
 }
 
 // -----------------------------------------------------------------------------------------------
+// Controls — the settings the window may move (ADR-0037)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * The three value shapes a control can carry. Anything else would need a widget nobody has asked
+ * for, and `blockedModes` and `escapeItems` — the two list-valued settings — are shown locked.
+ */
+export type DebugControlValue = boolean | number | string;
+
+/**
+ * One setting, described completely enough that the renderer needs no table of its own.
+ *
+ * **Self-describing on purpose.** The registry lives in `main/debug/controls.ts`, where it can be
+ * derived mechanically from `TriggerConfig`, `COACH_EVENT_KINDS` and `GATES` — so a number added to
+ * `packages/events/src/config.ts` fails the compiler there until it has a row, and appears in this
+ * window with no renderer change at all. A second copy of that table over here is exactly the
+ * hand-maintained duplicate the header's "no union is restated from a package" rule refuses.
+ *
+ * Every field is present and nullable rather than optional, for the same reason the panels never
+ * infer: a control with no `min` and a control whose `min` did not survive the crossing should not
+ * look the same.
+ */
+export interface DebugControl {
+  /** Stable, e.g. `trigger.speakThreshold`, `gate.kind_cooldown`, `coach.mode`. */
+  readonly id: string;
+  /** Display grouping, e.g. `Coach`, `Thresholds`, `Gates`. Groups collapse independently. */
+  readonly group: string;
+  readonly label: string;
+  readonly kind: 'boolean' | 'number' | 'enum';
+  readonly value: DebugControlValue;
+  /**
+   * What the value would be with no override — the resolved config, not the shipped default.
+   *
+   * Shown beside an overridden value so a tuning session can always be read against what the app
+   * would do on its own, and it is what `reset` restores.
+   */
+  readonly base: DebugControlValue;
+  readonly overridden: boolean;
+  /** Numbers only; null on the other kinds. `step` is also the stepper's increment. */
+  readonly min: number | null;
+  readonly max: number | null;
+  readonly step: number | null;
+  /** `enum` only; empty otherwise. */
+  readonly options: readonly string[];
+  /** `ms`, `s`, `gold`, … — appended to the value, never parsed. */
+  readonly unit: string | null;
+  readonly note: string | null;
+  /**
+   * Non-null means **displayed and refused**, and this is the reason why.
+   *
+   * Shown rather than hidden deliberately. "Why can I not turn off the muted gate" is a question
+   * the window should answer in place; a control that is simply absent invites somebody to add it.
+   */
+  readonly locked: string | null;
+}
+
+// -----------------------------------------------------------------------------------------------
 // The bridge
 // -----------------------------------------------------------------------------------------------
 
@@ -377,6 +444,9 @@ export const DEBUG_LIMITS = {
   facts: 64,
   /** Snapshot and brief text, per turn. Generous — a snapshot is ~300 tokens by design. */
   textChars: 8_000,
+  /** A control id and an enum value. Both are ours; the cap is against a malformed sender. */
+  controlIdChars: 64,
+  controlValueChars: 64,
 } as const;
 
 /** How often main pushes a frame while the window is open. 4 Hz reads as live and costs nothing. */
@@ -391,14 +461,37 @@ export type DebugIntent =
   /** Mounted, or remounted after a crash: main pushes a frame immediately. */
   | { readonly kind: 'ready' }
   /** The renderer has no logger and may not import @riki/telemetry; it reports through here. */
-  | { readonly kind: 'fault'; readonly message: string };
+  | { readonly kind: 'fault'; readonly message: string }
+  /**
+   * Move one setting, by id (ADR-0037).
+   *
+   * The id is checked twice, and the two checks are different questions. Preload asks whether this
+   * is *shaped* like a control intent, which is all it can know; main asks whether the id is a
+   * **registered control that is not locked**, which is the check that actually decides anything.
+   * An unrecognised id is recorded as an `inspector` problem rather than ignored — a control that
+   * silently does nothing is the failure this window exists to make impossible.
+   */
+  | { readonly kind: 'control'; readonly id: string; readonly value: DebugControlValue }
+  /** Drop every override at once, so a tuning session has a way back to the resolved config. */
+  | { readonly kind: 'reset-controls' };
 
 /**
  * The inspector renderer's entire view of the outside world, as `window.rikiDebug`.
  *
- * Read-only by construction: two functions, and neither of them can change anything about the
- * running app. A debug window that can poke the thing it is inspecting is a debug window whose
- * readings cannot be trusted, and it would also be the widest privilege escalation in the app.
+ * **It can now change what the app does, and only through here.** Until ADR-0037 this bridge had
+ * two members and neither reached anything mutable; the window it exposes made the thresholds in
+ * `packages/events/src/config.ts` visible and left "so what happens if I move this" as a rebuild.
+ * The answer is a fourth member, `control`, and the property that replaces read-only-by-construction
+ * is narrower and enforced in three places rather than assumed:
+ *
+ * - **Nothing changes unless a person clicks.** With no `control` intent the app behaves exactly as
+ *   it does with the window shut, which is what `shell.test.ts` asserts by replaying a fixture with
+ *   the flag off and on and comparing the utterances.
+ * - **The reachable set is a registry, not a surface.** `control` names an id from a table in
+ *   `main/debug/controls.ts`; there is no path from here to an arbitrary field, and no `evaluate`,
+ *   no `speak`, no "replay this tick".
+ * - **The player's own instructions are not in the table.** The `quiet_mode` and `muted` gates are
+ *   locked, and mute keeps the one producer ADR-0028 gave it.
  */
 export interface RikiDebugBridge {
   onCommand(fn: (command: DebugCommand) => void): () => void;

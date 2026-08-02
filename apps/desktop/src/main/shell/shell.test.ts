@@ -697,6 +697,127 @@ describe('the inspector (main/debug)', () => {
       expect(tray.labels).toContain('Open Inspector…');
     });
   });
+
+  /**
+   * ADR-0037's acceptance criterion, at the only altitude that can answer it.
+   *
+   * "Changing a setting visibly affects live judge/coach behaviour" is not a claim about
+   * `controls.ts` — that file's own test proves a getter returns a different number. It is a claim
+   * about the whole wire: a control moves a value, the value reaches the object `createEventEngine`
+   * captured at the start of the match, and the utterances at the far end of a real fixture replay
+   * are different because of it.
+   *
+   * The pair with "changes nothing about what Riki does" above is the point. Untouched, the
+   * inspector is inert; touched, it is not. Either half alone would be the wrong feature.
+   */
+  describe('and a control moved (ADR-0037)', () => {
+    /** One full replay, with the inspector on and whatever the caller does to it first. */
+    async function tuned(change: (shell: RikiShell) => void): Promise<{
+      spoken: number;
+      detected: number;
+      byKind: Readonly<Record<string, number>>;
+      quiet: boolean;
+    }> {
+      resetCoachTurnIds();
+      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
+      change(built.shell);
+      await built.shell.start();
+      try {
+        await replayInto(built);
+        const counters = engineOf(built.shell).counters();
+        return {
+          spoken: counters.spoken,
+          detected: Object.values(counters.detected).reduce((sum, n) => sum + n, 0),
+          byKind: { ...counters.detected },
+          quiet: built.shell.debug?.hub.frame(built.clock.now()).session.gates.quietMode ?? false,
+        };
+      } finally {
+        await built.shell.stop();
+        rmSync(built.dataDir, { recursive: true, force: true });
+      }
+    }
+
+    it('silences the coach when the speak threshold is raised past every candidate', async () => {
+      const stock = await tuned(() => undefined);
+      const raised = await tuned((shell) => {
+        shell.debug?.controls?.apply('trigger.speakThreshold', 1);
+      });
+
+      expect(stock.spoken).toBeGreaterThan(0);
+      expect(raised.spoken).toBe(0);
+      // Still detecting. The difference is the gate, not the pipeline falling over — which is the
+      // distinction §5.4 exists for and the one a control this blunt could easily blur.
+      expect(raised.detected).toBe(stock.detected);
+    });
+
+    it('stops one detector without touching the others', async () => {
+      const stock = await tuned(() => undefined);
+
+      // Chosen from the run rather than named: which kinds fire is a fact about
+      // `fixtures/gsi/laning-phase.jsonl`, which is synthetic and is allowed to change. Two kinds
+      // have to fire for the assertion below to mean anything, and the file's header is explicit
+      // that asserting *which* advice fires would be asserting about the fixture.
+      const firing = Object.entries(stock.byKind)
+        .filter(([, count]) => count > 0)
+        .sort((a, b) => b[1] - a[1]);
+      const [busiest] = firing;
+      expect(firing.length).toBeGreaterThan(1);
+      if (busiest === undefined) throw new Error('the fixture detected nothing');
+
+      const off = await tuned((shell) => {
+        shell.debug?.controls?.apply(`detector.${busiest[0]}`, false);
+      });
+
+      expect(off.byKind[busiest[0]]).toBe(0);
+      // The other seven are untouched, which is what makes this a control rather than an off switch
+      // for the engine.
+      expect(off.detected).toBe(stock.detected - busiest[1]);
+      expect(off.detected).toBeGreaterThan(0);
+    });
+
+    it('turns unprompted speech off mid-flight, and the gate state says so', async () => {
+      const quiet = await tuned((shell) => {
+        shell.debug?.controls?.apply('coach.unprompted', false);
+      });
+
+      // The same switch the tray and `settings.json` reach, applied to a driver that is rebuilt on
+      // every match — which is why the shell holds it as state rather than re-reading the config.
+      expect(quiet.spoken).toBe(0);
+      expect(quiet.quiet).toBe(true);
+    });
+
+    it('will not let the window override the player, whatever it sends', async () => {
+      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
+      try {
+        const outcome = built.shell.debug?.controls?.apply('gate.muted', false);
+        expect(outcome?.ok).toBe(false);
+        expect(outcome?.reason).toContain('ADR-0028');
+      } finally {
+        await built.shell.stop();
+        rmSync(built.dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it('switches the coach through the same call the tray row makes', async () => {
+      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
+      try {
+        built.shell.debug?.controls?.apply('coach.mode', 'llm');
+
+        // `static`, because this harness has no API key and no model factory. The point is that the
+        // panel got the resolved answer rather than the one it asked for, and that the tray was
+        // re-rendered from it — a checkbox and a panel that disagree about which coach is running
+        // would be worse than either being wrong alone.
+        expect(built.shell.coachMode).toBe('static');
+        expect(built.tray.labels).toContain('LLM coach — needs RIKI_OPENAI_API_KEY');
+        expect(
+          built.shell.debug?.controls?.list().find((control) => control.id === 'coach.mode')?.value,
+        ).toBe('static');
+      } finally {
+        await built.shell.stop();
+        rmSync(built.dataDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe('shutdown', () => {

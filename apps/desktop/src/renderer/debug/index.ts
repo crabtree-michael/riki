@@ -2,8 +2,9 @@
  * The inspector renderer's entry point.
  *
  * The dev-only window that answers *what does Riki currently believe, what did it nearly say, and
- * why did it stay quiet*. It reads a `DebugFrame` and can send two things, neither of which changes
- * anything about the running app — see `preload/debug-bridge.ts` for why that is the whole design.
+ * why did it stay quiet*, and — since ADR-0037 — *what happens if I move this number*. It reads a
+ * `DebugFrame` and can send four things, two of which change a setting the coach reads; see
+ * `main/debug/controls.ts` for what they can and cannot reach.
  *
  * Loaded by `main/debug/electron-window.ts`, which points a `BrowserWindow` at the `index.html`
  * beside this file. Unlike the overlay, whose entry warned that nothing loaded it, this one is

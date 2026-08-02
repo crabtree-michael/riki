@@ -1,12 +1,15 @@
 /**
  * The inspector's half of the preload boundary — two functions, and one of them only sends.
  *
- * It is narrower than the overlay's on purpose. The overlay's bridge has a `send` that reaches the
- * interaction machine (`cancel` is a real input to it); this one's reaches nothing that can change
- * the app's behaviour at all. `ready` asks for a frame the renderer was going to get anyway, and
- * `fault` is how a renderer with no logger reports that it broke. There is deliberately no
- * `setQuietMode`, no `evaluate`, no "replay this tick" — an inspector that can poke the thing it
- * inspects produces readings nobody can act on.
+ * `send` used to reach nothing that could change the app's behaviour. Since ADR-0037 it reaches one
+ * thing: `control`, which moves a setting the coach reads. That makes this the widest renderer
+ * surface in the app, and it is why the check below is not the only one — this boundary can ask
+ * whether a payload is *shaped* like a control intent, and main asks the question that matters,
+ * which is whether the id names a registered, unlocked control (`main/debug/controls.ts`).
+ *
+ * What is still deliberately absent: `evaluate`, "replay this tick", "say this now", and any way to
+ * name a field rather than a control. The window can turn knobs the app was built with; it cannot
+ * drive the app.
  *
  * The same three window settings hold as for the overlay: `contextIsolation`, no Node, and
  * `sandbox: true`. This renderer displays live match state and rendered model input, so it must be

@@ -1,11 +1,13 @@
-# The inspector — a live view of what Riki believes
+# The inspector — a live view of what Riki believes, and a way to argue with it
 
 **Status:** Built. `apps/desktop/src/main/debug/`, `src/preload/debug.ts`,
 `src/renderer/debug/`, off by default behind `config.debug.enabled`.
-**Scope:** A dev-only window showing the judge's and the coach's real-time internal state.
+**Scope:** A dev-only window showing the judge's and the coach's real-time internal state, and
+letting a developer move the settings behind it while a match runs (ADR-0037).
 **Out of scope:** Telemetry sinks and log redaction (`packages/telemetry`, still a skeleton);
-tuning the thresholds this window exists to make tunable (coaching-trigger-architecture.md §16
-step 3); the settings surface that would give this a checkbox (`src/renderer/settings/`).
+*doing* the tuning this window exists to make possible (coaching-trigger-architecture.md §16
+step 3); the player-facing settings surface (`src/renderer/settings/`) — the Controls panel is a
+developer tool that persists nothing, not a preferences window.
 
 ---
 
@@ -46,6 +48,7 @@ Three columns, one document, redrawn whole at 4 Hz — without moving the reader
 | **Coach turns** | Per turn: the snapshot and the brief exactly as rendered, which sections survived, which were omitted, the outcome, and what Riki said |
 | **Counters and sources** | `TriggerCounters` per kind and per reason, bus depth, drops, `seq` gaps, and each source's liveness |
 | **Problems** | Everything `ShellTelemetry` reports as a fault, which currently reaches nowhere else |
+| **Controls** | Every setting the window may *move*, live — §4 |
 
 ### 2.1 The gate grid is the point
 
@@ -99,7 +102,10 @@ worth reading — while a match is running. ADR-0036 is the fix and it is two ru
 `scrollTop` belongs to the element, so a column recreated each frame has no position to preserve;
 and a `<button>` recreated each frame takes keyboard focus to `<body>` with it. Everything inside a
 column is still rebuilt whole — the property that keeps a stale node from surviving a redraw is
-untouched.
+untouched. The Controls panel's own buttons live *inside* a column and are therefore
+rebuilt, so `app.ts` restores keyboard focus by the `data-focus` key each of them carries — the
+focus counterpart of what `scroll.ts` does for position, and the reason tabbing to a stepper or
+holding `+` down works at all (§4.2).
 
 **Position is content, not a number.** The panels that grow render newest-first, so a new tick is
 prepended and every pixel offset below it is wrong the moment it lands. `renderer/debug/scroll.ts`
@@ -160,24 +166,91 @@ It is spread-and-override, which relies on `createContextAssembler` returning a 
 `observing-context.test.ts` asserts that every key of a real assembler survives the wrap, so the
 assumption fails a test rather than failing silently.
 
-## 4. It cannot change what the app does
+## 4. What it can and cannot change
 
-The load-bearing property, and each half of it is enforced somewhere:
+### 4.1 It changes nothing on its own
+
+The load-bearing property, and each part of it is enforced somewhere:
 
 | Claim | Enforced by |
 |---|---|
 | The policy decorator returns the delegate's decision | `observing-policy.test.ts` asserts object *identity*, not deep equality |
 | The context decorator returns the assembler's turn | `observing-context.test.ts`, and the ledger still receives both appends |
 | The telemetry decorator never swallows an event | `telemetry.test.ts` walks every member of `ShellTelemetry` reflectively, keyed off `nullTelemetry()`, and asserts each one reached the delegate — so an arm that mirrors a fault but drops its `delegate.` line fails, and a member added later is covered the day it compiles |
-| The whole thing is inert end to end | `shell.test.ts` replays `fixtures/gsi/laning-phase.jsonl` twice, with the flag off and on, and asserts the same utterances come out |
+| An untouched inspector is inert end to end | `shell.test.ts` replays `fixtures/gsi/laning-phase.jsonl` twice, with the flag off and on, and asserts the same utterances come out |
+| The live config, gates and detectors are the real ones until moved | `controls.test.ts` compares each against `DEFAULT_TRIGGER_CONFIG`, `GATES` and `DETECTORS` field by field and verdict by verdict |
 
-That last one is the test worth having. In a product whose failure mode is Riki talking when it
-should not, a debug tool that perturbs the trigger path is worse than no debug tool.
+The fourth is the test worth having. In a product whose failure mode is Riki talking when it should
+not, a debug tool that perturbs the trigger path *by existing* is worse than no debug tool.
 
 A gate that throws is reported as **refusing**, not passing. The inspector asks all thirteen gates
 about candidates the shipping path would have short-circuited past, so it is the one place in the
 app that can provoke a gate with an input the policy never would — and an answer that cannot be
 relied on should not look like a pass.
+
+### 4.2 …and when it does, it is one row of a registry
+
+ADR-0037. The window was read-only, which was right for §4.1 and wrong for the question it kept
+producing: *`ult_ready` scored 0.281 and `speakThreshold` is 0.3; what happens at 0.25?* The only
+answer used to be to edit `packages/events/src/config.ts` and replay the match — during which the
+latch set, the cooldowns and the intensity fold all start from nothing, so the moment being
+investigated is gone before the number matters.
+
+The mechanism is §3's, pointed one step further. `TriggerConfig`, `Gate[]` and `EventDetector[]` are
+things the composition root already injects, so the inspector changes behaviour by **choosing what to
+inject** rather than by getting a handle on the engine:
+
+| Injected | What the live version is |
+|---|---|
+| `createEventEngine({ config })` | A getter-backed `TriggerConfig`: every read consults an override map and falls through to the default |
+| `createTriggerPolicy(gates)` | Thirteen wrappers over `GATES`, each of which delegates unless its switch is off |
+| `createEventEngine({ detectors })` | Eight wrappers over `DETECTORS`, each of which returns nothing when its switch is off |
+
+All three are **stable objects whose answers change**, because `createEventEngine` reads its
+collaborators once at construction. Rebuilding the driver per click would work and would discard the
+latch set and the cooldown clocks — which are the state somebody is watching while they turn the
+knob.
+
+`packages/events` is unchanged by this, exactly as it was by §3.
+
+**What is reachable.** Every number in `packages/events/src/config.ts` — twenty-one scalars, eight
+kind weights, eight kind cooldowns — plus each detector and each gate as an on/off, plus `coach.mode`
+and unprompted speech. The registry is derived from `TriggerConfig`, `COACH_EVENT_KINDS` and `GATES`,
+as a `Record` total over the numeric keys, so **a number added to `config.ts` fails the build until it
+has a range** and then appears in the window with no renderer change.
+
+**What is not, and why it is shown rather than hidden.** A locked control is rendered with its reason
+attached, because "why can I not turn off the `muted` gate" is a question the window should answer
+where it is asked — a control that is simply absent invites somebody to add it.
+
+| Locked | Reason |
+|---|---|
+| `gate.quiet_mode`, `gate.muted` | The player's own instruction. The inspector may make Riki quieter freely and louder only within what the player allowed |
+| Mute itself — not a control at all | One producer, the menu row (ADR-0028) |
+| `blockedModes`, `escapeItems` | List-valued; a stepper cannot edit them |
+| `debug.enabled`, the key, ports, paths, the hotkey | Not the judge's behaviour, and the first would let the window switch itself off |
+
+**A switched-off gate is still evaluated and still drawn.** Turning `kind_cooldown` off and watching
+it go on lighting up against the candidate that now speaks is the point — the grid stays thirteen
+rows long, so *"if I put this back, that one dies again"* is readable rather than inferred.
+
+### 4.3 Nothing is persisted, except the coach
+
+Overrides last for the run of the app. The trigger numbers are not `packages/config` keys and should
+not become them: §16 step 3 wants tuning to end in a reviewed diff to `config.ts` against a corpus,
+not a `settings.json` that makes one developer's Riki quietly different. Unprompted speech is a
+privacy default REPO_SKELETON.md §7.2 requires to ship off, and a debug window that could make "on"
+sticky is how that default would drift.
+
+`coach.mode` is the exception and not one this feature invents — the control calls the shell's
+`setCoachMode`, which the tray's Coach row already persists through. A panel and a checkbox
+disagreeing about which coach is running would be worse than either being wrong alone.
+
+Because a reading is now conditional on all of this, the window says so: an overridden control is
+marked, its group is badged, and **the header carries a count of overrides in the loudest tone the
+stylesheet has.** The realistic failure this panel introduces is somebody moving a threshold,
+forgetting, and reporting that Riki will not stop talking. `ShellTelemetry.debugOverride` records
+each change for the day `packages/telemetry` lands, which is the one place it is not already visible.
 
 ## 5. A separate window, not a panel
 
@@ -197,13 +270,26 @@ Created on demand and destroyed on close — the reverse of the overlay, which i
 because it has a latency budget. The inspector has none, and a renderer holding a frame every 250 ms
 for a whole match while nobody looks at it is exactly the cost a debug tool must not impose.
 
-### 5.1 Read-only by construction
+### 5.1 Four intents, and two of them write
 
-`RikiDebugBridge` has two methods. `send` accepts `ready` and `fault` and nothing else. There is
-deliberately no `setQuietMode`, no `evaluate`, no "replay this tick": an inspector that can poke the
-thing it inspects produces readings nobody can act on, and it would be the widest privilege
-escalation in the app. `parseDebugIntent` is the allow-list, checked at both boundaries, and
-`intents.test.ts` names the things it must refuse.
+`RikiDebugBridge` has two methods and `send` accepts four things: `ready`, `fault`, `control` and
+`reset-controls`. The last two make this the widest renderer surface in the app — it was the least
+privileged process and is now the most — so the allow-list is checked at both boundaries and the two
+checks ask **different questions**:
+
+- **Preload** asks whether the payload is *shaped* like a control intent: a non-empty id, a value
+  that is a boolean, a finite number or a string, both bounded. That is all a boundary with no access
+  to the registry can honestly check, and a copy of the registry here would be a second list to keep
+  in step whose weaker half is the one this file was trusted for.
+- **Main** asks whether the id names a **registered, unlocked control**. A refusal becomes an
+  `inspector` problem in the Problems panel rather than a silence, because a control that appears to
+  do nothing is the failure this window exists to make impossible.
+
+There is still no `evaluate`, no `speak`, no "replay this tick", and no way to name a field rather
+than a control. The window can turn knobs the app was built with; it cannot drive the app.
+`intents.test.ts` names what it must refuse, and `electron-window.ts`'s sender check matters more
+than it did: a `control` arriving from the overlay's `webContents` must not be honoured just because
+it parses.
 
 ## 6. What it does not carry
 
@@ -240,8 +326,13 @@ are thousands of them.
 
 ## 8. Enabling it
 
-There is no settings surface (`src/renderer/settings/` is a skeleton) and `packages/config` has not
-landed, so `.env` is not read (`main/bootstrap.ts`). Until then:
+There is still no settings surface (`src/renderer/settings/` is a skeleton), but `packages/config`
+has landed since this was written, so `debug.enabled` now has all three layers — flag, environment
+and file:
+
+```sh
+RIKI_DEBUG=1 pnpm dev          # or --debug-enabled
+```
 
 ```jsonc
 // ~/Library/Application Support/Riki/settings.json   (macOS)
@@ -253,17 +344,14 @@ Then **Riki ▸ Open Inspector…** in the tray. `docs/runbooks/dev-setup.md` ha
 
 ## 9. Open
 
-1. **⚠ The preload bridge does not load — for this window or the overlay's.** Discovered while
-   verifying this feature in a real Electron process, and it is pre-existing rather than caused by
-   it: `webContents.on('preload-error')` fires with `Cannot use import statement outside a module`,
-   and `window.rikiOverlay` is absent too. Two causes stack — `tsc` emits ESM because
-   `apps/desktop/package.json` is `"type": "module"` and Electron loads preloads as CommonJS, and a
-   **sandboxed preload must be a single self-contained file**, so even a CJS build fails on
-   `require('./debug-bridge.js')`. Fixing it needs a preload bundling step, which REPO_SKELETON.md
-   §8.1 defers to "when Vite lands"; the options and their costs are in the `overlay-ui` skill.
-   Everything else here works: `main/debug/` collects correctly against the fixture corpus, and the
-   renderer draws correctly in a real sandboxed window with the real CSP and stylesheet when the
-   bridge is supplied. The one unverified hop is main → renderer over IPC.
+1. ~~**⚠ The preload bridge does not load.**~~ **Fixed by ADR-0034**, which bundles every preload to
+   `.cjs` — `dist/preload/debug.cjs` is in `scripts/bundle.mjs`'s target list. Verified in a real
+   sandboxed Electron window on 2026-08-02 while building the Controls panel: `window.rikiDebug` is
+   an object, a frame arrives over IPC and draws all nine panels, and clicking the real `+` stepper
+   in the real renderer moved `speakThreshold` from 0.3 to 0.35 in main. So **main → renderer → main
+   is now verified end to end**, which it was not when this document was written. The recipe is in
+   the `overlay-ui` skill; it is a throwaway `main.mjs` under `xvfb-run`, and it is worth twenty
+   minutes on any change to this window.
 2. **No Tier 5 coverage.** The window itself is untested — there is no Playwright harness
    (REPO_SKELETON.md §10 step 6). Everything the inspector *collects* is Tier 1 and Tier 4, and
    `DebugSurfaceDeps.windows` is optional precisely so the collection can be driven with no window
@@ -275,8 +363,15 @@ Then **Riki ▸ Open Inspector…** in the tray. `docs/runbooks/dev-setup.md` ha
    the right shape for it — `DebugSurfaceDeps.windows` being optional means a headless
    `pnpm dev:replay` can read frames straight off `hub.frame(now)`.
 5. **Frames are whole, not diffed.** Fine at 4 Hz for a few kilobytes. Scroll position survives it
-   (§2.3, ADR-0036); text selection inside a panel does not, and that is what the freeze button is
-   for.
+   (§2.3, ADR-0036) and so does keyboard focus, which `app.ts` restores by `data-focus` key; text
+   selection inside a panel does not, and that is what the freeze button is for. The same redraw is
+   why every control is a button rather than a text field.
 6. **This is a tool, not a measurement.** It makes the thresholds in `packages/events/src/config.ts`
-   *inspectable*; it does not tune them. That is still
-   coaching-trigger-architecture.md §16 step 3, and it now has something to look at while it happens.
+   inspectable *and movable*; it does not tune them, and it does not judge the result. That is still
+   coaching-trigger-architecture.md §16 step 3 — which now needs a person with a corpus and an
+   opinion, rather than a person with a corpus, an opinion and a rebuild between every reading.
+7. **Settings only, not actions.** "Force a tick", "clear the latches", "say this now" are all
+   useful and none is a control. Each needs surface on `EventEngine` or `CoachingAgent` that ADR-0032
+   declined to add and ADR-0037 went on declining; adding one is a decision, not an extension.
+8. **No sweep.** `DebugSurface.controls` is exposed so a headless replay can move a threshold between
+   runs, which is the shape a `pnpm dev:replay` sweep would use — nothing does yet.

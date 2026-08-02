@@ -63,12 +63,7 @@ import {
   createPreambleAssembler,
 } from '@riki/context';
 import type { EventTape, TriggerCounters, TriggerPolicy } from '@riki/events';
-import {
-  DEFAULT_TRIGGER_CONFIG,
-  createEventEngine,
-  createEventTape,
-  createTriggerPolicy,
-} from '@riki/events';
+import { createEventEngine, createEventTape, createTriggerPolicy } from '@riki/events';
 import type { MatchLifecycleEvent } from '@riki/gsi';
 import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
 import { createStalenessPolicy } from '@riki/world-model';
@@ -90,9 +85,16 @@ import {
   toEventTapeReader,
 } from '../agent/index.js';
 import { createVoiceBridge } from '../adapters/voice.js';
-import type { DebugSessionInput, DebugSurface, DebugWindowFactory } from '../debug/index.js';
+import type {
+  DebugControls,
+  DebugSessionInput,
+  DebugSurface,
+  DebugWindowFactory,
+} from '../debug/index.js';
 import {
-  createDebugComponent,
+  createDebugControls,
+  createDebugHub,
+  createDebugSurface,
   createObservingPolicy,
   observeContext,
   projectCounters,
@@ -282,20 +284,65 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   // the telemetry sink every subsystem is handed, and the trigger policy the per-match engine takes.
   // Everything else it sees, it subscribes to.
 
-  const debug: DebugSurface | null = config.debug.enabled
-    ? createDebugComponent({
-        ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
-        timers,
-        now: () => clock.now(),
-      })
-    : null;
+  // The hub, the controls and the surface are built in three steps rather than through
+  // `createDebugComponent`, because the middle one needs things this function has not declared yet:
+  // `createDebugControls` closes over the coach mode, the quiet-mode flag and the live match. The
+  // closures do not run until somebody clicks, so referring forward is safe — and it is the only
+  // ordering that keeps the telemetry decorator above the controls and the surface below them.
+
+  const debugHub = config.debug.enabled ? createDebugHub() : null;
 
   const telemetry: ShellTelemetry =
-    debug === null
+    debugHub === null
       ? (deps.telemetry ?? nullTelemetry())
       : withDebugTelemetry({
-          hub: debug.hub,
+          hub: debugHub,
           delegate: deps.telemetry ?? nullTelemetry(),
+          now: () => clock.now(),
+        });
+
+  /**
+   * The settings the inspector may move (ADR-0037), or null when there is no inspector.
+   *
+   * Null is what keeps "costs nothing when off" true of this half as well: with the flag off the
+   * engine is handed no `config` and no `detectors` and `createTriggerPolicy()` builds its own
+   * ladder, so not one of the wrappers in `controls.ts` is on the trigger path.
+   */
+  const debugControls: DebugControls | null =
+    debugHub === null
+      ? null
+      : createDebugControls({
+          coach: {
+            configured: config.coach.mode,
+            current: () => coachMode,
+            // The same call the tray row makes, so the checkbox and the panel cannot disagree and
+            // so a mode the inspector chose is persisted exactly as one the tray chose would be.
+            set: (mode) => void applyCoachMode(mode as CoachMode),
+            available: () => llmAvailable(),
+          },
+          unprompted: {
+            configured: config.privacy.unprompted,
+            current: () => unprompted,
+            set: (on) => {
+              unprompted = on;
+              // Applied to the live driver as well as remembered, so the change takes effect on the
+              // next tick rather than at the next match. Both coaches honour it identically.
+              match?.driver.setQuietMode(!on);
+            },
+          },
+          onChanged: (id, value) => {
+            telemetry.debugOverride(id, String(value));
+          },
+        });
+
+  const debug: DebugSurface | null =
+    debugHub === null
+      ? null
+      : createDebugSurface({
+          hub: debugHub,
+          ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
+          ...(debugControls === null ? {} : { controls: debugControls }),
+          timers,
           now: () => clock.now(),
         });
 
@@ -473,6 +520,19 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   let coachMode: CoachMode = config.coach.mode;
 
   /**
+   * dota2 §6.4's off switch, as shell state rather than as a read of `config.privacy.unprompted`.
+   *
+   * It is a variable for one reason: the inspector's Controls panel can move it (ADR-0037), and a
+   * driver rebuilt for the next match or for a coach swap has to be given the value in force rather
+   * than the one on disk. With the inspector off nothing ever assigns to it, so every call below
+   * behaves exactly as the direct config read it replaced.
+   *
+   * It is deliberately **not** persisted. REPO_SKELETON.md §7.2 requires unprompted speech to ship
+   * off, and a debug window that could make "on" sticky is how that default would quietly drift.
+   */
+  let unprompted: boolean = config.privacy.unprompted;
+
+  /**
    * Can `llm` actually run?
    *
    * Two things have to be true and neither is a setting: a key resolved from the environment
@@ -529,19 +589,28 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     //
     // Only the deterministic coach has a ladder to watch: the LLM coach decides inside a model, so
     // under `llm` the Triggers panel is legitimately empty. debug-inspector.md §2.
-    const policy: TriggerPolicy = createTriggerPolicy();
+    //
+    // `debugControls?.gates` is the second half of the same idea, pointed at behaviour rather than
+    // at observation (ADR-0037): thirteen wrappers over the same `GATES`, each of which refuses
+    // exactly what the real gate refuses until somebody switches it off in the Controls panel.
+    // `undefined` — the flag off — takes `createTriggerPolicy`'s own default, so nothing is wrapped.
+    const policy: TriggerPolicy = createTriggerPolicy(debugControls?.gates);
 
     const engine = createEventEngine({
       world: state.world,
       clock: worldClock,
       memory: context.coaching,
       tape,
+      // Both spread away when there is no inspector, leaving the engine to build
+      // `DEFAULT_TRIGGER_CONFIG` and `defaultDetectors()` for itself exactly as before.
+      ...(debugControls === null
+        ? {}
+        : { config: debugControls.config, detectors: debugControls.detectors }),
       policy:
         debug === null
           ? policy
           : createObservingPolicy({
               delegate: policy,
-              tapeSalience: DEFAULT_TRIGGER_CONFIG.tapeSalience,
               worldVersion: () => state.world.version,
               report: (tick) => {
                 debug.hub.recordTick(tick);
@@ -569,6 +638,20 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     // settings file that disagrees with the tray is worse than one that is merely conservative.
     if (coachMode !== before) deps.onCoachModeChanged?.(coachMode);
     return coachMode;
+  }
+
+  /**
+   * `setCoachMode`, and then the tray told what actually happened.
+   *
+   * Three callers need exactly this pair — the tray's own row, `RikiShell.setCoachMode`, and the
+   * inspector's `coach.mode` control — and the second half is the one that is easy to omit: the tray
+   * reflects the *resolved* mode, so a checkbox that ticked after asking for `llm` with no key
+   * behind it would be the product lying about its own state.
+   */
+  function applyCoachMode(wanted: CoachMode): CoachMode {
+    const next = setCoachMode(wanted);
+    trayController.setCoach(next, llmAvailable());
+    return next;
   }
 
   function openMatch(matchId: string): void {
@@ -624,7 +707,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
     // unprompted speech off never hears a first trigger slip through on launch. It is one of the
     // two controls both coaches honour identically (`llm-coach-architecture.md` §4.3).
-    driver.setQuietMode(!config.privacy.unprompted);
+    driver.setQuietMode(!unprompted);
     let stopAgent = agent.start();
     telemetry.coachMode(driver.mode);
 
@@ -657,7 +740,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
         clock: worldClock,
         telemetry,
       });
-      driver.setQuietMode(!config.privacy.unprompted);
+      driver.setQuietMode(!unprompted);
       stopAgent = agent.start();
       telemetry.coachMode(driver.mode);
     }
@@ -777,7 +860,8 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           // The driver's mode rather than the shell's `coachMode`: between matches there is no
           // driver, and "which coach *would* run" is a different claim from "which one is running".
           coachMode: match?.driver.mode ?? 'none',
-          unprompted: config.privacy.unprompted,
+          // The value in force, which is the config's until the Controls panel moves it.
+          unprompted,
           healthLevel: health.level,
           healthSummary: health.summary,
           sources: health.sources.map((source) => ({
@@ -808,6 +892,10 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           ? { detected: [], suppressed: [], spoken: 0 }
           : projectCounters(counters);
       },
+
+      // Empty is impossible here — `debugControls` is non-null whenever `debug` is — but the
+      // fallback keeps the frame's shape a fact rather than an invariant somebody has to hold.
+      controls: () => debugControls?.list() ?? [],
     });
 
     // App lifetime, not match lifetime — the same reason the voice bridge is attached here. A
@@ -853,11 +941,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     }),
     trayController.onAction((action) => {
       if (action !== 'toggle-coach') return;
-      // The tray reflects what actually happened, not what was asked for: `setCoachMode` returns
-      // `static` when `llm` has no key behind it, and a checkbox that ticked anyway would be the
-      // product lying about its own state.
-      const next = setCoachMode(coachMode === 'llm' ? 'static' : 'llm');
-      trayController.setCoach(next, llmAvailable());
+      applyCoachMode(coachMode === 'llm' ? 'static' : 'llm');
     }),
   );
 
@@ -878,11 +962,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       return coachMode;
     },
 
-    setCoachMode(wanted: CoachMode): CoachMode {
-      const next = setCoachMode(wanted);
-      trayController.setCoach(next, llmAvailable());
-      return next;
-    },
+    setCoachMode: applyCoachMode,
 
     debug,
 

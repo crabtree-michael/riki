@@ -1,11 +1,16 @@
 /**
  * What the inspector needs from the rest of main, as ports.
  *
- * The whole component is built around one rule: **nothing here may change what the app does.** An
- * inspector that perturbs the thing it inspects produces readings nobody can act on, and this is a
- * proactive-speech product where the failure mode of a perturbation is Riki talking when it should
- * not. So every seam below is either a pure observer of a value that was going to be produced
- * anyway, or a decorator that returns its delegate's answer unchanged.
+ * The whole component is built around one rule: **nothing here may change what the app does unless
+ * somebody asks it to.** An inspector that perturbs the thing it inspects produces readings nobody
+ * can act on, and this is a proactive-speech product where the failure mode of a perturbation is
+ * Riki talking when it should not. So every seam below is either a pure observer of a value that was
+ * going to be produced anyway, or a decorator that returns its delegate's answer unchanged.
+ *
+ * The one seam that is neither is `DebugControlPort` (ADR-0037), and it is the exception that keeps
+ * the rule readable: it is the *only* thing in this component that can change behaviour, it does
+ * nothing at all until a `control` intent arrives, and what it can reach is a registry rather than a
+ * surface. `controls.ts` is where that boundary is drawn and argued.
  *
  * The two decorators are the interesting ones, and both are installed by the composition root
  * because both are things it already injects:
@@ -22,8 +27,9 @@
  * See docs/design/debug-inspector.md §3.
  */
 
-import type { DebugCommand, DebugFrame, DebugIntent } from '../../shared/debug.js';
+import type { DebugCommand, DebugControl, DebugFrame, DebugIntent } from '../../shared/debug.js';
 import type { Unsubscribe } from '../../shared/overlay.js';
+import type { DebugControlPort } from './controls.js';
 
 /**
  * Where every observation lands, and the only thing that holds inspector state.
@@ -78,6 +84,15 @@ export interface DebugSources {
   readonly session?: () => DebugSessionInput;
   readonly world?: (now: number) => DebugWorldInput;
   readonly counters?: () => DebugCountersInput;
+  /**
+   * The Controls panel, pulled like everything else current-valued.
+   *
+   * Pulled rather than pushed even though the window is the usual thing that changes it, because it
+   * is not the only one: the tray's Coach row moves `coach.mode`, and `setCoachMode` can answer with
+   * a mode nobody asked for. A panel drawn from what the renderer last sent would be wrong in
+   * exactly those cases, which are the ones worth seeing.
+   */
+  readonly controls?: () => readonly DebugControl[];
 }
 
 export interface DebugSessionInput {
@@ -240,6 +255,15 @@ export interface DebugWindowFactory {
 /** What the shell exposes. Null when `config.debug.enabled` is false, which is the default. */
 export interface DebugSurface {
   readonly hub: DebugHub;
+  /**
+   * The settings this inspector may move, or null when it may move none.
+   *
+   * Exposed for the same reason `hub` is: everything this component does has to be drivable without
+   * a window. It is what `shell.test.ts` uses to assert that a control actually reaches the coach —
+   * the acceptance criterion of ADR-0037 — and what a headless `pnpm dev:replay` would use to sweep
+   * a threshold across a fixture instead of editing `config.ts` between runs.
+   */
+  readonly controls: DebugControlPort | null;
   /** Idempotent: opening an already-open inspector focuses it rather than making a second one. */
   open(): Promise<void>;
   close(): void;

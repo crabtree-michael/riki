@@ -26,6 +26,7 @@ import type { Timers } from '@riki/context';
 import type { DebugCommand, DebugIntent } from '../../shared/debug.js';
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugWindow, DebugWindowFactory } from './contracts.js';
+import type { DebugControlPort } from './controls.js';
 import { createDebugComponent, createDebugSurface, nullDebugWindow } from './index.js';
 import { createDebugHub } from './hub.js';
 
@@ -295,6 +296,109 @@ describe('dispose', () => {
 
     expect(frames(window)).toHaveLength(0);
     expect(timers.armed).toBe(false);
+  });
+});
+
+describe('control intents (ADR-0037)', () => {
+  /** A port that records what it was asked and answers however the test wants. */
+  function fakePort(ok = true): DebugControlPort & {
+    readonly applied: { id: string; value: unknown }[];
+    resets: number;
+  } {
+    const applied: { id: string; value: unknown }[] = [];
+    return {
+      applied,
+      resets: 0,
+      list: () => [],
+      apply(id, value) {
+        applied.push({ id, value });
+        return ok ? { ok: true, reason: null } : { ok: false, reason: 'locked' };
+      },
+      reset(): void {
+        this.resets += 1;
+      },
+    };
+  }
+
+  it('forwards a change to the port and answers with a frame immediately', async () => {
+    const window = fakeWindow();
+    const timers = manualTimers();
+    const controls = fakePort();
+    const hub = createDebugHub();
+    const surface = createDebugSurface({
+      hub,
+      windows: { create: () => window },
+      controls,
+      timers,
+      now: () => 1_000,
+    });
+
+    await surface.open();
+    const before = frames(window).length;
+
+    window.emitIntent({ kind: 'control', id: 'trigger.speakThreshold', value: 0.05 });
+
+    expect(controls.applied).toEqual([{ id: 'trigger.speakThreshold', value: 0.05 }]);
+    // Not on the next tick of the pump. A control whose value visibly lags the click by up to
+    // 250 ms reads as a control that did not work, and the first thing anybody does with one of
+    // those is click it again.
+    expect(frames(window).length).toBe(before + 1);
+  });
+
+  it('forwards a reset', async () => {
+    const window = fakeWindow();
+    const timers = manualTimers();
+    const controls = fakePort();
+    const surface = createDebugSurface({
+      hub: createDebugHub(),
+      windows: { create: () => window },
+      controls,
+      timers,
+      now: () => 1_000,
+    });
+
+    await surface.open();
+    window.emitIntent({ kind: 'reset-controls' });
+
+    expect(controls.resets).toBe(1);
+  });
+
+  it('records a refusal as an inspector problem rather than swallowing it', () => {
+    const window = fakeWindow();
+    const hub = createDebugHub();
+    createDebugSurface({
+      hub,
+      windows: { create: () => window },
+      controls: fakePort(false),
+      timers: manualTimers(),
+      now: () => 1_000,
+    });
+
+    window.emitIntent({ kind: 'control', id: 'gate.muted', value: false });
+
+    const problems = hub.frame(1_000).problems;
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.origin).toBe('inspector');
+    expect(problems[0]?.message).toContain('gate.muted');
+    expect(problems[0]?.message).toContain('locked');
+  });
+
+  it('says so when there is no control port at all', () => {
+    // A headless replay, or any surface built before this port existed. The panel is drawn from
+    // `DebugSources.controls`, so a window that could show controls but not move them has to
+    // report that somewhere rather than looking broken.
+    const window = fakeWindow();
+    const hub = createDebugHub();
+    createDebugSurface({
+      hub,
+      windows: { create: () => window },
+      timers: manualTimers(),
+      now: () => 1_000,
+    });
+
+    window.emitIntent({ kind: 'control', id: 'trigger.speakThreshold', value: 0.05 });
+
+    expect(hub.frame(1_000).problems[0]?.message).toContain('no control port');
   });
 });
 

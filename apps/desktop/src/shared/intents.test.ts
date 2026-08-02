@@ -54,15 +54,23 @@ describe('parseOverlayIntent — what the renderer is allowed to say', () => {
 });
 
 describe('parseDebugIntent — what the inspector is allowed to say', () => {
-  it('accepts the two intents and nothing more', () => {
+  it('accepts the four intents and nothing more', () => {
     expect(parseDebugIntent({ kind: 'ready' })).toEqual({ kind: 'ready' });
     expect(parseDebugIntent({ kind: 'fault', message: 'boom' })).toEqual({
       kind: 'fault',
       message: 'boom',
     });
+    expect(parseDebugIntent({ kind: 'reset-controls' })).toEqual({ kind: 'reset-controls' });
+    for (const value of [0.05, true, 'llm']) {
+      expect(parseDebugIntent({ kind: 'control', id: 'x', value })).toEqual({
+        kind: 'control',
+        id: 'x',
+        value,
+      });
+    }
   });
 
-  it('cannot reach anything that changes what the app does', () => {
+  it('cannot reach anything outside the control registry', () => {
     for (const payload of [
       null,
       undefined,
@@ -70,17 +78,40 @@ describe('parseDebugIntent — what the inspector is allowed to say', () => {
       'ready',
       [],
       {},
-      // A read-only window, by construction. None of these is a thing the inspector may say — an
-      // inspector that can poke the thing it inspects produces readings nobody can act on, and it
-      // would be the widest privilege escalation in the app.
+      // The window can move a registered setting (ADR-0037) and nothing else. None of these is a
+      // thing the inspector may say: `cancel` belongs to the overlay's machine, and the rest would
+      // be the window driving the app rather than configuring it.
       { kind: 'cancel' },
-      { kind: 'setQuietMode', on: false },
       { kind: 'evaluate' },
+      { kind: 'speak', text: 'gank mid' },
       { kind: 'dispatch', input: { kind: 'mute', muted: true } },
       { kind: 'paint', revision: 1 },
       { kind: 'fault', message: 42 },
+      // Shaped wrong for a control: no id, an empty id, a value of a kind no control has, and the
+      // two non-numbers that would reach a threshold comparison as neither above nor below it.
+      { kind: 'control', value: 1 },
+      { kind: 'control', id: '', value: 1 },
+      { kind: 'control', id: 'x' },
+      { kind: 'control', id: 'x', value: { nested: true } },
+      { kind: 'control', id: 'x', value: Number.NaN },
+      { kind: 'control', id: 'x', value: Number.POSITIVE_INFINITY },
     ]) {
       expect(parseDebugIntent(payload)).toBeNull();
+    }
+  });
+
+  it('bounds a control id and an enum value, and keeps nothing else', () => {
+    const parsed = parseDebugIntent({
+      kind: 'control',
+      id: 'i'.repeat(500),
+      value: 'v'.repeat(500),
+      extra: 'payload',
+    });
+
+    expect(Object.keys(parsed ?? {})).toEqual(['kind', 'id', 'value']);
+    if (parsed?.kind === 'control') {
+      expect(parsed.id.length).toBe(64);
+      expect(String(parsed.value).length).toBe(64);
     }
   });
 

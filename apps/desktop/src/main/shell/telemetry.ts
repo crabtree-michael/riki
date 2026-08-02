@@ -77,6 +77,18 @@ export interface ShellTelemetry
    * the failure REPO_SKELETON.md §7.1 describes as discovering it ten minutes into a game.
    */
   coachUnavailable(reason: string): void;
+  /**
+   * Somebody moved a setting from the inspector's Controls panel (ADR-0037).
+   *
+   * The one thing about a session that cannot be reconstructed after the fact from anything else in
+   * this interface: "Riki spoke eleven times" means something different if `speakThreshold` spent
+   * six of them at 0.05. Only reachable with `debug.enabled`, which ships off.
+   *
+   * `value` is already a string because there is nothing here worth a union — every control's value
+   * is a boolean, a bounded number or one of two coach modes, and none of them can carry a
+   * transcript, a path or a key.
+   */
+  debugOverride(id: string, value: string): void;
 }
 
 /**
@@ -111,6 +123,7 @@ export function nullTelemetry(): ShellTelemetry {
     sessionOpenFailed: () => undefined,
     coachMode: () => undefined,
     coachUnavailable: () => undefined,
+    debugOverride: () => undefined,
     consulted: () => undefined,
     spoke: () => undefined,
     declined: () => undefined,

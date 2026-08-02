@@ -90,7 +90,8 @@ Riki is built to fail quiet, so a working one and a broken one look the same fro
 age, every detection with all thirteen gates' verdicts on it, the snapshot and brief exactly as
 composed for each turn, and every fault the app reports but currently cannot log.
 
-It is off by default and turned on in the same `settings.json` as everything else:
+It is off by default and turned on in the same `settings.json` as everything else, or with
+`RIKI_DEBUG=1`:
 
 ```jsonc
 { "debug": { "enabled": true } }
@@ -99,7 +100,7 @@ It is off by default and turned on in the same `settings.json` as everything els
 Restart the app, then **Riki ▸ Open Inspector…** in the tray. The row is not rendered at all when
 the flag is off.
 
-Two things about reading it:
+Three things about reading it:
 
 - **Freeze early.** Frames arrive at 4 Hz and an interesting gate ladder lasts one tick. The Freeze
   button holds the drawn frame while main keeps collecting, so unfreezing shows the present rather
@@ -107,6 +108,12 @@ Two things about reading it:
 - **`not_in_match` ticks are hidden by default,** with a count of how many. During a draft or a
   post-game screen the detectors keep firing and gate 1 refuses every one; those ticks are correct
   and there are thousands of them. Switch the filter off if gate 1 is what you are debugging.
+- **The Controls panel writes** (ADR-0037). Every number in `packages/events/src/config.ts` is a
+  stepper, every detector and gate is a switch, and moving one takes effect on the next tick — no
+  restart, and the latch set and cooldowns you were watching survive it. Nothing is written to
+  `settings.json`, so a restart is also how you undo everything; **Reset all** is the quicker way.
+  If the header says *N overrides*, everything below it is a reading of a tuned app: check that
+  before reporting behaviour.
 
 Leave it off otherwise. With it on the app holds rendered snapshots, briefs and coach transcripts in
 memory, and evaluates all thirteen gates against every candidate rather than the winner alone —

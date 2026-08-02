@@ -12,7 +12,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { DebugCommand, DebugFrame, DebugIntent, RikiDebugBridge } from '../../shared/debug.js';
+import type {
+  DebugCommand,
+  DebugControl,
+  DebugFrame,
+  DebugIntent,
+  RikiDebugBridge,
+} from '../../shared/debug.js';
 import { mountInspector } from './app.js';
 import { isNotInMatchTick, formatClock } from './view.js';
 
@@ -94,6 +100,33 @@ function frame(overrides: Partial<DebugFrame> = {}): DebugFrame {
     turns: [],
     counters: { detected: [], suppressed: [], spoken: 0, emptyBriefs: 0, ticks: 0 },
     problems: [],
+    controls: [],
+    ...overrides,
+  };
+}
+
+/**
+ * One control, defaulted to the shape most tests want: a live, unlocked number.
+ *
+ * The registry in `main/debug/controls.ts` is the thing that decides what a real one looks like;
+ * this exists so a view test can assert on one field without restating twelve.
+ */
+function control(overrides: Partial<DebugControl> = {}): DebugControl {
+  return {
+    id: 'trigger.speakThreshold',
+    group: 'Thresholds',
+    label: 'speak threshold',
+    kind: 'number',
+    value: 0.3,
+    base: 0.3,
+    overridden: false,
+    min: 0,
+    max: 1,
+    step: 0.05,
+    options: [],
+    unit: null,
+    note: null,
+    locked: null,
     ...overrides,
   };
 }
@@ -545,6 +578,180 @@ describe('honesty about nulls', () => {
       frame({ session: { ...frame().session, gates: { ...frame().session.gates, asOfMs: null } } }),
     );
     expect(root.textContent).toContain('the engine has not run');
+  });
+});
+
+describe('the Controls panel (ADR-0037)', () => {
+  /** The button whose `data-focus` key matches — the same handle `app.ts` restores focus by. */
+  function button(key: string): HTMLElement {
+    const found = root.querySelector(`[data-focus="${key}"]`);
+    if (!(found instanceof HTMLElement)) throw new Error(`no control button ${key}`);
+    return found;
+  }
+
+  function withControls(controls: readonly DebugControl[]): FakeBridge {
+    const bridge = fakeBridge();
+    const view = mountInspector(root, bridge);
+    view.apply(frame({ controls }));
+    return bridge;
+  }
+
+  it('sends a stepped value rather than applying it locally', () => {
+    const bridge = withControls([control()]);
+
+    button('trigger.speakThreshold:up').click();
+
+    // Sent and then forgotten. The panel redraws from the next frame, so a value main clamped,
+    // snapped or refused shows as what main decided rather than as what was clicked.
+    expect(bridge.sent.at(-1)).toEqual({
+      kind: 'control',
+      id: 'trigger.speakThreshold',
+      value: 0.35,
+    });
+    expect(root.textContent).toContain('0.3');
+  });
+
+  it('disables the stepper at the bound instead of sending past it', () => {
+    const bridge = withControls([control({ value: 1, base: 1 })]);
+    const up = button('trigger.speakThreshold:up');
+
+    expect(up.hasAttribute('disabled')).toBe(true);
+    up.click();
+    expect(bridge.sent.filter((intent) => intent.kind === 'control')).toHaveLength(0);
+  });
+
+  it('sends the opposite of a switch, and the option of an enum', () => {
+    const bridge = withControls([
+      control({ id: 'gate.latched', group: 'Gates', kind: 'boolean', value: true, base: true }),
+      control({
+        id: 'coach.mode',
+        group: 'Coach',
+        kind: 'enum',
+        value: 'static',
+        base: 'static',
+        options: ['static', 'llm'],
+      }),
+    ]);
+
+    // `Gates` is collapsed by default — sixty settings do not fit in a column — so it is opened
+    // the way a person would open it.
+    button('group:Gates').click();
+    button('gate.latched:toggle').click();
+    button('coach.mode:llm').click();
+
+    expect(bridge.sent.at(-2)).toEqual({ kind: 'control', id: 'gate.latched', value: false });
+    expect(bridge.sent.at(-1)).toEqual({ kind: 'control', id: 'coach.mode', value: 'llm' });
+  });
+
+  it('renders a locked control and gives it nothing to click', () => {
+    const bridge = withControls([
+      control({
+        id: 'gate.muted',
+        group: 'Gates',
+        kind: 'boolean',
+        value: true,
+        base: true,
+        locked: 'the player muted Riki',
+      }),
+    ]);
+
+    button('group:Gates').click();
+
+    // Displayed, not hidden: "why can I not turn this off" is a question the window should answer
+    // where it is asked, and a control that is simply absent invites somebody to add it.
+    expect(root.textContent).toContain('the player muted Riki');
+    expect(root.textContent).toContain('locked');
+    expect(root.querySelector('[data-focus="gate.muted:toggle"]')).toBeNull();
+    expect(bridge.sent.filter((intent) => intent.kind === 'control')).toHaveLength(0);
+  });
+
+  it('shows an override against its config value, and offers a way back', () => {
+    const bridge = withControls([control({ value: 0.05, overridden: true })]);
+
+    expect(root.textContent).toContain('config 0.3');
+    expect(root.textContent).toContain('1 override');
+
+    button('trigger.speakThreshold:reset').click();
+    expect(bridge.sent.at(-1)).toEqual({
+      kind: 'control',
+      id: 'trigger.speakThreshold',
+      value: 0.3,
+    });
+  });
+
+  it('counts every override in the header, where it cannot be missed', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        controls: [
+          control({ overridden: true }),
+          control({ id: 'trigger.tapeSalience', overridden: true }),
+          control({ id: 'trigger.globalCooldownMs' }),
+        ],
+      }),
+    );
+
+    // The realistic failure this panel introduces is somebody moving a threshold, forgetting, and
+    // reporting that Riki will not stop talking. The header is where that is caught.
+    expect(root.querySelector('.ins-header')?.textContent).toContain('2 overrides');
+  });
+
+  it('resets everything from one button, and disables it when there is nothing to reset', () => {
+    const clean = withControls([control()]);
+    button('reset:all').click();
+    expect(clean.sent.filter((intent) => intent.kind === 'reset-controls')).toHaveLength(0);
+
+    const dirty = withControls([control({ overridden: true })]);
+    button('reset:all').click();
+    expect(dirty.sent.at(-1)).toEqual({ kind: 'reset-controls' });
+  });
+
+  it('collapses a group without telling main, and keeps it collapsed across a frame', () => {
+    const bridge = fakeBridge();
+    const view = mountInspector(root, bridge);
+    const controls = [control()];
+    view.apply(frame({ controls }));
+
+    // Asserted on the stepper rather than on the label, because "speak threshold" is also a row in
+    // the Gate state panel below — which is the point of showing both, and would make a
+    // `textContent` assertion here pass for the wrong reason.
+    expect(root.querySelector('[data-focus="trigger.speakThreshold:up"]')).not.toBeNull();
+    button('group:Thresholds').click();
+
+    // Group expansion is view state and never leaves the renderer — a debug window's scroll
+    // position is not something main should know about.
+    expect(root.querySelector('[data-focus="trigger.speakThreshold:up"]')).toBeNull();
+    expect(bridge.sent.filter((intent) => intent.kind === 'control')).toHaveLength(0);
+
+    view.apply(frame({ revision: 2, controls }));
+    expect(root.querySelector('[data-focus="trigger.speakThreshold:up"]')).toBeNull();
+  });
+
+  it('leaves a group the registry names but the view does not, visible', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ controls: [control({ group: 'Something new' })] }));
+    // A group added to the registry must render even before the view's ordering list knows about
+    // it — the panel is self-describing, and a hard-coded list that dropped one would defeat that.
+    expect(root.textContent).toContain('Something new');
+  });
+
+  it('puts focus back on the button that had it after a redraw', () => {
+    const view = mountInspector(root, fakeBridge());
+    const controls = [control()];
+    view.apply(frame({ controls }));
+
+    button('trigger.speakThreshold:up').focus();
+    view.apply(frame({ revision: 2, controls }));
+
+    // Without this, holding down `+` while the pump ticks moves focus to the document body four
+    // times a second, and the panel is unusable from a keyboard.
+    expect(document.activeElement).toBe(button('trigger.speakThreshold:up'));
+  });
+
+  it('says so when there is no control port behind the panel', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ controls: [] }));
+    expect(root.textContent).toContain('display but not change');
   });
 });
 

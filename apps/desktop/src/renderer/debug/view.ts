@@ -26,6 +26,8 @@
 
 import type {
   DebugCandidate,
+  DebugControl,
+  DebugControlValue,
   DebugCount,
   DebugFrame,
   DebugGateState,
@@ -45,9 +47,41 @@ export interface ViewOptions {
    * them at the first question. Those ticks are correct and there are thousands of them.
    */
   readonly hideNotInMatch: boolean;
+  /**
+   * Which Controls groups are expanded.
+   *
+   * Sixty-odd settings is a scrollable column on its own, and all but two groups are things you go
+   * looking for rather than watch. Which are open is view state and lives in `app.ts` for the same
+   * reason `frozen` does: the document is rebuilt whole on every frame, so anything the DOM would
+   * normally remember has to be held outside it.
+   */
+  readonly openGroups: readonly string[];
 }
 
-export const DEFAULT_VIEW_OPTIONS: ViewOptions = { hideNotInMatch: true };
+export const DEFAULT_VIEW_OPTIONS: ViewOptions = {
+  hideNotInMatch: true,
+  openGroups: ['Coach', 'Thresholds'],
+};
+
+/**
+ * The order the Controls groups are drawn in, which is roughly how often they are wanted.
+ *
+ * A group the registry adds and this list does not name still renders — sorted after these, by
+ * name. A hard-coded list that silently dropped a group would defeat the point of making the
+ * registry self-describing.
+ */
+const GROUP_ORDER: readonly string[] = [
+  'Coach',
+  'Thresholds',
+  'Cooldowns',
+  'Gates',
+  'Detectors',
+  'Kind weights',
+  'Kind cooldowns',
+  'Detector thresholds',
+  'Intensity',
+  'Reference data',
+];
 
 // -----------------------------------------------------------------------------------------------
 // Element helpers
@@ -165,11 +199,241 @@ export function renderHeader(frame: DebugFrame): HTMLElement {
   if (session.matchId !== null && !session.coachingRoot) {
     head.append(pill('no coaching root', 'bad'));
   }
+
+  // At the top, in the loudest tone the stylesheet has, because everything below it is then a
+  // reading of a tuned app rather than of the shipped one. The realistic failure this window
+  // introduced is somebody moving `speakThreshold` to 0.05, forgetting, and reporting that Riki
+  // will not stop talking.
+  const overridden = frame.controls.filter((control) => control.overridden).length;
+  if (overridden > 0) head.append(pill(plural(overridden, 'override'), 'bad'));
   if (world.paused) head.append(pill('paused', 'on'));
   if (session.muted) head.append(pill('muted', 'on'));
   if (session.chipVisible) head.append(pill('chip visible', 'off'));
 
   return head;
+}
+
+// -----------------------------------------------------------------------------------------------
+// Controls — the one panel that writes (ADR-0037)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * Every element that does something carries `data-control`, and nothing here has a listener.
+ *
+ * The panel is the only interactive surface in a document that is rebuilt whole four times a
+ * second, so per-node listeners would be attached and thrown away at 4 Hz for as long as the window
+ * is open. `app.ts` puts one delegated listener on the root instead and reads these attributes,
+ * which also keeps this file what its header says it is: pure, total, and testable by asserting on
+ * a returned element rather than by driving a bridge.
+ *
+ * `data-focus` is the other half. A click inside a panel that is about to be replaced loses the
+ * focus ring, and a keyboard user tabbing to `speakThreshold`'s `+` would be returned to the top of
+ * the document 250 ms later. `app.ts` reads the key back after every draw and restores it.
+ */
+function action(
+  control: DebugControl,
+  value: DebugControlValue,
+  text: string,
+  className: string,
+  focusSuffix: string,
+): HTMLElement {
+  const button = el('button', className, text);
+  button.setAttribute('type', 'button');
+  button.dataset.control = control.id;
+  button.dataset.kind = control.kind;
+  button.dataset.value = String(value);
+  button.dataset.focus = `${control.id}:${focusSuffix}`;
+  return button;
+}
+
+/** Integers plainly; everything else to three decimals with the trailing zeros taken off. */
+export function formatControlNumber(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+export function formatControlValue(value: DebugControlValue, unit: string | null): string {
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  const text = typeof value === 'number' ? formatControlNumber(value) : value;
+  return unit === null ? text : `${text} ${unit}`;
+}
+
+function controlWidget(control: DebugControl): HTMLElement {
+  const wrap = el('span', 'ins-value ins-control-value');
+
+  // Locked controls are rendered, not hidden. "Why can I not turn off the muted gate" is a question
+  // the window should answer where it is asked; a control that is simply absent invites somebody to
+  // add it, which is the outcome `LOCKED_GATES` exists to prevent.
+  if (control.locked !== null) {
+    wrap.append(el('span', 'ins-control-locked', formatControlValue(control.value, control.unit)));
+    wrap.append(pill('locked', 'off'));
+    return wrap;
+  }
+
+  if (control.kind === 'boolean') {
+    const on = control.value === true;
+    const button = action(
+      control,
+      !on,
+      on ? 'on' : 'off',
+      `ins-switch ins-switch--${on ? 'on' : 'off'}`,
+      'toggle',
+    );
+    button.setAttribute('role', 'switch');
+    button.setAttribute('aria-checked', String(on));
+    wrap.append(button);
+    return wrap;
+  }
+
+  if (control.kind === 'enum') {
+    for (const option of control.options) {
+      const chosen = option === control.value;
+      const button = action(
+        control,
+        option,
+        option,
+        chosen ? 'ins-choice ins-choice--on' : 'ins-choice',
+        option,
+      );
+      button.setAttribute('aria-pressed', String(chosen));
+      wrap.append(button);
+    }
+    return wrap;
+  }
+
+  // A stepper rather than a text field, and that is a consequence of the redraw rather than a
+  // preference: an `<input>` being typed into would have its value replaced four times a second.
+  // A click is atomic, so it cannot be interrupted by a frame.
+  const value = typeof control.value === 'number' ? control.value : 0;
+  const step = control.step ?? 1;
+  const min = control.min;
+  const max = control.max;
+
+  const down = action(control, value - step, '−', 'ins-step', 'down');
+  down.setAttribute('aria-label', `${control.label} down`);
+  if (min !== null && value <= min) down.setAttribute('disabled', '');
+
+  const up = action(control, value + step, '+', 'ins-step', 'up');
+  up.setAttribute('aria-label', `${control.label} up`);
+  if (max !== null && value >= max) up.setAttribute('disabled', '');
+
+  wrap.append(down, el('span', 'ins-control-number', formatControlValue(value, control.unit)), up);
+  return wrap;
+}
+
+function renderControlRow(control: DebugControl, noteShownAbove: boolean): HTMLElement {
+  const row = el('div', control.overridden ? 'ins-control ins-control--set' : 'ins-control');
+
+  const label = el('span', 'ins-key', control.label);
+  row.append(label, controlWidget(control));
+
+  const meta = el('span', 'ins-meta');
+  meta.textContent = [
+    // Only when it differs, and always as "config": the value the app would use on its own is the
+    // thing a reading has to be interpreted against, and it is what Reset restores.
+    control.overridden ? `config ${formatControlValue(control.base, control.unit)}` : '',
+    control.locked ?? (noteShownAbove ? '' : (control.note ?? '')),
+  ]
+    .filter((part) => part !== '')
+    .join(' · ');
+  // Clipped to one line by the stylesheet — sixty four-line rows is a panel nobody reads to the
+  // bottom of — so the full text goes on the row as a tooltip rather than being lost.
+  if (meta.textContent !== '') row.setAttribute('title', meta.textContent);
+  row.append(meta);
+
+  if (control.overridden) {
+    const undo = action(control, control.base, '↺', 'ins-step ins-step--undo', 'reset');
+    undo.setAttribute('aria-label', `reset ${control.label}`);
+    row.append(undo);
+  }
+
+  return keyed(row, `control:${control.id}`);
+}
+
+/**
+ * The note every member of a group shares, or null when they do not share one.
+ *
+ * The thirteen gates all carry the same sentence — *off means the gate is still evaluated and
+ * displayed, and no longer refuses* — because it is a property of the control kind rather than of
+ * any one gate, and thirteen copies of it is a wall. Shown once under the group header instead.
+ */
+function sharedNote(members: readonly DebugControl[]): string | null {
+  const first = members[0]?.note ?? null;
+  if (first === null || members.length < 2) return null;
+  return members.every((control) => control.note === first) ? first : null;
+}
+
+/** Named groups first in `GROUP_ORDER`, then anything the registry added, alphabetically. */
+function orderGroups(names: Iterable<string>): readonly string[] {
+  return [...names].sort((a, b) => {
+    const left = GROUP_ORDER.indexOf(a);
+    const right = GROUP_ORDER.indexOf(b);
+    if (left === right) return a < b ? -1 : a > b ? 1 : 0;
+    if (left === -1) return 1;
+    if (right === -1) return -1;
+    return left - right;
+  });
+}
+
+export function renderControls(
+  controls: readonly DebugControl[],
+  options: ViewOptions,
+): HTMLElement {
+  const body = el('div');
+
+  if (controls.length === 0) {
+    // The shape a headless replay runs in: frames are collected, and there is no control port
+    // behind them. Saying so is the difference between that and a panel that failed to render.
+    body.append(empty('this inspector can display but not change — no control port is wired'));
+    return panel('Controls', null, body);
+  }
+
+  const groups = new Map<string, DebugControl[]>();
+  for (const control of controls) {
+    const bucket = groups.get(control.group);
+    if (bucket === undefined) groups.set(control.group, [control]);
+    else bucket.push(control);
+  }
+
+  for (const name of orderGroups(groups.keys())) {
+    const members = groups.get(name) ?? [];
+    const open = options.openGroups.includes(name);
+    const changed = members.filter((control) => control.overridden).length;
+
+    const header = el('button', 'ins-group', `${open ? '▾' : '▸'} ${name}`);
+    header.setAttribute('type', 'button');
+    header.setAttribute('aria-expanded', String(open));
+    header.dataset.group = name;
+    header.dataset.focus = `group:${name}`;
+    if (changed > 0) header.append(pill(String(changed), 'bad'));
+    // Keyed for `scroll.ts` as well as for focus: expanding a group inserts rows above everything
+    // below it, which is the prepend case the anchor exists for.
+    body.append(keyed(header, `group:${name}`));
+
+    if (!open) continue;
+
+    const shared = sharedNote(members);
+    if (shared !== null) body.append(el('div', 'ins-group-note', shared));
+    for (const control of members) body.append(renderControlRow(control, shared !== null));
+  }
+
+  const overridden = controls.filter((control) => control.overridden).length;
+
+  const reset = el('button', 'ins-button', 'Reset all');
+  reset.setAttribute('type', 'button');
+  reset.dataset.reset = 'all';
+  reset.dataset.focus = 'reset:all';
+  if (overridden === 0) reset.setAttribute('disabled', '');
+  body.append(reset);
+
+  // The two facts somebody reading this panel three hours into a session needs: how far it is from
+  // the config, and that none of it will still be there tomorrow.
+  const note =
+    overridden === 0
+      ? 'session only — nothing here is written to settings.json'
+      : `${plural(overridden, 'override')} · session only, except the coach`;
+
+  return panel('Controls', note, body);
 }
 
 // -----------------------------------------------------------------------------------------------

@@ -55,8 +55,10 @@ function createElectronDebugWindow(options: ElectronDebugWindowOptions): DebugWi
   const closedListeners = new Set<() => void>();
 
   const onIntentMessage = (event: IpcMainEvent, payload: unknown): void => {
-    // Same two-boundary allow-list as the overlay's, and the sender check matters more here: this
-    // channel is live for as long as the app is, and the inspector window is not the only renderer.
+    // Same two-boundary allow-list as the overlay's, and the sender check matters more here than it
+    // used to: this channel is live for as long as the app is, the inspector window is not the only
+    // renderer, and since ADR-0037 two of the four intents change what the coach does. A `control`
+    // arriving from the overlay's webContents must not be honoured just because it parses.
     if (event.sender !== win?.webContents) return;
     const intent = parseDebugIntent(payload);
     if (intent === null) return;

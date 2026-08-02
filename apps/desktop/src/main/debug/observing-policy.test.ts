@@ -97,7 +97,6 @@ function observed(
   const observing = createObservingPolicy({
     delegate: policy,
     report: (next) => void reported.push(next),
-    tapeSalience: DEFAULT_TRIGGER_CONFIG.tapeSalience,
     worldVersion: () => 42,
     ...(gates === undefined ? {} : { gates }),
   });

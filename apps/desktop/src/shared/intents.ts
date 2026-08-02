@@ -10,7 +10,8 @@
  * fields survives the crossing.
  */
 
-import type { DebugIntent } from './debug.js';
+import type { DebugControlValue, DebugIntent } from './debug.js';
+import { DEBUG_LIMITS } from './debug.js';
 import type { OverlayIntent } from './overlay.js';
 
 /** Long enough to be a useful diagnostic, short enough not to be a log-flooding vector. */
@@ -47,12 +48,18 @@ export function isOverlayIntent(payload: unknown): payload is OverlayIntent {
 }
 
 /**
- * The same allow-list discipline for the inspector, which has exactly two things to say.
+ * The same allow-list discipline for the inspector, which has four things to say.
  *
- * It is checked at both boundaries for the same reason the overlay's is, and it matters slightly
- * more here: the inspector window is *focusable* and loads a document with a scrollbar in it, so
- * unlike the overlay it is a surface a person can interact with. Nothing it can send changes the
- * app's behaviour, and this function is where that stays true.
+ * It is checked at both boundaries for the same reason the overlay's is, and it matters more here
+ * than anywhere else in the app: the inspector window is *focusable*, loads a document with a
+ * scrollbar in it, and since ADR-0037 two of its four intents change what the coach does.
+ *
+ * **This function decides shape, not authority.** `control` is normalised to `{id, value}` with
+ * both bounded, and that is all a boundary with no access to the registry can honestly check —
+ * whether the id names a real control, and whether that control is locked, is main's question and
+ * `DebugControlPort.apply` is where it is asked. Splitting it that way is deliberate: a copy of the
+ * registry here would be a second list to keep in step, and the weaker of the two checks would be
+ * the one this file was trusted for.
  */
 export function parseDebugIntent(payload: unknown): DebugIntent | null {
   if (typeof payload !== 'object' || payload === null) return null;
@@ -67,7 +74,31 @@ export function parseDebugIntent(payload: unknown): DebugIntent | null {
         ? { kind: 'fault', message: candidate.message.slice(0, MAX_FAULT_MESSAGE) }
         : null;
 
+    case 'control': {
+      if (typeof candidate.id !== 'string' || candidate.id === '') return null;
+      const value = controlValue(candidate.value);
+      if (value === null) return null;
+      return { kind: 'control', id: candidate.id.slice(0, DEBUG_LIMITS.controlIdChars), value };
+    }
+
+    case 'reset-controls':
+      return { kind: 'reset-controls' };
+
     default:
       return null;
   }
+}
+
+/**
+ * A control's value, or null for anything that is not one of the three shapes.
+ *
+ * `NaN` and the infinities are refused rather than clamped. They arrive from a stepper that
+ * divided by something, they would reach a threshold comparison as a value that is neither above
+ * nor below it, and the resulting silence would be indistinguishable from a working gate.
+ */
+function controlValue(raw: unknown): DebugControlValue | null {
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string') return raw.slice(0, DEBUG_LIMITS.controlValueChars);
+  return null;
 }

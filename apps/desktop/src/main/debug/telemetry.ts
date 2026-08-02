@@ -207,5 +207,13 @@ export function withDebugTelemetry(deps: DebugTelemetryDeps): ShellTelemetry {
     sessionOpenFailed(message: string): void {
       delegate.sessionOpenFailed(message);
     },
+
+    debugOverride(id, value): void {
+      delegate.debugOverride(id, value);
+      // Not mirrored into Problems. An override is not a fault, and the frame already carries the
+      // whole override set on every control — with the header counting them, so an inspector
+      // session cannot be misread as stock behaviour. This arm exists so the record survives into a
+      // log the day `packages/telemetry` lands, which is the one place it is not already visible.
+    },
   };
 }
