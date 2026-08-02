@@ -20,9 +20,12 @@
  * and as a broken product on the second. They come back with the surfaces they need.
  */
 
+import type { CoachMode } from '@riki/config';
 import type { TrayGlyph } from '../../shared/overlay.js';
 
-export type TrayAction = 'toggle-mute' | 'quit';
+export type { CoachMode };
+
+export type TrayAction = 'toggle-mute' | 'toggle-coach' | 'open-debug' | 'quit';
 
 export interface TrayMenuItem {
   readonly kind: 'action' | 'label' | 'separator';
@@ -38,6 +41,26 @@ export interface TrayModel {
   readonly muted: boolean;
   /** One line, from the state subsystem's health. Never a token, a path or chat text. */
   readonly status: string;
+  /**
+   * Which coach is running, and whether the other one can be reached from here.
+   *
+   * `available: false` is the no-key case, and the row is rendered **disabled with its reason in the
+   * label** rather than hidden. That is the opposite of this file's rule about the four absent rows
+   * — but those open a surface that does not exist, and this one describes a state the app is
+   * actually in. This row *is* the mode switch (ADR-0031), so a player who clicks it and gets the
+   * static coach anyway needs to be told why, and the tray is the only place Riki can tell them.
+   */
+  readonly coach: { readonly mode: CoachMode; readonly available: boolean };
+  /**
+   * Whether the inspector row is offered — `config.debug.enabled`, and false by default.
+   *
+   * The second of the four absent rows to earn its way back, and it comes back on the *other*
+   * argument from the coach row above: that one describes a state the app is in, this one opens a
+   * real window (`main/debug/`). It stays conditional because a debug row in a shipped build is the
+   * same mistake in a different direction — an affordance most people should never see, and one
+   * that costs something to keep armed (`shell/config.ts`'s `DebugConfig`).
+   */
+  readonly debug: boolean;
 }
 
 /** ui-design.md §2.3. `⌥⌘M` on macOS, the primary target; Electron maps `Alt+Command` per platform. */
@@ -56,8 +79,45 @@ export function projectMenu(model: TrayModel): readonly TrayMenuItem[] {
       accelerator: MUTE_ACCELERATOR,
     },
     { kind: 'separator' },
+    coachRow(model.coach),
+    // Last before Quit, and below the coach row rather than above it: this is a developer
+    // affordance and the rows above it are the product.
+    ...(model.debug
+      ? ([
+          { kind: 'separator' },
+          { kind: 'action', id: 'open-debug', label: 'Open Inspector…', enabled: true },
+        ] as const)
+      : []),
+    { kind: 'separator' },
     { kind: 'action', id: 'quit', label: 'Quit Riki', enabled: true },
   ];
+}
+
+/**
+ * The coach toggle — requirement 1's runtime switch, as the one surface a player can reach.
+ *
+ * A checkbox rather than a submenu: there are two coaches and there is not going to be a third, so a
+ * two-item radio group would be two rows saying what one checkbox says. `checked` is *"the LLM coach
+ * is on"*, which makes the unchecked state the deterministic default and reads correctly to somebody
+ * who has never heard of either.
+ */
+export function coachRow(coach: TrayModel['coach']): TrayMenuItem {
+  if (!coach.available) {
+    return {
+      kind: 'action',
+      id: 'toggle-coach',
+      label: 'LLM coach — needs RIKI_OPENAI_API_KEY',
+      checked: false,
+      enabled: false,
+    };
+  }
+  return {
+    kind: 'action',
+    id: 'toggle-coach',
+    label: 'LLM coach',
+    checked: coach.mode === 'llm',
+    enabled: true,
+  };
 }
 
 /**

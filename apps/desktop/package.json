@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@riki/audio": "workspace:*",
+    "@riki/coach": "workspace:*",
     "@riki/config": "workspace:*",
     "@riki/context": "workspace:*",
     "@riki/events": "workspace:*",

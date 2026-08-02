@@ -32,7 +32,7 @@
  */
 
 export type * from './types.js';
-export { COACH_EVENT_KINDS, SUPPRESSION_REASONS, detectionKey } from './types.js';
+export { COACH_EVENT_KINDS, SUPPRESSION_REASONS, detectionKey, eventTopic } from './types.js';
 
 export type * from './contracts.js';
 

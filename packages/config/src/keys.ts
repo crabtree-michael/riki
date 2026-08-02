@@ -20,7 +20,15 @@
  * table, so it is not one — see `env.ts`.
  */
 
-/** Dotted path in `RikiConfig` → the environment variable that sets it. */
+/**
+ * Dotted path in `RikiConfig` → the environment variable that sets it, or `null` for a field the
+ * environment may not touch.
+ *
+ * `null` has exactly one member today and it earns it: `coach.mode` is the tray's Coach row
+ * persisted to `settings.json` (ADR-0031), and a `RIKI_COACH` in a shell profile would silently
+ * undo the player's choice on every restart. A `null` here removes the environment *and* the CLI
+ * flag, because both are the same failure at different volumes.
+ */
 export const CONFIG_KEYS = {
   'realtime.model': 'RIKI_REALTIME_MODEL',
   'realtime.voice': 'RIKI_REALTIME_VOICE',
@@ -37,13 +45,16 @@ export const CONFIG_KEYS = {
   'logTail.path': 'RIKI_LOG_TAIL_PATH',
   'logTail.pollMs': 'RIKI_LOG_TAIL_POLL_MS',
   'hotkey.talk': 'RIKI_HOTKEY_TALK',
+  'coach.mode': null,
+  'coach.model': 'RIKI_COACH_MODEL',
+  'debug.enabled': 'RIKI_DEBUG',
   'privacy.captions': 'RIKI_CAPTIONS',
   'privacy.unprompted': 'RIKI_UNPROMPTED',
   'privacy.chatEgress': 'RIKI_CHAT_EGRESS',
   'privacy.debugFrames': 'RIKI_DEBUG_FRAMES',
   logLevel: 'RIKI_LOG_LEVEL',
   replayFixture: 'RIKI_REPLAY_FIXTURE',
-} as const;
+} as const satisfies Readonly<Record<string, string | null>>;
 
 export type ConfigKey = keyof typeof CONFIG_KEYS;
 
@@ -53,19 +64,28 @@ export const CONFIG_KEY_LIST = Object.keys(CONFIG_KEYS) as readonly ConfigKey[];
 export const BOOLEAN_KEYS: readonly ConfigKey[] = [
   'vision.enabled',
   'vision.fake',
+  'debug.enabled',
   'privacy.captions',
   'privacy.unprompted',
   'privacy.chatEgress',
   'privacy.debugFrames',
 ];
 
-/** `realtime.model` → `--realtime-model`. Mechanical, so a flag cannot name a missing field. */
-export function flagNameFor(key: ConfigKey): string {
-  return `--${key.replace(/\./g, '-')}`;
+/**
+ * `realtime.model` → `--realtime-model`, mechanically, so a flag cannot name a missing field.
+ *
+ * `null` for a field the environment may not set, because a flag is the same hazard: it would let
+ * something outside the app's own UI decide which coach runs.
+ */
+export function flagNameFor(key: ConfigKey): string | null {
+  return CONFIG_KEYS[key] === null ? null : `--${key.replace(/\./g, '-')}`;
 }
 
 const BY_FLAG = new Map<string, ConfigKey>(
-  CONFIG_KEY_LIST.map((key) => [flagNameFor(key), key] as const),
+  CONFIG_KEY_LIST.flatMap((key) => {
+    const flag = flagNameFor(key);
+    return flag === null ? [] : [[flag, key] as const];
+  }),
 );
 
 export function keyForFlag(flag: string): ConfigKey | null {
@@ -79,6 +99,8 @@ export function keyForFlag(flag: string): ConfigKey | null {
  * one who put `"gsi": { "port": "abc" }` in `settings.json` needs the path.
  */
 export function describeKey(key: string): string {
-  const env = (CONFIG_KEYS as Readonly<Record<string, string>>)[key];
-  return env === undefined ? key : `${env} (${key})`;
+  const env = (CONFIG_KEYS as Readonly<Record<string, string | null>>)[key];
+  // `null` and `undefined` both fall through to the path: a field with no environment variable is
+  // set in `settings.json`, and the path is what a developer typed there.
+  return env === undefined || env === null ? key : `${env} (${key})`;
 }

@@ -31,15 +31,23 @@ pub mod frame;
 pub mod geometry;
 pub mod hash;
 pub mod health;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod pipeline;
+pub mod pixels;
 pub mod platform;
 pub mod replay;
+pub mod window_match;
 
 pub use backend::{BackendInfo, CaptureBackend, CaptureError, CapturedRegion};
 pub use frame::{Frame, FrameError};
 pub use geometry::{resolve, PixelRect, ResolvedRect, WindowGeometry};
 pub use hash::{format_hash, mean_luma, region_hash, ChangeGate};
 pub use health::{CaptureHealth, Diagnosis};
+#[cfg(target_os = "macos")]
+pub use macos::ScreenCaptureKitBackend;
 pub use pipeline::{Acquisition, CapturePipeline, Pass, RegionDigest};
+pub use pixels::crop_bgra_to_rgba;
 pub use platform::{default_backend, UnavailableBackend};
 pub use replay::ReplayBackend;
+pub use window_match::{select as select_window, WindowCandidate};

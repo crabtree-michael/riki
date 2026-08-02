@@ -35,6 +35,15 @@
 export type * from './types.js';
 export { voiceEnabled } from './types.js';
 
+/**
+ * Re-exported so the key has one import site as well as one *read* site.
+ *
+ * The class lives in `packages/realtime` (ADR-0022) because that is where it is spent; this package
+ * is where the single instance is constructed, so `import { ApiKey } from '@riki/config'` is what a
+ * caller should write.
+ */
+export { ApiKey } from '@riki/realtime';
+
 export { CONFIG_KEYS, BOOLEAN_KEYS, flagNameFor, describeKey } from './keys.js';
 export type { ConfigKey } from './keys.js';
 

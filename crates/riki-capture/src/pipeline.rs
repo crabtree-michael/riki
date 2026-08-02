@@ -81,6 +81,14 @@ impl<B: CaptureBackend> CapturePipeline<B> {
         &self.backend
     }
 
+    /// Tell the backend the rate the caller will read at.
+    ///
+    /// See [`CaptureBackend::set_frame_interval`]. Must be called before [`Self::acquire`]: a
+    /// pushing backend fixes its frame interval when it builds its stream.
+    pub fn set_frame_interval(&mut self, interval: std::time::Duration) {
+        self.backend.set_frame_interval(interval);
+    }
+
     /// Find the window and start capturing it.
     pub fn acquire(&mut self, target: &WindowTarget) -> Acquisition {
         // A new session invalidates every remembered hash: the same region of a window that has
@@ -159,6 +167,7 @@ impl<B: CaptureBackend> CapturePipeline<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::{BackendInfo, CaptureError, CapturedRegion};
     use crate::frame::Frame;
     use crate::replay::ReplayBackend;
     use riki_ipc::{NormalizedRect, ProblemKind};
@@ -184,6 +193,62 @@ mod tests {
                 h: 1.0,
             },
         }
+    }
+
+    /// A backend that records what the pipeline told it, and captures nothing.
+    #[derive(Debug, Default)]
+    struct IntervalSpy {
+        interval: Option<std::time::Duration>,
+    }
+
+    impl CaptureBackend for IntervalSpy {
+        fn info(&self) -> BackendInfo {
+            BackendInfo {
+                name: "spy",
+                available: true,
+                black_frames_mean_permission_denied: false,
+            }
+        }
+
+        fn acquire(&mut self, _target: &WindowTarget) -> Result<WindowGeometry, CaptureError> {
+            Ok(WindowGeometry::new(8, 8))
+        }
+
+        fn capture(
+            &mut self,
+            _regions: &[CaptureRegion],
+        ) -> Result<Vec<CapturedRegion>, CaptureError> {
+            Ok(Vec::new())
+        }
+
+        fn release(&mut self) {}
+
+        fn set_frame_interval(&mut self, interval: std::time::Duration) {
+            self.interval = Some(interval);
+        }
+    }
+
+    #[test]
+    fn the_configured_rate_reaches_the_backend() {
+        // `ScreenCaptureKit` fixes its frame interval when it builds its stream, so a backend that
+        // never hears the rate runs at the display's refresh rate and spends the whole CPU budget
+        // cropping frames nobody reads.
+        let mut pipeline = CapturePipeline::new(IntervalSpy::default());
+        pipeline.set_frame_interval(std::time::Duration::from_millis(200));
+        assert_eq!(
+            pipeline.backend().interval,
+            Some(std::time::Duration::from_millis(200))
+        );
+    }
+
+    #[test]
+    fn a_backend_that_ignores_the_rate_still_works() {
+        // The trait method is defaulted, so `ReplayBackend` and `UnavailableBackend` need no
+        // implementation — a backend that produces a frame only when asked has nothing to say.
+        let mut pipeline = CapturePipeline::new(ReplayBackend::new(vec![solid(90)]));
+        pipeline.set_frame_interval(std::time::Duration::from_millis(200));
+        pipeline.acquire(&target());
+        assert!(pipeline.pass(&[whole(RegionId::Scoreboard)]).captured);
     }
 
     #[test]

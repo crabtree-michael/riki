@@ -352,6 +352,48 @@ section"*. That is the rule working rather than a false positive, and the fix is
 lives: `coaching.test.ts` and `golden.test.ts` sit one level up, and a section test belongs there
 too. The same trap existed in the deleted `tools/handlers/` and cost the same ten minutes twice.
 
+**2026-08-02 — there are two coaches now, and only one of them is gated.** `packages/coach` is an
+*alternative* to `packages/events`, not a stage inside it (ADR-0031): the thirteen gates, the
+salience score, the latch and the novelty gate do not run in `llm` mode. Six mechanical skips remain
+and nothing may be added to that list without an ADR. *Why:* the instinct on reading `packages/coach`
+is that a suppression rule is "missing" and to add it back — that is the drift the ADR exists to
+stop, and the deterministic coach next door is where those rules still live, intact.
+
+**2026-08-02 — a "has this been seen" map needs the same reconciliation a latch does, and it is
+silent when it does not have it.** `packages/coach`'s signal reader marks a detection `fresh` when
+its key was not present at the last consultation, and the freshness map is only advanced once the
+model has been shown the signals. Without *also* dropping keys the detectors have stopped reporting,
+`fresh` quietly degrades to "never consulted about since the match began" — a condition that goes
+away and comes back is never a trigger a second time, so the coach consults once per condition per
+match and then goes silent about it forever. It is exactly `reconcileLatches` in
+`packages/events/src/engine.ts`, at the same point in the tick. *Why:* nothing fails — no error, no
+test, and the first consultation looks perfect. It surfaced only because a test tried to make a
+condition recur and could not.
+
+**2026-08-02 — `settings.json` was read and never written, so every UI setting was runtime-only.**
+`bootstrap.ts` had `loadSettings` and no writer, while `shell/config.ts` documented the tray as
+persisting into it. The tray's Coach row therefore reverted to the default on every restart, which
+presents as a preference that silently does not stick. `saveSettings` now exists and the shell
+announces changes through `onCoachModeChanged` rather than doing I/O itself. *Why:* check for the
+writer before believing a comment about persistence — and if you add a setting to a UI surface, the
+round trip is the test worth writing first.
+
+**2026-08-02 — `boundaries/external` matches the package name, so `openai` says nothing about
+`@openai/agents`.** The rule reserving the OpenAI SDK to `packages/realtime` read as if it covered
+the Agents SDK and did not; `packages/coach` imported it straight past. Fixed to
+`disallow: ['openai', '@openai/*']` with an `allow` for `coach`. *Why:* a scoped package is a
+different name from its unscoped sibling, and the failure is a rule that reports success. Verified
+the only way that means anything — declare the dependency on a *disallowed* package so the import
+resolves, lint, confirm the error, revert both.
+
+**2026-08-02 — markdownlint's ignore glob was `node_modules/**`, which under pnpm excludes exactly
+one directory.** pnpm puts a `node_modules` inside every workspace member, so every dependency
+README under `packages/*/node_modules` was being linted as ours. Nothing surfaced it until a
+dependency shipped a README that trips one of our rules. It is `**/node_modules/**` now, and the same
+correction applies to `target`, `dist`, `out` and `coverage`. *Why:* the gate was green for months
+while silently linting other people's files; the first new dependency with an opinionated README is
+what finds it.
+
 ## See also
 
 `docs/design/context-and-memory-architecture.md` (preamble, snapshot, memory, retention — with

@@ -26,13 +26,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ConfigLayer } from '@riki/config';
+import { createFakeCoachModel } from '@riki/coach/testing';
+import { ApiKey, type CoachMode, type ConfigLayer } from '@riki/config';
 import type { Timers } from '@riki/context';
+import { GATES, SUPPRESSION_REASONS } from '@riki/events';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
+import type { EventEngine } from '@riki/events';
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
 
 import type { Millis } from '../../shared/overlay.js';
+import type { CoachDriver, StaticCoachDriver } from '../agent/index.js';
 import { resetCoachTurnIds } from '../agent/index.js';
 import { createFakeWindow, fakeWindowFactory, type FakeOverlayWindow } from '../testing/fakes.js';
 import type { Clock as UiClock } from '../session/contracts.js';
@@ -41,7 +45,7 @@ import { NO_RESTART, type SourceRegistration } from '../state/index.js';
 import type { TrayAction, TraySurface } from '../tray/index.js';
 import type { KeySource } from '../trigger/index.js';
 import { HOLD_THRESHOLD_MS } from '../trigger/index.js';
-import { createRikiShell, resolveShellConfig, type RikiShell } from './index.js';
+import { createRikiShell, resolveShellConfig, type RikiShell, type ShellDeps } from './index.js';
 import { createSilentSession, type SilentSession } from './silent-session.js';
 
 const FIXTURE = 'fixtures/gsi/laning-phase.jsonl';
@@ -120,14 +124,22 @@ function testTimers(): TestTimers {
   };
 }
 
-function silentTray(): TraySurface & { readonly statuses: readonly string[]; quit(): void } {
+function silentTray(): TraySurface & {
+  readonly statuses: readonly string[];
+  /** Every row label the tray has been asked to render, so a conditional row is assertable. */
+  readonly labels: readonly string[];
+  quit(): void;
+} {
   const statuses: string[] = [];
+  const labels: string[] = [];
   const actions = new Set<(action: TrayAction) => void>();
   return {
     statuses,
+    labels,
     render(_glyph, _tooltip, menu) {
       const label = menu[0]?.label;
       if (label !== undefined) statuses.push(label);
+      for (const item of menu) if (item.label !== undefined) labels.push(item.label);
     },
     onAction(listener) {
       actions.add(listener);
@@ -297,11 +309,12 @@ describe('the privacy default', () => {
       await quiet.shell.start();
       await replayInto(quiet);
 
-      const counters = quiet.shell.match?.engine.counters();
       expect(quiet.shell.match).not.toBeNull();
+      const counters = engineOf(quiet.shell).counters();
       // Something *was* detected, so the zero below is quiet mode and not an inert pipeline.
-      expect(Object.values(counters?.detected ?? {}).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
-      expect(counters?.spoken).toBe(0);
+      const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
+      expect(detected).toBeGreaterThan(0);
+      expect(counters.spoken).toBe(0);
       expect(quiet.session.turns).toHaveLength(0);
     } finally {
       await quiet.shell.stop();
@@ -347,7 +360,8 @@ describe('a recorded match, end to end', () => {
     expect(match?.matchId).toBe('7891234567');
     // Real objects, not stubs: this is the first time they have existed outside a unit test.
     expect(match?.context.ledgerRecord.all()).toBeDefined();
-    expect(match?.engine.counters()).toBeDefined();
+    // The static coach is the default and the shell built it behind the driver port.
+    expect(match?.driver.mode).toBe('static');
   });
 
   it('renders a snapshot the model could actually read', async () => {
@@ -370,16 +384,15 @@ describe('a recorded match, end to end', () => {
     const { shell } = use();
     await replay();
 
-    const counters = shell.match?.engine.counters();
-    expect(counters).toBeDefined();
-    const detected = Object.values(counters?.detected ?? {}).reduce((a, b) => a + b, 0);
-    const suppressed = Object.values(counters?.suppressed ?? {}).reduce((a, b) => a + b, 0);
+    const counters = engineOf(shell).counters();
+    const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
+    const suppressed = Object.values(counters.suppressed).reduce((a, b) => a + b, 0);
     // Both zero would mean the engine never ran, which is exactly the failure this file exists to
     // catch. Non-zero on both sides means more: detection *and* the gate stack ran, and the
     // default really is silence — the corpus produces more refusals than utterances.
     expect(detected).toBeGreaterThan(0);
     expect(suppressed).toBeGreaterThan(0);
-    expect(detected).toBeGreaterThan(counters?.spoken ?? 0);
+    expect(detected).toBeGreaterThan(counters.spoken);
   });
 
   it('never speaks without a brief behind it', async () => {
@@ -393,9 +406,26 @@ describe('a recorded match, end to end', () => {
       // The snapshot and the brief, blank-line separated as one injected system message.
       expect(spoken.turn.snapshotText).toContain('\n\n');
     }
-    expect(session.turns.length).toBe(shell.match?.engine.counters().spoken ?? 0);
+    expect(session.turns.length).toBe(engineOf(shell).counters().spoken);
   });
 });
+
+/**
+ * The deterministic coach's counters, from behind the driver port.
+ *
+ * Narrowing rather than casting: if the shell ever built the LLM coach by default this throws with
+ * a message saying so, which is what a silent `as` would not.
+ */
+function engineOf(shell: RikiShell): EventEngine {
+  // Typed as the *port*, not as the static adapter: narrowing a value already declared to be
+  // `StaticCoachDriver` proves nothing, and the whole point of this helper is that it fails loudly
+  // if the shell ever defaults to the other coach.
+  const driver: CoachDriver | undefined = shell.match?.driver;
+  if (driver?.mode !== 'static') {
+    throw new Error(`expected the static coach, got ${String(driver?.mode)}`);
+  }
+  return (driver as StaticCoachDriver).engine;
+}
 
 describe('the interaction path', () => {
   it('speaks unprompted during the recorded match, with no gesture behind it', async () => {
@@ -424,7 +454,7 @@ describe('the interaction path', () => {
     // trigger policy, which is the one confusion that would make the stand-in worse than useless.
     timers.flush();
     expect(shell.runtime.snapshot().phase.kind).toBe('idle');
-    expect(shell.match?.engine.counters().spoken).toBeGreaterThan(0);
+    expect(engineOf(shell).counters().spoken).toBeGreaterThan(0);
   });
 
   it('barges in: one key press during Riki speaking goes straight to Listening', async () => {
@@ -461,6 +491,194 @@ describe('the interaction path', () => {
   });
 });
 
+describe('the inspector (main/debug)', () => {
+  it('does not exist unless it was asked for', () => {
+    // Off by default, and the default is what every other test in this file runs under. With it off
+    // the shell installs no observing policy, builds no hub, and holds no rendered brief in memory.
+    expect(use().shell.debug).toBeNull();
+  });
+
+  it('changes nothing about what Riki does', async () => {
+    /** One full fixture replay, returning the two things the coaching path is judged on. */
+    async function run(debug: boolean): Promise<{ spoken: number; texts: readonly string[] }> {
+      resetCoachTurnIds();
+      const built = build({ 'privacy.unprompted': true, 'debug.enabled': debug });
+      await built.shell.start();
+      try {
+        for (;;) {
+          if (!built.gsi.step()) break;
+          built.clock.advance(250);
+          await Promise.resolve();
+        }
+        await Promise.resolve();
+        // `engineOf` rather than an inline cast: it throws if the shell ever defaults to the LLM
+        // coach, which would otherwise make both runs report the same `-1` and let this test pass
+        // while measuring nothing.
+        return {
+          spoken: engineOf(built.shell).counters().spoken,
+          texts: built.session.turns.map((entry) => entry.turn.snapshotText),
+        };
+      } finally {
+        await built.shell.stop();
+        rmSync(built.dataDir, { recursive: true, force: true });
+      }
+    }
+
+    const off = await run(false);
+    const on = await run(true);
+
+    // The claim the whole component is built around. `observing-policy.ts` and
+    // `observing-context.ts` both return their delegate's value unchanged, and this is what that
+    // means end to end: the same fixture produces the same utterances either way. If it ever does
+    // not, the inspector is not measuring the app — it is changing it, and in a product whose
+    // failure mode is Riki talking when it should not, that is the bug that matters.
+    expect(on.spoken).toBe(off.spoken);
+    expect(on.texts).toEqual(off.texts);
+    expect(on.spoken).toBeGreaterThan(0);
+  });
+
+  describe('with it on', () => {
+    beforeEach(async () => {
+      const current = harness;
+      harness = null;
+      if (current !== null) {
+        await current.shell.stop();
+        rmSync(current.dataDir, { recursive: true, force: true });
+      }
+      resetCoachTurnIds();
+      harness = build({ 'privacy.unprompted': true, 'debug.enabled': true });
+      await harness.shell.start();
+    });
+
+    it('collects without a window, which is the shape a replay wants', () => {
+      const { shell } = use();
+      expect(shell.debug).not.toBeNull();
+      // No `DebugWindowFactory` is passed here on purpose: everything the inspector gathers is a
+      // Tier 1/Tier 4 concern, and a window is Tier 5's business.
+      expect(shell.debug?.isOpen()).toBe(false);
+    });
+
+    it('shows the world the judge is actually reading', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const frame = shell.debug?.hub.frame(clock.now());
+      expect(frame?.session.matchId).toBe('7891234567');
+      expect(frame?.session.coachingRoot).toBe(true);
+      expect(frame?.world.version).toBeGreaterThan(0);
+
+      // Facts that came out of a recorded POST, each with the envelope `packages/world-model` goes
+      // to some trouble to keep attached: no row here can be read without its provenance.
+      const facts = frame?.world.facts ?? [];
+      expect(facts.length).toBeGreaterThan(0);
+      for (const fact of facts) {
+        expect(fact.source).not.toBe('');
+        expect(fact.confidence).toBeGreaterThan(0);
+        expect(['fresh', 'aging', 'stale', 'expired']).toContain(fact.staleness);
+        expect(['wall', 'game']).toContain(fact.ageBasis);
+      }
+      expect(facts.map((fact) => fact.path)).toContain('meta.phase');
+    });
+
+    it('shows the gate ladder for every candidate, which nothing else can', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const frame = shell.debug?.hub.frame(clock.now());
+      const ticks = frame?.ticks ?? [];
+      expect(ticks.length).toBeGreaterThan(0);
+
+      const withCandidates = ticks.filter((tick) => tick.candidates.length > 0);
+      expect(withCandidates.length).toBeGreaterThan(0);
+
+      for (const tick of withCandidates) {
+        for (const candidate of tick.candidates) {
+          // Thirteen verdicts per candidate, every tick — including for the candidates that lost
+          // the ranking and never reached a gate in the shipping path (§5.5).
+          expect(candidate.ladder).toHaveLength(SUPPRESSION_REASONS.length);
+          expect(candidate.ladder.map((gate) => gate.reason)).toEqual(GATES.map((g) => g.reason));
+        }
+      }
+
+      // And at least one refusal is attributable to a named gate, rather than the whole corpus
+      // being "nothing was detected".
+      const refused = ticks.filter((tick) => !tick.decision.speak && tick.decision.key !== null);
+      expect(refused.length).toBeGreaterThan(0);
+    });
+
+    it('shows what the coach was given', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const turns = shell.debug?.hub.frame(clock.now()).turns ?? [];
+      expect(turns.length).toBeGreaterThan(0);
+
+      for (const turn of turns) {
+        // The snapshot and the brief as they were rendered — the pair that exists nowhere else a
+        // person can read, and the whole reason the assembler is decorated rather than the agent.
+        expect(turn.snapshotText.length).toBeGreaterThan(0);
+        expect(turn.snapshotTokens).toBeGreaterThan(0);
+        expect(turn.cause).toBe('trigger');
+        expect(turn.eventId).not.toBeNull();
+        // An empty brief would have been closed `silent` without reaching the session; every turn
+        // here got past that, so all of them have text behind them.
+        expect(turn.briefEmpty).toBe(false);
+        expect(turn.briefText.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('shows what became of a turn once it closes', async () => {
+      const { shell, clock, timers } = use();
+      await replay();
+
+      // A turn is `open` until `closeTurn`, which for the silent session is the nominal speech
+      // duration expiring. Asserting the outcome without flushing would be asserting that the
+      // fixture happens to run long enough, which is a fact about the fixture.
+      expect(shell.debug?.hub.frame(clock.now()).turns.every((t) => t.outcome === 'open')).toBe(
+        true,
+      );
+      timers.flush();
+
+      const closed = shell.debug?.hub.frame(clock.now()).turns.filter((t) => t.outcome !== 'open');
+      expect(closed?.length).toBeGreaterThan(0);
+      expect(closed?.map((turn) => turn.outcome)).toContain('spoke');
+    });
+
+    it('carries the engine state behind a refusal', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const gates = shell.debug?.hub.frame(clock.now()).session.gates;
+      // None of this is reachable through `EventEngine`'s public surface; it arrives on the
+      // `GateContext` the policy decorator sees.
+      expect(gates?.asOfMs).not.toBeNull();
+      expect(gates?.speakThreshold).toBeGreaterThan(0);
+      expect(gates?.unprompted).toBe(true);
+      expect(gates?.latched).toBeInstanceOf(Array);
+    });
+
+    it('counts what was detected against what was spoken', async () => {
+      const { shell, clock } = use();
+      await replay();
+
+      const counters = shell.debug?.hub.frame(clock.now()).counters;
+      const detected = (counters?.detected ?? []).reduce((sum, row) => sum + row.count, 0);
+      const suppressed = (counters?.suppressed ?? []).reduce((sum, row) => sum + row.count, 0);
+
+      // §5.4's tuning signal, per reason rather than as one number — which is the difference
+      // between "Riki said nothing" and "Riki noticed nothing".
+      expect(detected).toBeGreaterThan(0);
+      expect(suppressed).toBeGreaterThan(0);
+      expect(counters?.ticks).toBeGreaterThan(0);
+    });
+
+    it('offers the tray row it now has somewhere to send', () => {
+      const { tray } = use();
+      expect(tray.labels).toContain('Open Inspector…');
+    });
+  });
+});
+
 describe('shutdown', () => {
   it('reports a quit request from the tray', () => {
     const { shell, tray } = use();
@@ -478,5 +696,133 @@ describe('shutdown', () => {
 
     expect(current.window.destroyed).toBe(true);
     expect(current.timers.depth).toBe(0);
+  });
+});
+
+/**
+ * The toggle, which is the whole of "the mode switch is a UI control".
+ *
+ * These build their own shell rather than using the shared harness, because the thing under test is
+ * a *construction* choice — whether a model factory was supplied — and the harness deliberately
+ * supplies none.
+ */
+describe('the coach toggle', () => {
+  function shellWith(options: {
+    readonly coachModel?: ShellDeps['coachModel'];
+    readonly onCoachModeChanged?: (mode: CoachMode) => void;
+    readonly mode?: CoachMode;
+    /** Both halves are required for `llm` to be reachable; a test names the one it is about. */
+    readonly key?: boolean;
+  }): { shell: RikiShell; dataDir: string } {
+    const clock = testClock();
+    const timers = testTimers();
+    const dataDir = mkdtempSync(join(tmpdir(), 'riki-toggle-'));
+    const worldClock = { now: (): MonoMs => clock.now() as MonoMs };
+    const gsi = createFakeGsiSource({
+      lines: parseGsiFixture(readFileSync(FIXTURE, 'utf8')),
+      clock: worldClock,
+    });
+
+    const shell = createRikiShell({
+      config: resolveShellConfig({
+        dataDir,
+        gsiToken: 'test-token',
+        ...(options.key === true ? { apiKey: new ApiKey('sk-test-aaaa-bbbb-cccc-dddd') } : {}),
+        // The mode's one source is `settings.json` (ADR-0031), which in `@riki/config`'s terms is
+        // the layer beneath the environment. There is no environment variable and no flag for it,
+        // so a layer entry is how a test asks for it — the same way the app's own file does.
+        layer: {
+          'privacy.unprompted': true,
+          ...(options.mode === undefined ? {} : { 'coach.mode': options.mode }),
+        },
+      }),
+      clock,
+      timers,
+      platform: 'darwin',
+      sources: {
+        gsi: (): SourceRegistration => ({
+          policy: NO_RESTART,
+          source: {
+            id: gsi.id,
+            start: () => gsi.start(),
+            stop: () => gsi.stop(),
+            subscribe: (listener: (o: Observation) => void) => gsi.subscribe(listener),
+            health: (now): SourceHealth => gsi.health(now),
+          },
+        }),
+      },
+      windowFactory: fakeWindowFactory(createFakeWindow()),
+      tray: silentTray(),
+      keys: testKeys(),
+      session: createSilentSession({ clock: worldClock, timers }),
+      ...(options.coachModel === undefined ? {} : { coachModel: options.coachModel }),
+      ...(options.onCoachModeChanged === undefined
+        ? {}
+        : { onCoachModeChanged: options.onCoachModeChanged }),
+    });
+
+    return { shell, dataDir };
+  }
+
+  it('refuses the LLM coach with a model factory but no key', () => {
+    const { shell, dataDir } = shellWith({ coachModel: () => createFakeCoachModel() });
+    // Both halves are needed. Asking for `llm` must come back `static`: a toggle that ticked anyway
+    // would leave a match running in a mode that says nothing all game, with the UI claiming
+    // otherwise.
+    expect(shell.setCoachMode('llm')).toBe('static');
+    expect(shell.coachMode).toBe('static');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('switches to the LLM coach when one can be built, and announces it for persistence', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+      onCoachModeChanged: (mode) => changes.push(mode),
+    });
+
+    expect(shell.setCoachMode('llm')).toBe('llm');
+    expect(shell.coachMode).toBe('llm');
+    expect(changes).toEqual(['llm']);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('announces nothing when the mode did not actually change', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+      onCoachModeChanged: (mode) => changes.push(mode),
+    });
+
+    expect(shell.setCoachMode('static')).toBe('static');
+    // Already static. Writing `settings.json` on every no-op click would be a file write per tray
+    // open, and a changed-at timestamp that means nothing.
+    expect(changes).toEqual([]);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('announces the resolved mode, not the requested one', () => {
+    const changes: CoachMode[] = [];
+    const { shell, dataDir } = shellWith({ onCoachModeChanged: (mode) => changes.push(mode) });
+
+    // Asking for `llm` with nothing to build it resolves to `static`, which is already the mode —
+    // so there is no change and nothing is persisted. A settings file saying `llm` here would send
+    // the player back into the same dead end on every restart.
+    expect(shell.setCoachMode('llm')).toBe('static');
+    expect(changes).toEqual([]);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('starts in the mode the settings file asked for', () => {
+    const { shell, dataDir } = shellWith({
+      mode: 'llm',
+      key: true,
+      coachModel: () => createFakeCoachModel(),
+    });
+
+    expect(shell.coachMode).toBe('llm');
+    rmSync(dataDir, { recursive: true, force: true });
   });
 });

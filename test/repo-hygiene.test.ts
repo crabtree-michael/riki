@@ -54,6 +54,10 @@ describe('.env.example', () => {
   it.each([
     ['RIKI_CAPTIONS', 'off'],
     ['RIKI_UNPROMPTED', 'off'],
+    // The inspector holds rendered snapshots, briefs and coach transcripts in memory while it is
+    // on. That makes its default a privacy decision as much as a performance one, which puts it in
+    // this table rather than only in a header (docs/design/debug-inspector.md §6).
+    ['RIKI_DEBUG', 'off'],
   ])('defaults %s to %s', (key, expected) => {
     expect(value(key)).toBe(expected);
   });
@@ -64,7 +68,10 @@ describe('.env.example', () => {
     // remember to extend is a list that goes stale on the first setting nobody thought about.
     // `API_KEY_VAR` is separate because the key is deliberately not a row in that table — a flag
     // would put it in the process list and `settings.json` is neither gitignored nor redacted.
-    for (const key of [API_KEY_VAR, ...Object.values(CONFIG_KEYS)]) {
+    // `null` is a field the environment may not set at all (`coach.mode` — ADR-0031), so it has
+    // nothing to document.
+    const named: string[] = Object.values(CONFIG_KEYS).filter((name) => name !== null);
+    for (const key of [API_KEY_VAR, ...named]) {
       expect(example, `${key} missing from .env.example`).toMatch(new RegExp(`^${key}=`, 'm'));
     }
   });
@@ -95,10 +102,15 @@ describe('the desktop build', () => {
     expect(dev.indexOf('bundle')).toBeLessThan(dev.indexOf('electron .'));
   });
 
-  it('points both preloads at `.cjs`, because Electron loads them as CommonJS', () => {
-    const paths = resolvePaths('/app');
-    expect(paths.preload).toMatch(/\.cjs$/);
-    expect(paths.voicePreload).toMatch(/\.cjs$/);
+  it('points every preload at `.cjs`, because Electron loads them as CommonJS', () => {
+    // All three, derived rather than listed: a window added later with a preload nobody put in
+    // `scripts/bundle.mjs` fails exactly the way the overlay's did, which is to say invisibly.
+    const paths = resolvePaths('/app') as unknown as Readonly<Record<string, string>>;
+    const preloads = Object.entries(paths).filter(([name]) => /preload/i.test(name));
+    expect(preloads.length).toBeGreaterThanOrEqual(3);
+    for (const [name, path] of preloads) {
+      expect(path, `${name} must be a CommonJS bundle`).toMatch(/\.cjs$/);
+    }
   });
 
   it('points the voice window at the bundle, not at tsc’s output', () => {

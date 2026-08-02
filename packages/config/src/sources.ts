@@ -73,7 +73,10 @@ export type EnvRecord = Readonly<Record<string, string | undefined>>;
 export function fromEnv(env: EnvRecord): ConfigLayer {
   const layer: ConfigLayer = {};
   for (const key of CONFIG_KEY_LIST) {
-    const value = env[CONFIG_KEYS[key]];
+    const name = CONFIG_KEYS[key];
+    // `null` is a field the environment may not set at all — `keys.ts` says which and why.
+    if (name === null) continue;
+    const value = env[name];
     if (value === undefined || value.trim() === '') continue;
     layer[key] = value;
   }

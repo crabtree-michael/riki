@@ -16,6 +16,11 @@
       "riki-source": "./src/testing/index.ts",
       "types": "./src/testing/index.ts",
       "default": "./dist/testing/index.js"
+    },
+    "./reference": {
+      "riki-source": "./src/reference/index.ts",
+      "types": "./src/reference/index.ts",
+      "default": "./dist/reference/index.js"
     }
   },
   "scripts": {

@@ -13,6 +13,8 @@
 import type { ApiKey } from '@riki/realtime';
 import type { ModelId, VoiceName } from '@riki/realtime';
 
+export type { ApiKey };
+
 export type TransportKind = 'webrtc' | 'websocket';
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
 
@@ -85,6 +87,47 @@ export interface PrivacyConfig {
   readonly debugFrames: boolean;
 }
 
+/**
+ * Which coach runs — the deterministic one or the model-driven one (ADR-0031).
+ *
+ * Owned by the tray's Coach row and persisted to `settings.json`, and **deliberately not settable
+ * from the environment**: a `RIKI_COACH` left in a shell profile would silently undo the choice the
+ * player made in the menu on every restart, and a UI control a stale variable can override is not a
+ * control. `keys.ts` gives this row a `null` environment variable for exactly that reason, which is
+ * what makes the rule structural rather than remembered.
+ */
+export type CoachMode = 'static' | 'llm';
+
+export interface CoachConfig {
+  readonly mode: CoachMode;
+  /**
+   * Null means `packages/coach`'s own default tier.
+   *
+   * The model id *does* take the environment (`RIKI_COACH_MODEL`), beneath `settings.json`. It
+   * configures the LLM coach rather than selecting it, so the argument above does not apply — the
+   * same way `RIKI_REALTIME_MODEL` configures the voice session without deciding whether there is
+   * one.
+   */
+  readonly model: string | null;
+}
+
+/** What the *environment* knows about the coach. No `mode`, by the rule above. */
+export interface CoachSettings {
+  readonly model: string | null;
+}
+
+export interface DebugConfig {
+  /**
+   * The inspector window — dev-only, and **off unless asked for** (ADR-0032).
+   *
+   * Not a placeholder default. With it off the shell installs no observing policy, adds no tray row
+   * and builds no hub — so no rendered snapshot, brief or coach transcript is held in memory at
+   * all. The third of those makes the default a privacy decision rather than a performance one,
+   * which is why it sits under `privacy`'s rule of being asserted by a test.
+   */
+  readonly enabled: boolean;
+}
+
 export interface RikiConfig {
   readonly openai: OpenAiConfig;
   readonly realtime: RealtimeConfig;
@@ -95,6 +138,8 @@ export interface RikiConfig {
   readonly vision: VisionConfig;
   readonly logTail: LogTailConfig;
   readonly hotkey: HotkeyConfig;
+  readonly coach: CoachConfig;
+  readonly debug: DebugConfig;
   readonly privacy: PrivacyConfig;
   readonly logLevel: LogLevel;
   /** Directory for durable memory and settings. `app.getPath('userData')` in production. */

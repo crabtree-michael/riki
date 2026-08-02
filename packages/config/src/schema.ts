@@ -28,7 +28,7 @@ import type { ModelId, VoiceName } from '@riki/realtime';
 import { describeKey } from './keys.js';
 import type { ConfigKey } from './keys.js';
 import type { ConfigLayer } from './sources.js';
-import type { LogLevel, RikiConfig, TransportKind } from './types.js';
+import type { CoachMode, LogLevel, RikiConfig, TransportKind } from './types.js';
 
 // -----------------------------------------------------------------------------------------------
 // Defaults
@@ -71,6 +71,14 @@ export const DEFAULTS = {
   vision: { enabled: false, binaryPath: null, fake: false },
   logTail: { path: null, pollMs: 250 },
   hotkey: { talk: 'Control+`' },
+  // `static`, and it stays `static` until llm-coach-architecture.md's open questions 22 and 23 have
+  // an answer. The deterministic coach is the one whose behaviour is known, tunable against a
+  // fixture corpus and free; defaulting to the other one would ship an unmeasured judgement and a
+  // bill (ADR-0031).
+  coach: { mode: 'static' as CoachMode, model: null },
+  // ADR-0032. Off means no observing policy, no tray row, and no rendered snapshot, brief or coach
+  // transcript held in memory — the third of which makes this a privacy default.
+  debug: { enabled: false },
   privacy: { captions: false, unprompted: false, chatEgress: false, debugFrames: false },
   logLevel: 'info' as LogLevel,
   replayFixture: null,
@@ -162,6 +170,8 @@ const VOICES: Record<VoiceName, true> = {
 
 const TRANSPORTS: Record<TransportKind, true> = { webrtc: true, websocket: true };
 
+const COACH_MODES: Record<CoachMode, true> = { static: true, llm: true };
+
 const LOG_LEVELS: Record<LogLevel, true> = {
   error: true,
   warn: true,
@@ -207,6 +217,8 @@ const SETTINGS_SCHEMA = z.object({
     pollMs: integer(10, 60_000),
   }),
   hotkey: z.object({ talk: text }),
+  coach: z.object({ mode: oneOf(COACH_MODES), model: optionalText }),
+  debug: z.object({ enabled: flag }),
   privacy: z.object({
     captions: flag,
     unprompted: flag,
@@ -303,6 +315,11 @@ export function resolveConfig(input: ResolveInput): RikiConfig {
       pollMs: pick('logTail.pollMs', DEFAULTS.logTail.pollMs),
     },
     hotkey: { talk: pick('hotkey.talk', DEFAULTS.hotkey.talk) },
+    coach: {
+      mode: pick('coach.mode', DEFAULTS.coach.mode),
+      model: pick('coach.model', DEFAULTS.coach.model),
+    },
+    debug: { enabled: pick('debug.enabled', DEFAULTS.debug.enabled) },
     privacy: {
       captions: pick('privacy.captions', DEFAULTS.privacy.captions),
       unprompted: pick('privacy.unprompted', DEFAULTS.privacy.unprompted),

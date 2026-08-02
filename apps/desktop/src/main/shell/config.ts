@@ -12,13 +12,27 @@
  * `RikiConfig` rather than a narrower projection: every field on it is a setting the composition
  * root wires somewhere, and a second type listing a subset would be one more thing to update when
  * a setting is added.
+ *
+ * ## Three things that changed shape when the stand-in went
+ *
+ * **`coach.apiKey` is gone as a separate field.** There is one credential — `openai.apiKey` — and
+ * both the LLM coach (ADR-0031) and the Realtime session (ADR-0006) take it from there. Two fields
+ * for one key is two places to forget to redact, and `ApiKey` exists precisely because that kind of
+ * forgetting is the realistic failure. `shell/index.ts` reads it for the driver exactly as before.
+ *
+ * **`unprompted` is now `privacy.unprompted`, and it defaults off.** REPO_SKELETON.md §7.2 rule 2
+ * requires it; the stand-in had it on, which disagreed with the document and with `.env.example`.
+ *
+ * **`coach.mode` still has exactly one source and it is still not the environment.** That rule moved
+ * into `packages/config`'s `keys.ts`, where the row's environment variable is `null` — which also
+ * removes the CLI flag, because a flag is the same hazard at a different volume. A `RIKI_COACH` in a
+ * shell profile silently undoing the tray's Coach row on every restart is what both halves prevent.
  */
 
 import { resolveConfig } from '@riki/config';
-import type { ConfigLayer, RikiConfig } from '@riki/config';
-import type { ApiKey } from '@riki/realtime';
+import type { ApiKey, CoachMode, ConfigLayer, RikiConfig } from '@riki/config';
 
-export type { RikiConfig };
+export type { RikiConfig, CoachMode };
 export type ShellConfig = RikiConfig;
 
 export { DEFAULTS, voiceEnabled } from '@riki/config';
@@ -33,7 +47,10 @@ export interface ResolveShellConfigInput {
    * everything else.
    */
   readonly layer?: ConfigLayer;
-  /** Absent means voice is disabled, which is the mode every test runs in (ADR-0006). */
+  /**
+   * Absent means no key: voice disabled (ADR-0006) *and* the LLM coach unbuildable (ADR-0031).
+   * One credential, one field — and it is the mode every test runs in.
+   */
   readonly apiKey?: ApiKey | null;
 }
 

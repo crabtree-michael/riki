@@ -37,9 +37,18 @@ import { createConsoleLogTailer, defaultMatchers } from '@riki/log-tail';
 import type { Clock as WorldClock } from '@riki/world-model';
 
 import type { Millis } from '../shared/overlay.js';
+import type { CoachModel, LlmCoachConfig } from '@riki/coach';
+import { createOpenAiCoachModel } from '@riki/coach';
 import { loadConfig, voiceEnabled } from '@riki/config';
 
-import { loadOrCreateGsiToken, loadOrCreateInstallId, resolvePaths } from './bootstrap.js';
+import {
+  loadOrCreateGsiToken,
+  loadOrCreateInstallId,
+  loadSettings,
+  resolvePaths,
+  saveSettings,
+} from './bootstrap.js';
+import { createElectronDebugWindowFactory } from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -96,13 +105,18 @@ function buildShell(): RikiShell {
   const dataDir = app.getPath('userData');
   const paths = resolvePaths(appRoot);
 
-  // Layered, validated, and thrown from on the first bad key — which is why this is inside
-  // `buildShell` and therefore inside the `try` in `whenReady`. A `ConfigError` here reaches
-  // `fail()` and the app exits naming the variable, rather than half-booting with a broken
-  // setting and discovering it ten minutes into a game (REPO_SKELETON.md §7).
+  // Every layer, in one call, from the one module in the repo permitted to read the environment
+  // (REPO_SKELETON.md §6.2): CLI flags, `RIKI_*`, `.env`, `settings.json`, defaults. It is
+  // validated and it throws on the first bad key — which is why it is inside `buildShell` and
+  // therefore inside the `try` in `whenReady`. A `ConfigError` reaches `fail()` and the app exits
+  // naming the variable, rather than half-booting with a broken setting and discovering it ten
+  // minutes into a game (REPO_SKELETON.md §7).
   //
-  // `process.argv` and `process.cwd()` are Electron's: unrecognised switches are ignored, and the
-  // upward search for `.env` finds the repo root from `apps/desktop` in a dev run.
+  // The coach *mode* is not among the things the environment can set, deliberately: a UI control a
+  // stale shell variable can override is not a control (`packages/config`'s `keys.ts`).
+  //
+  // `process.argv` is Electron's, so unrecognised switches are ignored, and the upward search for
+  // `.env` finds the repo root from `apps/desktop` in a dev run.
   const config: ShellConfig = loadConfig({
     dataDir,
     gsiToken: loadOrCreateGsiToken(dataDir),
@@ -110,6 +124,7 @@ function buildShell(): RikiShell {
   });
 
   const clock = createElectronClock();
+  const apiKey = config.openai.apiKey;
 
   /**
    * The one line that decides whether Riki speaks.
@@ -157,6 +172,25 @@ function buildShell(): RikiShell {
     platform: process.platform,
     processes: createNodeChildProcessPort(),
 
+    // Supplied only when there is a key to build it with. `undefined` is what makes the tray's
+    // Coach row report the LLM coach as unavailable rather than offering a mode that would start a
+    // match and then say nothing all game.
+    ...(apiKey === null
+      ? {}
+      : {
+          coachModel: (coachConfig: LlmCoachConfig): CoachModel =>
+            createOpenAiCoachModel({ apiKey, config: coachConfig }),
+        }),
+
+    // What makes the tray's Coach row a setting rather than a gesture. The shell does no I/O, so it
+    // announces the change and this writes it.
+    onCoachModeChanged: (mode) => {
+      // Read-modify-write through `bootstrap.ts` rather than from `config`: the resolved value has
+      // already had the environment and the defaults folded into it, so writing it back would
+      // persist settings the player never chose.
+      saveSettings(dataDir, { coach: { ...loadSettings(dataDir).coach, mode } });
+    },
+
     sources: {
       gsi: (cfg: ShellConfig, worldClock: WorldClock) =>
         gsiRegistration(
@@ -188,6 +222,13 @@ function buildShell(): RikiShell {
     keys: createElectronKeySource({
       accelerator: config.hotkey.talk,
       now: () => clock.now(),
+    }),
+
+    // Constructed unconditionally and consulted only when `config.debug.enabled` — the factory
+    // creates no window until something calls `open()`, so an unused one costs a closure.
+    debugWindows: createElectronDebugWindowFactory({
+      preloadPath: paths.debugPreload,
+      entryPath: paths.debugEntry,
     }),
   });
 }

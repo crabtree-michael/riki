@@ -44,31 +44,68 @@
  * `silent-session.ts` fakes the timing and opens nothing. `main/index.ts` picks on whether
  * `packages/config` found an API key, and **nothing else in this file changes between them** —
  * which is the property that made the stand-in worth writing and is worth keeping.
+ *
+ * ## The inspector
+ *
+ * When `config.debug.enabled`, one more thing is wired: `main/debug/`, which observes every stage of
+ * the diagram above and pushes it to a dev-only window. It is composed rather than injected —
+ * `TriggerPolicy` and `RikiContext` are decorated on their way into the engine and the agent, and
+ * both decorators return their delegate's value unchanged. With the flag off nothing above changes
+ * in any way, which is the property the whole component is built around.
  */
 
+import type { CoachModel, CoachTelemetry, LlmCoachConfig } from '@riki/coach';
+import { createLlmCoach, withCoachConfig } from '@riki/coach';
 import type { MatchId, RikiContext, Timers } from '@riki/context';
 import {
   createContextAssembler,
   createPlayerMemoryStore,
   createPreambleAssembler,
 } from '@riki/context';
-import type { EventEngine } from '@riki/events';
-import { createEventEngine, createEventTape } from '@riki/events';
+import type { EventTape, TriggerCounters, TriggerPolicy } from '@riki/events';
+import {
+  DEFAULT_TRIGGER_CONFIG,
+  createEventEngine,
+  createEventTape,
+  createTriggerPolicy,
+} from '@riki/events';
 import type { MatchLifecycleEvent } from '@riki/gsi';
 import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
 import { createStalenessPolicy } from '@riki/world-model';
 
 import type { Millis, Unsubscribe } from '../../shared/overlay.js';
-import type { CoachingAgent, CoachingSessionPort } from '../agent/index.js';
-import { createCoachingAgent, toContextReader, toEventTapeReader } from '../agent/index.js';
+import type {
+  CoachDriver,
+  CoachMode,
+  CoachingAgent,
+  CoachingSessionPort,
+  StaticCoachDriver,
+} from '../agent/index.js';
+import {
+  createCoachingAgent,
+  createSnapshotNarrator,
+  llmCoachDriver,
+  staticCoachDriver,
+  toContextReader,
+  toEventTapeReader,
+} from '../agent/index.js';
 import { createVoiceBridge } from '../adapters/voice.js';
+import type { DebugSessionInput, DebugSurface, DebugWindowFactory } from '../debug/index.js';
+import {
+  createDebugComponent,
+  createObservingPolicy,
+  observeContext,
+  projectCounters,
+  projectWorld,
+  withDebugTelemetry,
+} from '../debug/index.js';
 import type { OverlaySurface } from '../overlay/index.js';
 import { createOverlaySurface } from '../overlay/index.js';
 import type { OverlayWindowFactory } from '../overlay/window-port.js';
 import type { Clock as UiClock, SessionRuntime } from '../session/index.js';
 import { DEFAULT_ENVIRONMENT, createSessionRuntime, machine } from '../session/index.js';
 import type { MachineEnvironment } from '../session/types.js';
-import type { SourceRegistration, StateSubsystemWithExtras } from '../state/index.js';
+import type { BusStats, SourceRegistration, StateSubsystemWithExtras } from '../state/index.js';
 import { SIDECAR_RESTART, buildStateSubsystem } from '../state/index.js';
 import { PROTOCOL_VERSION } from '@riki/protocol';
 import {
@@ -143,6 +180,32 @@ export interface ShellDeps {
    */
   readonly session?: MatchScopedSession;
   readonly environment?: MachineEnvironment;
+  /**
+   * How the LLM coach reaches OpenAI, as a factory rather than a value.
+   *
+   * A factory because a `CoachModel` owns a pooled transport and is disposed with the coach, so one
+   * per match — and because a test substitutes `FakeCoachModel` here without the shell learning what
+   * an `Agent` is. `undefined` means the mode cannot be `llm`: `apps/desktop/src/main/index.ts`
+   * supplies one only when `config.openai.apiKey` is non-null, which is where the no-key degradation
+   * is decided and reported.
+   */
+  readonly coachModel?: (config: LlmCoachConfig) => CoachModel;
+  /**
+   * Called when the coach mode actually changed, so the caller can persist it.
+   *
+   * A callback rather than a write, because this file does no I/O — that is what lets
+   * `shell.test.ts` drive the whole composition root with no filesystem. `main/index.ts` wires it to
+   * `saveSettings`, and that pairing is the whole of what makes the tray's Coach row survive a
+   * restart. Absent means the choice is runtime-only, which is what every test wants.
+   */
+  readonly onCoachModeChanged?: (mode: CoachMode) => void;
+  /**
+   * Only consulted when `config.debug.enabled`.
+   *
+   * Absent in `shell.test.ts` even with the flag on, which is deliberate: everything the inspector
+   * *collects* is testable with no window, and the window itself is Tier 5's business.
+   */
+  readonly debugWindows?: DebugWindowFactory;
 }
 
 /**
@@ -164,8 +227,16 @@ export interface MatchScopedSession extends CoachingSessionPort {
 export interface MatchRuntime {
   readonly matchId: MatchId;
   readonly context: RikiContext;
-  readonly engine: EventEngine;
+  /** Whichever coach is switched on. `driver.mode` says which, and it can change mid-match. */
+  readonly driver: CoachDriver;
   readonly agent: CoachingAgent;
+  /**
+   * Replace the coach in place. Driven by `RikiShell.setCoachMode`, never called directly.
+   *
+   * On the runtime rather than on the shell because the two objects own different halves of the
+   * answer: the shell owns *which mode*, and only a live coaching root can act on it.
+   */
+  swap(next: CoachMode): void;
   dispose(): void;
 }
 
@@ -177,6 +248,18 @@ export interface RikiShell {
   readonly session: MatchScopedSession;
   /** Null between matches. See "Two lifetimes" above. */
   readonly match: MatchRuntime | null;
+  /** Which coach is running, or would run at the next match. */
+  readonly coachMode: CoachMode;
+  /**
+   * Switch coaches, now.
+   *
+   * Returns the mode actually in force, which is not always the one asked for: `llm` with no key
+   * and no `coachModel` factory degrades to `static` and says so through telemetry. Requirement 1's
+   * "runtime-switchable" is this method — see `swapCoach` for what it does and does not preserve.
+   */
+  setCoachMode(mode: CoachMode): CoachMode;
+  /** Null unless `config.debug.enabled`. The inspector, and the hub behind it. */
+  readonly debug: DebugSurface | null;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** The tray's Quit row and the app's own quit path both land here. */
@@ -185,12 +268,36 @@ export interface RikiShell {
 
 export function createRikiShell(deps: ShellDeps): RikiShell {
   const { config, clock, timers } = deps;
-  const telemetry: ShellTelemetry = deps.telemetry ?? nullTelemetry();
 
   // One clock, two vocabularies. `Millis` and `MonoMs` are the same monotonic number; the brand is
   // what stops a wall-clock date being passed where an uptime is expected.
   const worldClock: WorldClock = { now: (): MonoMs => clock.now() as MonoMs };
   const staleness = createStalenessPolicy();
+
+  // ---------------------------------------------------------------------------------------------
+  // The inspector, if it was asked for
+  // ---------------------------------------------------------------------------------------------
+  //
+  // Built first, because two of the things below are *decorated* by it rather than merely watched:
+  // the telemetry sink every subsystem is handed, and the trigger policy the per-match engine takes.
+  // Everything else it sees, it subscribes to.
+
+  const debug: DebugSurface | null = config.debug.enabled
+    ? createDebugComponent({
+        ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
+        timers,
+        now: () => clock.now(),
+      })
+    : null;
+
+  const telemetry: ShellTelemetry =
+    debug === null
+      ? (deps.telemetry ?? nullTelemetry())
+      : withDebugTelemetry({
+          hub: debug.hub,
+          delegate: deps.telemetry ?? nullTelemetry(),
+          now: () => clock.now(),
+        });
 
   // ---------------------------------------------------------------------------------------------
   // Sources and the world model
@@ -249,7 +356,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     platform: deps.platform,
   });
 
-  const trayController = createTrayController(deps.tray);
+  const trayController = createTrayController(deps.tray, { debug: config.debug.enabled });
   const session: MatchScopedSession =
     deps.session ?? createSilentSession({ clock: worldClock, timers });
 
@@ -340,15 +447,128 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
   let match: MatchRuntime | null = null;
 
+  /**
+   * The mode in force, which is `config.coach.mode` until somebody moves it.
+   *
+   * Shell state rather than match state, because it has to survive between games — a player who
+   * switches coaches at the end of one match expects the next one to start that way, and the
+   * coaching root does not exist in between (ADR-0026).
+   */
+  let coachMode: CoachMode = config.coach.mode;
+
+  /**
+   * Can `llm` actually run?
+   *
+   * Two things have to be true and neither is a setting: a key resolved from the environment
+   * (`@riki/config`), and a factory that knows how to build a model from it. `apps/desktop/src/main/
+   * index.ts` supplies the second only when it has the first, so this one check covers both — and it
+   * is checked here rather than at the call site so the degradation is reported once, by name,
+   * instead of being discovered as a coach that never speaks.
+   */
+  function llmAvailable(): boolean {
+    return config.openai.apiKey !== null && deps.coachModel !== undefined;
+  }
+
+  function resolveMode(wanted: CoachMode): CoachMode {
+    if (wanted !== 'llm') return wanted;
+    if (llmAvailable()) return 'llm';
+    telemetry.coachUnavailable('RIKI_OPENAI_API_KEY is not set');
+    return 'static';
+  }
+
+  /**
+   * Build the coach the current mode asks for.
+   *
+   * Both branches end in a `CoachDriver` and the caller cannot tell them apart, which is the whole
+   * point of `agent/driver.ts`. What differs is what each needs to be handed: the deterministic coach
+   * wants the shared tape and the novelty gate's memory, and the LLM coach wants a narrator and a
+   * model. Neither wants a timer — the LLM coach is push-only.
+   */
+  function buildDriver(mode: CoachMode, context: RikiContext, tape: EventTape): CoachDriver {
+    if (mode === 'llm' && deps.coachModel !== undefined) {
+      const coachConfig: LlmCoachConfig = withCoachConfig(
+        config.coach.model === null ? {} : { model: config.coach.model },
+      );
+      return llmCoachDriver(
+        createLlmCoach({
+          world: state.world,
+          // The same renderer the voice model reads, with a wider budget — `narrator.ts` says why
+          // that is sound and why it changes none of the conversation window's arithmetic.
+          narrator: createSnapshotNarrator({
+            world: toContextReader(state.world, { staleness }),
+            tape: toEventTapeReader(tape),
+          }),
+          model: deps.coachModel(coachConfig),
+          clock: worldClock,
+          config: coachConfig,
+          telemetry: telemetry satisfies CoachTelemetry,
+        }),
+      );
+    }
+
+    // `createTriggerPolicy()` is what `createEventEngine` would have built for itself; naming it
+    // here is what lets the inspector's observer sit in front of it. The gate ladder is the one
+    // thing in the app that is otherwise unreachable — the engine keeps the latch set, the per-kind
+    // cooldowns and the intensity score private, and `GateContext` is where they surface.
+    //
+    // Only the deterministic coach has a ladder to watch: the LLM coach decides inside a model, so
+    // under `llm` the Triggers panel is legitimately empty. debug-inspector.md §2.
+    const policy: TriggerPolicy = createTriggerPolicy();
+
+    const engine = createEventEngine({
+      world: state.world,
+      clock: worldClock,
+      memory: context.coaching,
+      tape,
+      policy:
+        debug === null
+          ? policy
+          : createObservingPolicy({
+              delegate: policy,
+              tapeSalience: DEFAULT_TRIGGER_CONFIG.tapeSalience,
+              worldVersion: () => state.world.version,
+              report: (tick) => {
+                debug.hub.recordTick(tick);
+              },
+            }),
+    });
+
+    return staticCoachDriver(engine);
+  }
+
+  /**
+   * Switch coaches, now — the implementation behind `RikiShell.setCoachMode` and the tray row.
+   *
+   * A named function rather than a method body because two callers need it and one of them is
+   * registered before the shell object exists.
+   */
+  function setCoachMode(wanted: CoachMode): CoachMode {
+    const before = coachMode;
+    coachMode = resolveMode(wanted);
+    // Between matches there is no coaching root to swap, and that is not a failure: the mode is
+    // shell state and `openMatch` reads it. The tray reflects the answer either way.
+    match?.swap(coachMode);
+    // Only on a real change, and only the *resolved* mode — asking for `llm` with no key behind it
+    // persists `static`, because that is what the player will actually get next launch and a
+    // settings file that disagrees with the tray is worse than one that is merely conservative.
+    if (coachMode !== before) deps.onCoachModeChanged?.(coachMode);
+    return coachMode;
+  }
+
   function openMatch(matchId: string): void {
     closeMatch();
 
     // The tape is built first and shared, because the two consumers depend on each other in a
     // circle otherwise: `ContextAssembler` wants an `EventTapeReader`, and `EventEngine` wants the
     // assembler's `CoachingMemoryReader`. Hoisting the one thing they both need breaks it.
+    //
+    // Under the LLM coach nothing fills it — the tape is `packages/events`' record of its own
+    // detections — so `recent:` renders empty and the narrator says nothing about what has been
+    // happening. That is a real gap in `llm` mode rather than a shrug, and it is
+    // llm-coach-architecture.md §14 row 3.
     const tape = createEventTape();
 
-    const context = createContextAssembler({
+    const assembled = createContextAssembler({
       matchId: matchId as MatchId,
       world: toContextReader(state.world, { staleness }),
       preamble: createPreambleAssembler({ reference: NULL_REFERENCE_DATA }),
@@ -356,33 +576,86 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       durable: memoryStore,
     });
 
-    const engine = createEventEngine({
-      world: state.world,
-      clock: worldClock,
-      memory: context.coaching,
-      tape,
-    });
+    // Decoration, not instrumentation: `observeContext` returns the assembler's own answers and the
+    // agent cannot tell the difference. Everything downstream is handed this one either way, so the
+    // player-turn path is covered as well as the coaching one — and so is whichever coach is
+    // running, since both are built from this `context`.
+    const context: RikiContext =
+      debug === null
+        ? assembled
+        : observeContext({
+            delegate: assembled,
+            clock: () => state.world.snapshot(worldClock.now()).clock,
+            onOpened: (turn) => {
+              debug.hub.recordTurnOpened(turn);
+            },
+            onClosed: (turnId, outcome) => {
+              debug.hub.recordTurnClosed(turnId, outcome);
+            },
+          });
 
-    // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
-    // unprompted speech off never hears a first trigger slip through on launch.
-    engine.setQuietMode(!config.privacy.unprompted);
-
-    const agent = createCoachingAgent({
+    coachMode = resolveMode(coachMode);
+    let driver = buildDriver(coachMode, context, tape);
+    let agent = createCoachingAgent({
       world: state.world,
       context,
-      engine,
+      driver,
       session,
       clock: worldClock,
       telemetry,
     });
 
-    const stopAgent = agent.start();
+    // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
+    // unprompted speech off never hears a first trigger slip through on launch. It is one of the
+    // two controls both coaches honour identically (`llm-coach-architecture.md` §4.3).
+    driver.setQuietMode(!config.privacy.unprompted);
+    let stopAgent = agent.start();
+    telemetry.coachMode(driver.mode);
+
+    /**
+     * Swap the coach without ending the match.
+     *
+     * **What survives:** the conversation ledger, the coaching memory, the preamble, the durable
+     * player memory and the session. All of them belong to the match rather than to the coach, and
+     * a mode change is not a new game.
+     *
+     * **What does not:** the deterministic coach's latches and cooldowns, and the LLM coach's record
+     * of what it said. Both are the *coach's* memory of its own behaviour, and neither translates —
+     * a latch on `enemy_missing:sf` means nothing to a model, and "I said this forty seconds ago"
+     * means nothing to a gate ladder. So the new coach starts fresh, which in practice means the
+     * first moments after a switch may repeat something the previous coach covered. That is the
+     * honest cost of switching mid-match and it is why the tray row exists for tuning rather than
+     * as a thing to flip during a fight.
+     */
+    function swap(next: CoachMode): void {
+      if (next === driver.mode) return;
+      stopAgent();
+      agent.dispose();
+
+      driver = buildDriver(next, context, tape);
+      agent = createCoachingAgent({
+        world: state.world,
+        context,
+        driver,
+        session,
+        clock: worldClock,
+        telemetry,
+      });
+      driver.setQuietMode(!config.privacy.unprompted);
+      stopAgent = agent.start();
+      telemetry.coachMode(driver.mode);
+    }
 
     match = {
       matchId: matchId as MatchId,
       context,
-      engine,
-      agent,
+      get driver(): CoachDriver {
+        return driver;
+      },
+      get agent(): CoachingAgent {
+        return agent;
+      },
+      swap,
       dispose(): void {
         stopAgent();
         agent.dispose();
@@ -431,7 +704,13 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
   disposers.push(
     state.onLifecycle((event: MatchLifecycleEvent) => {
-      if (event.type === 'match_started') openMatch(event.matchId);
+      if (event.type === 'match_started') {
+        // Before `openMatch`, for the same reason the state subsystem resets the world before it
+        // announces: everything the inspector holds is keyed to the match that just ended, and the
+        // first tick of the new one must not land in the old one's buffers.
+        debug?.hub.resetMatch();
+        openMatch(event.matchId);
+      }
       if (event.type === 'match_ended') {
         closeMatch();
         // Durable memory is batched — at match end and on a slow timer, never per observation
@@ -440,6 +719,96 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       }
     }),
   );
+
+  // ---------------------------------------------------------------------------------------------
+  // What the inspector reads, and what it is told
+  // ---------------------------------------------------------------------------------------------
+
+  if (debug !== null) {
+    const projectWorldState = projectWorld({ world: state.world, staleness });
+
+    /**
+     * The engine's counters, or null when there is no engine to ask.
+     *
+     * A hand-written guard because `CoachDriver` is an interface with a `mode` field rather than a
+     * discriminated union, so `mode === 'static'` narrows nothing on its own. Widening the port to
+     * a union to please this one call site would put `engine` back on the interface that
+     * `agent/driver.ts` deliberately keeps it off.
+     */
+    const staticCountersOf = (driver: CoachDriver | undefined): TriggerCounters | null =>
+      driver?.mode === 'static' ? (driver as StaticCoachDriver).engine.counters() : null;
+
+    /** `BusStats`' two maps as the frame's arrays, read once so the three reads agree. */
+    const busOf = (stats: BusStats): DebugSessionInput['bus'] => ({
+      depth: stats.depth,
+      dropped: [...stats.dropped].map(([kind, count]) => ({ key: kind, count })),
+      gaps: [...stats.gaps].map(([id, count]) => ({ key: id, count })),
+    });
+
+    debug.hub.observe({
+      session: () => {
+        const health = state.health(worldClock.now());
+        const chip = runtime.snapshot();
+        return {
+          matchId: state.matchId,
+          // Read separately, because the two disagree exactly when something is wrong: a match id
+          // with no coaching root means `match_started` reached the state subsystem and not the
+          // shell, which is silent everywhere else.
+          coachingRoot: match !== null,
+          chipPhase: chip.phase.kind,
+          chipVisible: overlay.window.isVisible(),
+          muted: chip.muted,
+          // The driver's mode rather than the shell's `coachMode`: between matches there is no
+          // driver, and "which coach *would* run" is a different claim from "which one is running".
+          coachMode: match?.driver.mode ?? 'none',
+          unprompted: config.privacy.unprompted,
+          healthLevel: health.level,
+          healthSummary: health.summary,
+          sources: health.sources.map((source) => ({
+            id: source.id,
+            state: source.health.state,
+            reason: source.health.reason ?? null,
+            lastObservationAt: source.health.lastObservationAt,
+            restarts: source.restarts,
+          })),
+          bus: busOf(state.bus.stats()),
+        };
+      },
+
+      world: projectWorldState,
+
+      /**
+       * Empty between matches *and* under the LLM coach, for two different right reasons.
+       *
+       * Between matches: the counters live on the engine and the engine lives for one match
+       * (ADR-0026). Under `llm`: `packages/events` is not running at all, so there is nothing to
+       * count — the two coaches' counter shapes share no fields, which is exactly why
+       * `agent/driver.ts` keeps `engine` off the port and puts it on `StaticCoachDriver`.
+       * `session.coachMode` in the same frame is what tells the two cases apart.
+       */
+      counters: () => {
+        const counters = staticCountersOf(match?.driver);
+        return counters === null
+          ? { detected: [], suppressed: [], spoken: 0 }
+          : projectCounters(counters);
+      },
+    });
+
+    // App lifetime, not match lifetime — the same reason the voice bridge is attached here. A
+    // transcript can arrive for a turn opened in a match that has since ended, and a subscription
+    // rebuilt per match would miss it.
+    disposers.push(
+      session.onEvent((voice) => {
+        if (voice.kind !== 'transcript' || !voice.final) return;
+        if (voice.role === 'agent') {
+          debug.hub.recordAgentTranscript(String(voice.turnId), voice.text);
+          return;
+        }
+        // The player's words are not carried; their length is. `shared/debug.ts`'s header says why.
+        debug.hub.recordPlayerTranscript(String(voice.turnId), voice.text.length);
+      }),
+    );
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Health, and the tray's status line
@@ -457,15 +826,28 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   disposers.push(
     trayController.onAction((action) => {
       if (action === 'quit') for (const listener of [...quitListeners]) listener();
+      // The row is only rendered when `debug` exists, so this is unreachable otherwise — but a
+      // compromised or stale menu template must not be able to conjure a window either.
+      if (action === 'open-debug') void debug?.open();
     }),
     trayController.onToggleMute(() => {
       const muted = !runtime.snapshot().muted;
       runtime.dispatch({ kind: 'mute', muted });
       trayController.setMuted(muted);
     }),
+    trayController.onAction((action) => {
+      if (action !== 'toggle-coach') return;
+      // The tray reflects what actually happened, not what was asked for: `setCoachMode` returns
+      // `static` when `llm` has no key behind it, and a checkbox that ticked anyway would be the
+      // product lying about its own state.
+      const next = setCoachMode(coachMode === 'llm' ? 'static' : 'llm');
+      trayController.setCoach(next, llmAvailable());
+    }),
   );
 
-  return {
+  trayController.setCoach(coachMode, llmAvailable());
+
+  const shell: RikiShell = {
     state,
     runtime,
     overlay,
@@ -475,6 +857,18 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     get match(): MatchRuntime | null {
       return match;
     },
+
+    get coachMode(): CoachMode {
+      return coachMode;
+    },
+
+    setCoachMode(wanted: CoachMode): CoachMode {
+      const next = setCoachMode(wanted);
+      trayController.setCoach(next, llmAvailable());
+      return next;
+    },
+
+    debug,
 
     async start(): Promise<void> {
       // Warm before binding anything: `showFast()` is a compositor map only if the window already
@@ -503,6 +897,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       runtime.dispose();
       trayController.dispose();
       overlay.dispose();
+      debug?.dispose();
       await state.stop();
       await memoryStore.flush();
     },
@@ -512,6 +907,8 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       return () => quitListeners.delete(listener);
     },
   };
+
+  return shell;
 }
 
 /** Re-exported so `index.ts` and the tests name the same type. */

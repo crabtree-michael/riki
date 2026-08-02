@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isOverlayIntent, parseOverlayIntent } from './intents.js';
+import { isOverlayIntent, parseDebugIntent, parseOverlayIntent } from './intents.js';
 
 describe('parseOverlayIntent — what the renderer is allowed to say', () => {
   it('accepts the four intents and nothing more', () => {
@@ -49,6 +49,46 @@ describe('parseOverlayIntent — what the renderer is allowed to say', () => {
   it('caps a fault message rather than letting the renderer flood a log', () => {
     const parsed = parseOverlayIntent({ kind: 'fault', message: 'x'.repeat(10_000) });
     expect(parsed).not.toBeNull();
+    if (parsed?.kind === 'fault') expect(parsed.message.length).toBe(500);
+  });
+});
+
+describe('parseDebugIntent — what the inspector is allowed to say', () => {
+  it('accepts the two intents and nothing more', () => {
+    expect(parseDebugIntent({ kind: 'ready' })).toEqual({ kind: 'ready' });
+    expect(parseDebugIntent({ kind: 'fault', message: 'boom' })).toEqual({
+      kind: 'fault',
+      message: 'boom',
+    });
+  });
+
+  it('cannot reach anything that changes what the app does', () => {
+    for (const payload of [
+      null,
+      undefined,
+      42,
+      'ready',
+      [],
+      {},
+      // A read-only window, by construction. None of these is a thing the inspector may say — an
+      // inspector that can poke the thing it inspects produces readings nobody can act on, and it
+      // would be the widest privilege escalation in the app.
+      { kind: 'cancel' },
+      { kind: 'setQuietMode', on: false },
+      { kind: 'evaluate' },
+      { kind: 'dispatch', input: { kind: 'mute', muted: true } },
+      { kind: 'paint', revision: 1 },
+      { kind: 'fault', message: 42 },
+    ]) {
+      expect(parseDebugIntent(payload)).toBeNull();
+    }
+  });
+
+  it('rebuilds the intent and caps the fault message, like the overlay bridge', () => {
+    const smuggled = { kind: 'ready', extra: 'payload' };
+    expect(Object.keys(parseDebugIntent(smuggled) ?? {})).toEqual(['kind']);
+
+    const parsed = parseDebugIntent({ kind: 'fault', message: 'x'.repeat(10_000) });
     if (parsed?.kind === 'fault') expect(parsed.message.length).toBe(500);
   });
 });

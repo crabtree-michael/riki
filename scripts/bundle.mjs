@@ -19,7 +19,9 @@
 // `window.rikiOverlay` was simply undefined, and the app still started, still bound its socket and
 // still ran the entire coaching pipeline.
 //
-// So each preload is bundled to `.cjs`, which is unambiguous to both Node and Electron.
+// So each preload is bundled to `.cjs`, which is unambiguous to both Node and Electron. **Every
+// preload belongs in the list below** — a window whose preload is missing from it fails exactly the
+// way the overlay's did, which is to say invisibly.
 //
 // ## It bundles the *compiled* output, not the TypeScript
 //
@@ -65,6 +67,15 @@ const TARGETS = [
     what: 'voice preload',
     entry: join(DIST, 'preload/voice.js'),
     outfile: join(DIST, 'preload/voice.cjs'),
+    format: 'cjs',
+    platform: 'node',
+    target: 'node22',
+    external: ELECTRON_EXTERNAL,
+  },
+  {
+    what: 'inspector preload',
+    entry: join(DIST, 'preload/debug.js'),
+    outfile: join(DIST, 'preload/debug.cjs'),
     format: 'cjs',
     platform: 'node',
     target: 'node22',

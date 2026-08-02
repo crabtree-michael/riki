@@ -20,6 +20,16 @@ import { join } from 'node:path';
 export const GSI_TOKEN_FILE = 'gsi-token';
 export const INSTALL_ID_FILE = 'install-id';
 
+/**
+ * The user config file, and this module's *write* half of it.
+ *
+ * `@riki/config` reads it as one layer of §7's resolution and is the only thing that decides what a
+ * setting means. What it deliberately does not do is write: persisting a choice the player made in
+ * the tray is I/O the shell announces and this performs, and putting a writer inside the resolver
+ * would give one file two owners.
+ */
+export const SETTINGS_FILE = 'settings.json';
+
 /** 32 bytes of base64url. Long enough that guessing it is not the attack (`packages/gsi`'s §4.1). */
 const TOKEN_BYTES = 32;
 
@@ -72,9 +82,62 @@ export function loadOrCreateInstallId(dataDir: string): string {
   return id;
 }
 
+/**
+ * Persist a change the player made in the UI. Read-modify-write, and **total**.
+ *
+ * This is what makes the tray's Coach row a *setting* rather than a gesture: without it the toggle
+ * is runtime-only and every restart silently reverts to the committed default, which is the failure
+ * mode of a preference that looks like it stuck. `shell/config.ts` names `settings.json` as the one
+ * source of the coach mode precisely because this writes it.
+ *
+ * A failed write is swallowed on purpose. The alternative is an exception on the path a tray click
+ * runs on, and losing a preference is a far smaller harm than taking the app down for it — the mode
+ * is already applied in memory by the time this is called, so the click still did what it looked
+ * like it did.
+ */
+export function saveSettings(dataDir: string, patch: Readonly<Record<string, unknown>>): void {
+  try {
+    const current: Readonly<Record<string, unknown>> = loadSettings(dataDir);
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(
+      join(dataDir, SETTINGS_FILE),
+      `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch {
+    // See above: a preference that failed to persist is not worth a crash.
+  }
+}
+
+/**
+ * `settings.json`, if there is one. Total: a missing or corrupt file is *no settings*.
+ *
+ * Not the resolution path — `@riki/config`'s `loadConfig` reads the same file and is where a typo
+ * in it becomes a startup error naming the key, and where a scalar top-level setting is understood.
+ * This exists so `saveSettings` can read-modify-write without inventing a second parser, and so a
+ * test can assert the round trip. `StoredSettings` is therefore the *write* path's view of the
+ * file — nested groups, which is every setting the UI persists — rather than the full grammar.
+ */
+export type StoredSettings = Readonly<
+  Record<string, Readonly<Record<string, unknown>> | undefined>
+>;
+
+export function loadSettings(dataDir: string): StoredSettings {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(join(dataDir, SETTINGS_FILE), 'utf8'));
+  } catch {
+    return {};
+  }
+  return typeof raw === 'object' && raw !== null ? (raw as StoredSettings) : {};
+}
+
 export interface ShellPaths {
   readonly preload: string;
   readonly overlayEntry: string;
+  /** The inspector's own preload and document. A window gets one bridge, never both. */
+  readonly debugPreload: string;
+  readonly debugEntry: string;
   readonly trayIcons: string;
   /** The voice window's preload and document (ADR-0010, ADR-0034). */
   readonly voicePreload: string;
@@ -102,6 +165,8 @@ export function resolvePaths(appRoot: string): ShellPaths {
     // `scripts/bundle.mjs` emits the CommonJS half. See ADR-0034.
     preload: join(appRoot, 'dist', 'preload', 'index.cjs'),
     overlayEntry: join(appRoot, 'dist', 'renderer', 'overlay', 'index.html'),
+    debugPreload: join(appRoot, 'dist', 'preload', 'debug.cjs'),
+    debugEntry: join(appRoot, 'dist', 'renderer', 'debug', 'index.html'),
     trayIcons: join(appRoot, 'resources', 'tray'),
     // Its own preload, so the voice window sees only the surface it needs and the overlay cannot
     // open a session. The document loads `bundle.js`, not `index.js` — the voice renderer imports

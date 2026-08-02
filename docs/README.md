@@ -38,11 +38,23 @@ Docs are split by kind, because "design doc" was covering four different things:
   mid-fight intensity signal, and the composition root where the two halves finally meet.
   **Built**, except the tuning — every coefficient in it is a starting point with no measurement
   behind it, which is open questions 19 and 20.
+- [**llm-coach-architecture.md**](design/llm-coach-architecture.md) — the second coach: an OpenAI
+  Agents SDK model that decides for itself whether Riki should speak and drafts the line, as a
+  runtime alternative to the thirteen gates rather than a stage inside them
+  ([ADR-0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md)). **Built.** Read §4.3 before
+  adding anything to the skip list — the six mechanical skips are the whole of what is allowed to
+  refuse, and §14 is what is still open.
 - [**hero-library.md**](design/hero-library.md) — the coaching knowledge the world model does not
   have: twenty top-tier heroes, six topics each, one line per note, surfaced as the `library` brief
   section and refreshed by nothing ([ADR-0027](adr/0027-the-hero-library-is-static.md)). **Built.**
   Read §3 before editing content — the policy is what keeps a static library from ageing into being
   wrong rather than merely old.
+- [**debug-inspector.md**](design/debug-inspector.md) — the dev-only window that answers *what does
+  Riki believe, what did it nearly say, and why did it stay quiet*: the world model with every
+  fact's provenance, every candidate against all thirteen gates, the snapshot and brief as composed
+  for each turn, and every fault the app reports and currently cannot log. **Built**, off by default
+  ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md)). Read it before adding a hook to
+  `packages/events` or `packages/context` for visibility — the reason it needed none is §3.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -105,6 +117,9 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0028](adr/0028-mute-has-one-producer-the-menu-row.md)    | Mute has one producer, and it is the menu row | Accepted — amends ui-design §2.3's click gesture |
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
+| [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
+| [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default, read-only by construction |
+| [0033](adr/0033-screencapturekit-is-the-shipping-backend.md) | `ScreenCaptureKit` is the shipping backend, and it is cross-compiled rather than run | Accepted — macOS captures; six things still need a Mac |
 | [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
@@ -160,3 +175,4 @@ bottom of three separate documents where nobody found them. Full statements in
 | 19  | Is proactive coaching at the default thresholds welcome rather than irritating? dota2 §6.4 calls unprompted speech the feature most likely to make Riki annoying enough to uninstall, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md) makes it the primary path. Needs a person playing a real match, not a fixture | Before coaching ships to anyone outside the team |
 | 20  | Are the salience coefficients right? Every number in `packages/events/src/config.ts` is a starting point with no measurement behind it; the ordering they encode is the claim and the gaps between them are guesses ([coaching-trigger §4.5, §12](design/coaching-trigger-architecture.md)) | Before anyone concludes the trigger policy is wrong rather than untuned |
 | 21  | Does `packages/world-model` grow `derived.threats`, `derived.pace*` and a position-to-map-region table? Without them the `threat`, `pace`, `seen` and `map` renderings are omitted rather than wrong — the composition root refuses to compute them because the result would carry no provenance ([coaching-trigger §9.2, §15](design/coaching-trigger-architecture.md)) | Before the brief's content is judged against open question 18 |
+| 22  | Does the macOS capture backend actually capture? [ADR-0033](adr/0033-screencapturekit-is-the-shipping-backend.md) ships it compile-verified for `aarch64-apple-darwin` and never executed: the permission dialog, real frames, the perf budget, exclusive fullscreen, multi-monitor scale and one `unsafe impl Send` are all unobserved. Its Consequences section is the checklist | Before vision is enabled for anyone, on the first session with a Mac |

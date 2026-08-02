@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TrayGlyph, Unsubscribe } from '../../shared/overlay.js';
 import { MUTE_ACCELERATOR, projectMenu, projectTooltip } from './menu.js';
-import type { TrayAction, TrayMenuItem } from './menu.js';
+import type { TrayAction, TrayMenuItem, TrayModel } from './menu.js';
 import { createTrayController, type TraySurface } from './index.js';
 
 interface Rendered {
@@ -58,14 +58,26 @@ function recordingSurface(): RecordingSurface {
   };
 }
 
+/** A `TrayModel` with the fields a case is not about already filled in. */
+function model(overrides: Partial<TrayModel> = {}): TrayModel {
+  return {
+    glyph: 'idle',
+    muted: false,
+    status: 'ready',
+    coach: { mode: 'static', available: true },
+    debug: false,
+    ...overrides,
+  };
+}
+
 describe('the menu projection (ui-design.md §2.3)', () => {
   it('leads with a non-interactive status line', () => {
-    const [first] = projectMenu({ glyph: 'idle', muted: false, status: 'ready' });
+    const [first] = projectMenu(model({ status: 'ready' }));
     expect(first).toEqual({ kind: 'label', label: 'Riki — ready', enabled: false });
   });
 
   it('carries the mute row as a checkbox with its accelerator', () => {
-    const mute = projectMenu({ glyph: 'muted', muted: true, status: 'muted' }).find(
+    const mute = projectMenu(model({ glyph: 'muted', muted: true, status: 'muted' })).find(
       (item) => item.id === 'toggle-mute',
     );
     expect(mute?.checked).toBe(true);
@@ -73,16 +85,48 @@ describe('the menu projection (ui-design.md §2.3)', () => {
   });
 
   it('offers exactly the actions that go somewhere', () => {
-    const ids = projectMenu({ glyph: 'idle', muted: false, status: 'ready' })
+    const ids = projectMenu(model({ status: 'ready' }))
       .filter((item) => item.kind === 'action')
       .map((item) => item.id);
     // A menu item that opens nothing reads as a bug on first click; the four deferred rows come
-    // back with the surfaces they need.
-    expect(ids).toEqual(['toggle-mute', 'quit']);
+    // back with the surfaces they need. `toggle-coach` is here because it goes somewhere — see the
+    // next two cases for the one state in which it is present but disabled.
+    expect(ids).toEqual(['toggle-mute', 'toggle-coach', 'quit']);
+  });
+
+  it('checks the coach row when the LLM coach is the one running', () => {
+    const row = projectMenu(model({ coach: { mode: 'llm', available: true } })).find(
+      (item) => item.id === 'toggle-coach',
+    );
+    expect(row?.checked).toBe(true);
+    expect(row?.enabled).toBe(true);
+  });
+
+  it('disables the coach row and says why when there is no key', () => {
+    const row = projectMenu(model({ coach: { mode: 'static', available: false } })).find(
+      (item) => item.id === 'toggle-coach',
+    );
+    // Present, disabled, and carrying its reason. A hidden row would leave a player who clicked it
+    // with no way to find out why nothing changed.
+    expect(row?.enabled).toBe(false);
+    expect(row?.label).toContain('RIKI_OPENAI_API_KEY');
+  });
+
+  it('hides the inspector row unless debug is on, and offers it when it is', () => {
+    const idsOf = (debug: boolean): (string | undefined)[] =>
+      projectMenu(model({ debug }))
+        .filter((item) => item.kind === 'action')
+        .map((item) => item.id);
+
+    // The second deferred row to come back, and it comes back because it now opens something
+    // (main/debug/). It stays conditional: a debug row in a shipped build is the same mistake in
+    // the other direction. It sits last, below the coach row, because that one is the product.
+    expect(idsOf(false)).toEqual(['toggle-mute', 'toggle-coach', 'quit']);
+    expect(idsOf(true)).toEqual(['toggle-mute', 'toggle-coach', 'open-debug', 'quit']);
   });
 
   it('says what is wrong in the tooltip when the glyph is `attention`', () => {
-    expect(projectTooltip({ glyph: 'attention', muted: false, status: 'no microphone' })).toBe(
+    expect(projectTooltip(model({ glyph: 'attention', status: 'no microphone' }))).toBe(
       'Riki — no microphone',
     );
   });
