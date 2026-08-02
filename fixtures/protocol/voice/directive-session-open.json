@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "type": "voice.session.open",
+  "secret": {
+    "value": "ek_test_ephemeral_client_secret",
+    "expiresInMs": 60000,
+    "sessionId": "sess_test_0001"
+  },
+  "session": {
+    "model": "gpt-realtime-2.1-mini",
+    "voice": "marin",
+    "instructions": "You are Riki, a Dota 2 coach.",
+    "turnDetection": {
+      "kind": "server_vad",
+      "createResponse": false,
+      "interruptResponse": true,
+      "silenceDurationMs": 200
+    },
+    "noiseReduction": "near_field",
+    "transcription": { "model": "gpt-4o-mini-transcribe", "language": "en" },
+    "truncation": { "mode": "auto", "retentionRatio": 0.8 }
+  },
+  "capture": {
+    "deviceId": null,
+    "echoCancellation": true,
+    "noiseSuppression": true,
+    "autoGainControl": true,
+    "preRollMs": 200
+  },
+  "transport": "webrtc",
+  "budgetUsd": 2.5
+}

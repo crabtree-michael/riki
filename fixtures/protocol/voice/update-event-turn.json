@@ -1,0 +1,5 @@
+{
+  "v": 1,
+  "type": "voice.event",
+  "event": { "kind": "turn", "turnId": "coach_7", "event": "responseStarted" }
+}

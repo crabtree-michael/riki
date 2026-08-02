@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "voice.event",
+  "event": {
+    "kind": "fault",
+    "fault": {
+      "kind": "mic-denied",
+      "message": "Riki needs microphone access. Grant it in System Settings > Privacy & Security.",
+      "persistent": true,
+      "retryable": false
+    }
+  }
+}

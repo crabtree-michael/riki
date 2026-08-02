@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "voice.turn.end",
+  "turnId": "coach_7",
+  "reason": "release",
+  "snapshotText": "Time 12:40. You are level 7 with 2400 gold.\n\nYou can buy a Blink Dagger."
+}

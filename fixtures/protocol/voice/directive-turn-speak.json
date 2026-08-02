@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "voice.turn.speak",
+  "turnId": "coach_9",
+  "snapshotText": "Time 14:02. Enemy mid is missing.\n\nWard the river.",
+  "eventId": "enemy_missing:mid:14020",
+  "salience": 0.72
+}
