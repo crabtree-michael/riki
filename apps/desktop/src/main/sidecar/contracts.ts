@@ -11,17 +11,17 @@
  * backoff after three crashes" a Tier 1 assertion rather than a thing somebody once watched
  * happen.
  *
- * ## What is deliberately missing
+ * ## The codec
  *
- * **The protocol.** `packages/protocol` is REPO_SKELETON.md §10 step 2 and has not landed — it
- * exports `{}` — and `crates/riki-ipc` is a doc comment. There is therefore no handshake to
- * perform and no message to parse, and inventing either here would put the wire format in the
- * wrong package and guarantee a rewrite.
+ * `SidecarCodec` turns a line of the child's stdout into one of three things, and the three-way
+ * split is load-bearing rather than tidiness. A `ready` or a `problem` is **handled** — fully
+ * understood, but not an observation — while a panic trace is **undecodable**. Collapsing those
+ * two into "returned nothing" would make `linesUndecodable` count every successful handshake,
+ * and that counter is the only thing that distinguishes a sidecar which is talking and not being
+ * understood from one that has gone silent.
  *
- * What is here instead is the seam it plugs into: `SidecarCodec` turns a line of the child's
- * stdout into an `Observation<'cv.detections'>` or into nothing. The default codec parses nothing
- * and counts every line it was handed, so the day the protocol lands the change is one file and
- * the supervisor above it does not move.
+ * `protocol-codec.ts` is the implementation, over `@riki/protocol`. `NULL_CODEC` remains for
+ * tests that care about the supervisor rather than about the wire.
  */
 
 import type { MonoMs, Observation } from '@riki/world-model';
@@ -49,16 +49,24 @@ export interface ChildProcessPort {
   spawn(request: SpawnRequest): ChildProcessHandle;
 }
 
+/** What one line of the sidecar's stdout turned out to be. */
+export type DecodedLine =
+  /** A CV batch for the world model. */
+  | { readonly kind: 'observation'; readonly observation: Observation }
+  /** Understood and dealt with — a handshake reply, a reported problem. Not a fact. */
+  | { readonly kind: 'handled' }
+  /** A log line, a panic trace, or a protocol version we do not speak. Counted, never thrown on. */
+  | { readonly kind: 'undecodable' };
+
 /**
  * One line of the sidecar's stdout → at most one observation.
  *
- * Returning `null` means *not a message we know*, which is the correct answer for a log line, a
- * panic trace, or a protocol version we do not speak. It is counted, never thrown on: a sidecar
- * that prints something unexpected must not take the coaching path down with it.
+ * Total by construction: a sidecar that prints something unexpected must not take the coaching
+ * path down with it, so there is no throwing path out of `decode`.
  */
 export interface SidecarCodec {
-  decode(line: string, at: MonoMs, seq: number): Observation | null;
-  /** The handshake, sent once on spawn. Empty until `@riki/protocol` defines one. */
+  decode(line: string, at: MonoMs, seq: number): DecodedLine;
+  /** Sent once on spawn, in order: the handshake, and whatever setup follows it. */
   hello(): readonly string[];
 }
 
@@ -66,6 +74,8 @@ export interface SidecarStats {
   readonly spawns: number;
   readonly exits: number;
   readonly linesIn: number;
+  /** Understood but not an observation: handshake replies and reported problems. */
+  readonly linesHandled: number;
   readonly linesUndecodable: number;
   readonly lastExitReason: string | null;
 }

@@ -3,9 +3,14 @@
   // Main-process integration tests and repo-level guards that read files off disk, so they get
   // Node types. Tests colocated in `src/` belong to whichever project owns that directory —
   // which is deliberate: a renderer test that reaches for `node:fs` should not compile.
+  //
+  // `tsconfig.main.json` is referenced because this is where tests that drive main-process wiring
+  // live — `sidecar-process.test.ts` spawns the real Rust binary through the composition root's
+  // own port. Under `tsc --build` an import that crosses into another project's files is TS6307
+  // unless that project is referenced here.
   "extends": "./tsconfig.base.json",
   "include": ["test/**/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }],
+  "references": [{ "path": "./tsconfig.shared.json" }, { "path": "./tsconfig.main.json" }],
   "compilerOptions": {
     "rootDir": ".",
     "types": ["node"]

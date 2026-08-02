@@ -59,6 +59,9 @@ importers:
       '@riki/log-tail':
         specifier: workspace:*
         version: link:../../packages/log-tail
+      '@riki/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@riki/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
@@ -92,7 +95,11 @@ importers:
 
   packages/log-tail: {}
 
-  packages/protocol: {}
+  packages/protocol:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/realtime: {}
 
@@ -1608,6 +1615,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   '@boundaries/elements@1.2.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint-import-resolver-typescript@4.4.5(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0))(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0)':
@@ -2972,3 +2982,5 @@ snapshots:
   ws@8.21.1: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@4.4.3: {}

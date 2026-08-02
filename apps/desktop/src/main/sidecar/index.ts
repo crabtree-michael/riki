@@ -11,11 +11,15 @@
  * restart loops for one process is the kind of thing that produces a fork bomb the first time both
  * fire.
  *
- * ⚠ **This supervises a binary that does nothing.** `crates/riki-vision`'s `main()` is an empty
- * function, so on a real machine it spawns, exits immediately, and the supervisor backs off and
- * gives up after `SIDECAR_RESTART.maxAttempts`. That is correct behaviour against the sidecar as
- * it exists, and it is why `vision: 'off'` is the shipping default in `ShellConfig` — see the note
- * there.
+ * ⚠ **The binary it supervises cannot capture anything yet.** `crates/riki-vision` now speaks the
+ * protocol, completes the handshake and runs the crop-and-hash pipeline, but every platform
+ * backend reports itself unavailable (`riki_capture::platform`) — so on a real machine it starts,
+ * says `ready` with `backendAvailable: false`, reports a `backend_unavailable` problem and then
+ * sits there. It no longer exits immediately, and it no longer trips the restart backoff.
+ *
+ * `vision: 'off'` remains the shipping default in `ShellConfig`, for the narrower reason that a
+ * sidecar which cannot capture has nothing to contribute. Turning it on is how the handshake gets
+ * exercised against a real process.
  */
 
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
@@ -29,7 +33,16 @@ import type {
 } from './contracts.js';
 
 export * from './contracts.js';
-export { createNodeChildProcessPort } from './node-process.js';
+export { KILL_GRACE_MS, createNodeChildProcessPort } from './node-process.js';
+export {
+  APP_IDENTITY,
+  DEFAULT_CAPTURE_CONFIG,
+  DEFAULT_CAPTURE_REGIONS,
+  createProtocolCodec,
+  type CvDetection,
+  type CvDetectionsPayload,
+  type ProtocolCodecDeps,
+} from './protocol-codec.js';
 
 /** A source is `degraded` rather than `down` while it has produced something recently. */
 export const SIDECAR_QUIET_MS = 5_000;
@@ -48,14 +61,16 @@ export interface SidecarSource extends ExitingSource {
 }
 
 /**
- * The codec until `@riki/protocol` exists.
+ * A codec that understands nothing.
  *
- * It decodes nothing, and the counter it feeds is the point: `linesUndecodable` rising while
+ * Kept now that `protocol-codec.ts` exists, because the tests that care about *process*
+ * behaviour — crash, backoff, chunk boundaries, a SIGTERM that is ignored — should not also have
+ * to speak a wire format. The counter it feeds is the point: `linesUndecodable` rising while
  * `linesIn` rises is a sidecar that is talking and not being understood, which is a completely
  * different problem from a sidecar that is silent, and the two are indistinguishable without it.
  */
 export const NULL_CODEC: SidecarCodec = {
-  decode: () => null,
+  decode: () => ({ kind: 'undecodable' }),
   hello: () => [],
 };
 
@@ -76,6 +91,7 @@ export function createSidecarSource(deps: SidecarSourceDeps): SidecarSource {
     spawns: 0,
     exits: 0,
     linesIn: 0,
+    linesHandled: 0,
     linesUndecodable: 0,
     lastExitReason: null as string | null,
   };
@@ -97,14 +113,21 @@ export function createSidecarSource(deps: SidecarSourceDeps): SidecarSource {
     const stopStdout = handle.onStdout((line) => {
       stats.linesIn += 1;
       const at = deps.now();
-      const observation = codec.decode(line, at, seq);
-      if (observation === null) {
+      const decoded = codec.decode(line, at, seq);
+      if (decoded.kind === 'undecodable') {
         stats.linesUndecodable += 1;
+        return;
+      }
+      // A handshake reply is understood but is not a fact, so it must not move
+      // `lastObservationAt` — a sidecar whose only output was `ready` is not `live`, and health
+      // that said otherwise would hide exactly the failure this module exists to catch.
+      if (decoded.kind === 'handled') {
+        stats.linesHandled += 1;
         return;
       }
       seq += 1;
       lastObservationAt = at;
-      for (const listener of [...listeners]) listener(observation);
+      for (const listener of [...listeners]) listener(decoded.observation);
     });
 
     const stopStderr = handle.onStderr((line) => {

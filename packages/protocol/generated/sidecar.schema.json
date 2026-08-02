@@ -1,0 +1,432 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "command": {
+      "$ref": "#/$defs/SidecarCommand"
+    },
+    "event": {
+      "$ref": "#/$defs/SidecarEvent"
+    }
+  },
+  "required": ["command", "event"],
+  "additionalProperties": false,
+  "description": "Root of the sidecar stdio protocol. Generated, not hand-written.",
+  "$defs": {
+    "SidecarCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "hello"
+            },
+            "app": {
+              "$ref": "#/$defs/AppIdentity"
+            }
+          },
+          "required": ["v", "type", "app"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "capture.configure"
+            },
+            "config": {
+              "$ref": "#/$defs/CaptureConfig"
+            }
+          },
+          "required": ["v", "type", "config"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "capture.start"
+            }
+          },
+          "required": ["v", "type"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "capture.stop"
+            }
+          },
+          "required": ["v", "type"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "shutdown"
+            }
+          },
+          "required": ["v", "type"],
+          "additionalProperties": false
+        }
+      ],
+      "description": "One line written to the stdin of the sidecar."
+    },
+    "AppIdentity": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "build": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["name", "build"],
+      "additionalProperties": false,
+      "description": "Who is on the other end, for logs and bug reports."
+    },
+    "CaptureConfig": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/WindowTarget"
+        },
+        "regions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CaptureRegion"
+          }
+        },
+        "intervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000,
+          "description": "Requested spacing between capture passes; the sidecar may go slower, never faster."
+        }
+      },
+      "required": ["target", "regions", "intervalMs"],
+      "additionalProperties": false,
+      "description": "Everything the sidecar needs to start capturing."
+    },
+    "WindowTarget": {
+      "type": "object",
+      "properties": {
+        "processName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executable name, e.g. \"dota2\"."
+        },
+        "titleContains": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Substring of the window title, e.g. \"Dota 2\"."
+        }
+      },
+      "required": ["processName", "titleContains"],
+      "additionalProperties": false,
+      "description": "The single window the sidecar may capture."
+    },
+    "CaptureRegion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RegionId"
+        },
+        "rect": {
+          "$ref": "#/$defs/NormalizedRect"
+        }
+      },
+      "required": ["id", "rect"],
+      "additionalProperties": false,
+      "description": "One region the sidecar should crop and report."
+    },
+    "RegionId": {
+      "type": "string",
+      "enum": ["minimap", "top-bar", "scoreboard", "shop", "self-hud", "chat"],
+      "description": "A named crop region within the Dota 2 window."
+    },
+    "NormalizedRect": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "w": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "h": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["x", "y", "w", "h"],
+      "additionalProperties": false,
+      "description": "Crop rectangle in 0..1 coordinates relative to the captured window."
+    },
+    "SidecarEvent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "ready"
+            },
+            "sidecar": {
+              "$ref": "#/$defs/SidecarIdentity"
+            }
+          },
+          "required": ["v", "type", "sidecar"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "problem"
+            },
+            "problem": {
+              "$ref": "#/$defs/Problem"
+            }
+          },
+          "required": ["v", "type", "problem"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Protocol version this message was written against."
+            },
+            "type": {
+              "type": "string",
+              "const": "cv.detections"
+            },
+            "emittedAtMonoMs": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Sidecar-local monotonic ms at write. Minus capturedAtMonoMs gives the age."
+            },
+            "facts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CvFact"
+              }
+            }
+          },
+          "required": ["v", "type", "emittedAtMonoMs", "facts"],
+          "additionalProperties": false
+        }
+      ],
+      "description": "One line read from the stdout of the sidecar."
+    },
+    "SidecarIdentity": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Rust target_os: \"macos\", \"linux\", \"windows\"."
+        },
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Capture backend in use, e.g. \"screencapturekit\"."
+        },
+        "backendAvailable": {
+          "type": "boolean",
+          "description": "False when the handshake succeeded but nothing can be captured on this build."
+        }
+      },
+      "required": ["name", "version", "platform", "backend", "backendAvailable"],
+      "additionalProperties": false,
+      "description": "What answered the handshake."
+    },
+    "Problem": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProblemKind"
+        },
+        "fatal": {
+          "type": "boolean",
+          "description": "True when the sidecar is about to exit. False means degraded but still running."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Developer-facing. Never contains pixels or chat text."
+        },
+        "remedy": {
+          "description": "User-facing next step, when there is one, e.g. \"switch to borderless windowed\".",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["kind", "fatal", "message"],
+      "additionalProperties": false,
+      "description": "A named failure, reported rather than silently absorbed."
+    },
+    "ProblemKind": {
+      "type": "string",
+      "enum": [
+        "protocol_version_mismatch",
+        "handshake_required",
+        "malformed_message",
+        "permission_denied",
+        "exclusive_fullscreen",
+        "window_not_found",
+        "backend_unavailable",
+        "capture_failed"
+      ],
+      "description": "Why the sidecar cannot do what was asked of it."
+    },
+    "CvFact": {
+      "type": "object",
+      "properties": {
+        "regionId": {
+          "$ref": "#/$defs/RegionId"
+        },
+        "detector": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provenance: the detector and its version, e.g. \"region-digest/v1\"."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "0..1. For a digest this is the fraction of the requested rect actually captured."
+        },
+        "capturedAtMonoMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Sidecar-local monotonic ms at capture. Comparable only to emittedAtMonoMs."
+        },
+        "payload": {
+          "$ref": "#/$defs/DetectionPayload"
+        }
+      },
+      "required": ["regionId", "detector", "confidence", "capturedAtMonoMs", "payload"],
+      "additionalProperties": false,
+      "description": "One CV observation with its confidence and provenance."
+    },
+    "DetectionPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "region.digest"
+            },
+            "hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$",
+              "description": "64-bit region hash, lower-case hex. Equal hashes mean an unchanged region."
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Cropped region width in pixels, after any downscale."
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "meanLuma": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Mean luminance, 0..1. Zero means a black crop."
+            },
+            "changed": {
+              "type": "boolean",
+              "description": "False when the hash matched the previous pass and no CV work was done."
+            }
+          },
+          "required": ["kind", "hash", "width", "height", "meanLuma", "changed"],
+          "additionalProperties": false
+        }
+      ],
+      "description": "What a detector produced, by detector kind."
+    }
+  }
+}

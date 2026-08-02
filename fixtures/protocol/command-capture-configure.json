@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "capture.configure",
+  "config": {
+    "target": {
+      "processName": "dota2",
+      "titleContains": "Dota 2"
+    },
+    "regions": [
+      {
+        "id": "minimap",
+        "rect": { "x": 0, "y": 0.75, "w": 0.18, "h": 0.25 }
+      },
+      {
+        "id": "top-bar",
+        "rect": { "x": 0.3, "y": 0, "w": 0.4, "h": 0.06 }
+      }
+    ],
+    "intervalMs": 200
+  }
+}

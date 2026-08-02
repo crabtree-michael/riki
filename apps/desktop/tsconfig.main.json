@@ -10,6 +10,7 @@
     { "path": "../../packages/events" },
     { "path": "../../packages/gsi" },
     { "path": "../../packages/log-tail" },
+    { "path": "../../packages/protocol" },
     { "path": "../../packages/realtime" },
     { "path": "../../packages/world-model" }
   ],

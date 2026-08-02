@@ -206,6 +206,14 @@ tests are reading source. If a *new Vitest project* is added without `resolve.co
 silently assert against the last build instead — which passes, and is wrong in a way no failure
 reveals.
 
+**2026-08-02 — `packages/protocol` is no longer a skeleton, and `zod` is its first dependency.**
+Until now no `packages/*` manifest had an external dependency at all, so nothing had exercised
+pnpm's strict `node_modules` from a workspace package. Two things follow: a root-level script
+cannot `import 'zod'` (resolve it through `createRequire` from the package that declares it), and
+anything a package compiles to must sit *under* that package or its own imports stop resolving. The
+`protocol` skill has the details. *Why:* the three packages that still export `{}` are
+`packages/config` and `packages/telemetry`; check `src/index.ts` before assuming either exists.
+
 **2026-08-01 — three "landed" packages were skeletons, and the scaffolding table did not say so.**
 `packages/config`, `packages/telemetry` and `packages/protocol` all export `{}`. §10's table marks
 steps 4, 5 and 5b as landed and is silent on 2 and 3, which reads as "fine" rather than "not

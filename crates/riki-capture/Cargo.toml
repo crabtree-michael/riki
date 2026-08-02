@@ -11,3 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# Only for `RegionId` and `NormalizedRect`: the region vocabulary is part of the contract with the
+# app, and restating it here is the drift `packages/protocol` exists to prevent. Nothing in this
+# crate constructs a protocol *message* — that happens one layer up, in riki-vision.
+riki-ipc = { workspace = true }

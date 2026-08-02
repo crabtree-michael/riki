@@ -129,13 +129,16 @@ describe('the sidecar as a source', () => {
     const child = fakeProcess();
     const codec: SidecarCodec = {
       hello: () => ['{"hello":1}'],
-      decode: (line, at, seq): Observation => ({
-        kind: 'cv.detections',
-        sourceId: 'sidecar' as SourceId,
-        seq,
-        receivedAt: at,
-        payload: JSON.parse(line),
-        v: 1,
+      decode: (line, at, seq) => ({
+        kind: 'observation',
+        observation: {
+          kind: 'cv.detections',
+          sourceId: 'sidecar' as SourceId,
+          seq,
+          receivedAt: at,
+          payload: JSON.parse(line),
+          v: 1,
+        },
       }),
     };
 
@@ -156,6 +159,29 @@ describe('the sidecar as a source', () => {
     child2.stdout('{"a":2}');
 
     expect(seen.map((o) => o.seq)).toEqual([0, 1]);
+  });
+
+  it('does not let a handled line pass for a detection', async () => {
+    // A `ready` is understood and is not a fact. If it moved `lastObservationAt`, a sidecar whose
+    // only output was its handshake would report `live` — which is exactly the failure this
+    // source exists to catch.
+    const child = fakeProcess();
+    const source = createSidecarSource({
+      processes: fakePort(child),
+      request: REQUEST,
+      now: () => 0 as MonoMs,
+      codec: { hello: () => [], decode: () => ({ kind: 'handled' }) },
+    });
+
+    const seen: Observation[] = [];
+    source.subscribe((o) => seen.push(o));
+    await source.start();
+    child.stdout('{"v":1,"type":"ready"}');
+
+    expect(seen).toEqual([]);
+    expect(source.stats().linesHandled).toBe(1);
+    expect(source.stats().linesUndecodable).toBe(0);
+    expect(source.health(0 as MonoMs).lastObservationAt).toBeNull();
   });
 
   it('reports a running-but-silent sidecar as degraded, not as still starting', async () => {

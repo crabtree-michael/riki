@@ -10,8 +10,15 @@
  *
  * Changing this package is a coordination event — say so in the commit message.
  *
- * Skeleton only — no implementation yet. See REPO_SKELETON.md §2.2 for what belongs here
- * and §10 for where this package sits in the scaffolding order.
+ * ## What is here, and what is not yet
+ *
+ * The sidecar stdio protocol (`schemas/sidecar.ts`) and its transport (`codec.ts`). The main ↔
+ * renderer messages are **not** here: they live in `apps/desktop/src/shared`, which is where they
+ * were written before this package had any schemas. Moving them is a coordination event of its
+ * own rather than a detail of this one, and they cross a process boundary but not a language one,
+ * so nothing generates from them today.
  */
 
-export {};
+export { PROTOCOL_VERSION } from './version.js';
+export * from './schemas/sidecar.js';
+export { commands, decodeSidecarEvent, encodeMessage, type DecodedEvent } from './codec.js';

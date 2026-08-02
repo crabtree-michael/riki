@@ -34,6 +34,18 @@ export interface ShellTelemetry
   extends StateTelemetry, TelemetrySink, AgentTelemetry, SilentSessionTelemetry {
   /** The sidecar's stderr, a line at a time. A panic trace arrives here and nowhere else. */
   sidecarStderr(line: string): void;
+  /** The sidecar answered the handshake. `backend` is what it can capture with, if anything. */
+  sidecarReady(backend: string, available: boolean): void;
+  /**
+   * The sidecar reported a named failure (dota2 §9).
+   *
+   * `remedy` is user-facing text when there is one — the Screen Recording permission and
+   * exclusive fullscreen both have one, and the first-run flow is where it should end up. This
+   * carries no pixels and no chat text; the protocol forbids both.
+   */
+  sidecarProblem(kind: string, fatal: boolean, remedy: string | null): void;
+  /** The sidecar speaks a protocol this build does not. Not a crash — a mismatched build. */
+  sidecarProtocolMismatch(theirs: number, ours: number): void;
   /** The accelerator could not be registered — usually another application owns it (§6.3). */
   hotkeyUnavailable(accelerator: string, hasKeyUp: boolean): void;
   /** Bound, but key-up is synthetic: tap-to-latch works and hold-to-push does not (§6.4). */
@@ -64,6 +76,9 @@ export function nullTelemetry(): ShellTelemetry {
     emptyBrief: () => undefined,
     wouldSpeak: () => undefined,
     sidecarStderr: () => undefined,
+    sidecarReady: () => undefined,
+    sidecarProblem: () => undefined,
+    sidecarProtocolMismatch: () => undefined,
     hotkeyUnavailable: () => undefined,
     pushToTalkUnavailable: () => undefined,
   };

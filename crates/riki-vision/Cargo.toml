@@ -11,3 +11,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+riki-capture = { workspace = true }
+riki-ipc = { workspace = true }
+
+[dev-dependencies]
+# The integration test spawns the real binary and speaks the real protocol to it, which means it
+# has to build the same messages the app would.
+serde_json = { workspace = true }

@@ -107,6 +107,23 @@ lines, which is why that is supported) saying so and saying what a real recordin
 without the label the next agent reasonably assumes the delivery rates and line formats in them were
 observed.
 
+**2026-08-02 — a test may depend on our own build output, if it skips loudly.** §5.2 forbids a test
+that needs Dota, a microphone, a GPU or a live session. It says nothing about `target/debug/`, and
+`apps/desktop/test/sidecar-process.test.ts` is the one place both languages are in the room — it
+spawns the real `riki-vision` through the real `ChildProcessPort` and asserts a `cv.detections`
+comes back as an `Observation`. It guards on `existsSync(BINARY)` and `describe.skip`s with the
+command that fixes it, mirroring what `scripts/cargo.mjs` already does at the other end. *Why:* a
+hard failure would stop a TypeScript-only agent running `pnpm check` at all — but check the run
+output, because "1025 passed" and "1025 passed, 3 skipped" are different claims and only one of them
+means the two languages agree. Verify the skip by moving the binary aside, not by assuming.
+
+**2026-08-02 — `apps/desktop/test/` is its own tsconfig project, so importing from `src/main`
+needs a reference.** Under `tsc --build` every file belongs to exactly one project, and an import
+that reaches into another one is `TS6307` — which reads like a missing file rather than a missing
+`references` entry. `tsconfig.test.json` now references `tsconfig.main.json`. *Why:* Vitest resolves
+it happily and the test passes long before `pnpm typecheck` disagrees, so this fails at the gate
+rather than while you are writing it.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "problem",
+  "problem": {
+    "kind": "protocol_version_mismatch",
+    "fatal": true,
+    "message": "the app speaks protocol v99; this sidecar speaks v1. Rebuild both from the same commit."
+  }
+}

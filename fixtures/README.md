@@ -26,6 +26,8 @@ Captured Dota console.log excerpts, including a rotation boundary. Scrub anythin
 
 Hand-labelled screenshots plus label JSON, stored in git-lfs (see .gitattributes). Grow this corpus deliberately, weighted toward hard frames — chaotic teamfights, not clean laning. Tests that need frames skip with a clear message when the LFS objects are absent.
 
+`synthetic/` is the exception: small hand-generated `.ppm` frames, committed plainly because .gitattributes puts only `*.png`/`*.jpg`/`*.jpeg`/`*.webp` in LFS. They are not screenshots and prove nothing about recognition accuracy — they exist so `riki-vision --backend replay --frames fixtures/frames/synthetic` can drive the real capture pipeline on a machine with no display. PPM because it needs no decoder in the shipped binary.
+
 ## `realtime/`
 
 Recorded Realtime event transcripts, replayed by FakeRealtimeTransport. No live session is ever required by a test.

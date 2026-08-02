@@ -20,5 +20,8 @@
   },
   "scripts": {
     "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }

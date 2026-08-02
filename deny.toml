@@ -27,6 +27,13 @@ private = { ignore = true }
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# `wildcards` is about a *published* dependency pinned to `"*"`, which is a supply-chain hazard.
+# Our own crates depend on each other by path with no version — `riki-ipc = { path = ... }` — and
+# cargo-deny counts that as a wildcard too, so the first commit that gave one workspace crate a
+# dependency on another failed `bans` on all four members. They are `publish = false`; there is no
+# registry resolution to be hijacked. Same scope as `private = { ignore = true }` above: the rules
+# are about what we *ship*, not about us.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

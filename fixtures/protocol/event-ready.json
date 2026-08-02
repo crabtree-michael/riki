@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "ready",
+  "sidecar": {
+    "name": "riki-vision",
+    "version": "0.0.0",
+    "platform": "macos",
+    "backend": "screencapturekit",
+    "backendAvailable": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "type": "cv.detections",
+  "emittedAtMonoMs": 12043.5,
+  "facts": [
+    {
+      "regionId": "minimap",
+      "detector": "region-digest/v1",
+      "confidence": 1,
+      "capturedAtMonoMs": 12041.25,
+      "payload": {
+        "kind": "region.digest",
+        "hash": "19b9a20c1ab22482",
+        "width": 346,
+        "height": 270,
+        "meanLuma": 0.1202,
+        "changed": true
+      }
+    },
+    {
+      "regionId": "top-bar",
+      "detector": "region-digest/v1",
+      "confidence": 0.5,
+      "capturedAtMonoMs": 12041.25,
+      "payload": {
+        "kind": "region.digest",
+        "hash": "8a82a0d009532425",
+        "width": 768,
+        "height": 64,
+        "meanLuma": 0.101,
+        "changed": false
+      }
+    }
+  ]
+}

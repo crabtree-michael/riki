@@ -68,7 +68,12 @@ import { DEFAULT_ENVIRONMENT, createSessionRuntime, machine } from '../session/i
 import type { MachineEnvironment } from '../session/types.js';
 import type { SourceRegistration, StateSubsystemWithExtras } from '../state/index.js';
 import { SIDECAR_RESTART, buildStateSubsystem } from '../state/index.js';
-import { createSidecarSource } from '../sidecar/index.js';
+import { PROTOCOL_VERSION } from '@riki/protocol';
+import {
+  DEFAULT_CAPTURE_CONFIG,
+  createProtocolCodec,
+  createSidecarSource,
+} from '../sidecar/index.js';
 import type { ChildProcessPort } from '../sidecar/index.js';
 import type { TrayController, TraySurface } from '../tray/index.js';
 import { createTrayController } from '../tray/index.js';
@@ -168,6 +173,21 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       processes: deps.processes,
       request: { command: config.vision.binaryPath, args: [] },
       now: () => worldClock.now(),
+      // The codec is what makes the child a source rather than a process that prints things: it
+      // sends the handshake, translates the sidecar's clock into ours, and routes the failures
+      // dota2 §9 names to telemetry instead of letting them be silence.
+      codec: createProtocolCodec({
+        capture: DEFAULT_CAPTURE_CONFIG,
+        onReady: (identity) => {
+          telemetry.sidecarReady(identity.backend, identity.backendAvailable);
+        },
+        onProblem: (problem) => {
+          telemetry.sidecarProblem(problem.kind, problem.fatal, problem.remedy ?? null);
+        },
+        onVersionMismatch: (theirs) => {
+          telemetry.sidecarProtocolMismatch(theirs, PROTOCOL_VERSION);
+        },
+      }),
       onStderr: (line) => {
         telemetry.sidecarStderr(line);
       },

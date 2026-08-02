@@ -68,6 +68,54 @@ CI. It is a release gate, and its numbers get committed.
 
 ## Learnings
 
+**2026-08-02 — the dev box cannot build the `PipeWire` backend, let alone run it.** The skill above
+says `PipeWire` "keeps the pipeline developable day to day". On the machine this was written on it
+does not, and the reasons are worth checking before you plan around it:
+
+| Needed | Present? |
+|---|---|
+| `libpipewire-0.3` headers (`pkg-config --modversion`) | yes, 1.0.5 |
+| `clang` / `libclang`, for `pipewire-sys`'s `bindgen` | **no** — `pipewire-rs` will not compile |
+| `DBUS_SESSION_BUS_ADDRESS`, for the `ScreenCast` portal | **no** |
+| A `PipeWire` daemon, a compositor, `DISPLAY`/`WAYLAND_DISPLAY` | **no** — headless |
+
+`ashpd` (pure-Rust portal client, `--no-default-features --features async-io`) *does* compile in
+~13 s, so the portal half is buildable and only the stream half is blocked. That was still judged
+not worth landing: half a backend that always fails at the last step is harder to finish than an
+empty seam ([ADR-0030](../../../docs/adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md)).
+*Why:* run `which clang && echo $DBUS_SESSION_BUS_ADDRESS` before you promise anyone a working
+Linux capture. What is developable here is everything *above* the seam, against
+`ReplayBackend` — and that is now real, so use it.
+
+**2026-08-02 — the macOS failure modes are testable without macOS, if the policy lives above the
+seam.** The two that matter — Screen Recording denied (black frames, no error) and exclusive
+fullscreen (the window stops being visible) — are both invisible in a single capture call. So
+`BackendInfo::black_frames_mean_permission_denied` is a declaration by the *platform*, and
+`riki_capture::health` turns runs of passes into a named `ProblemKind`. A window that vanishes
+after being acquired is exclusive fullscreen; one that was never acquired is simply not running.
+Both report **once per streak**, not once per pass. *Why:* the temptation is to put this logic in
+the macOS backend, where nobody in the loop can run it. Above the seam it has unit tests on a Linux
+box, and the day `ScreenCaptureKit` lands it inherits behaviour that already works.
+
+**2026-08-02 — `--backend replay --frames <dir>` is the fastest way to see the whole path.** The
+sidecar loads `.ppm` frames in name order and runs the real protocol loop over them:
+
+```sh
+cargo build -p riki-vision
+printf '{"v":1,"type":"hello","app":{"name":"riki","build":"manual"}}\n{"v":1,"type":"capture.configure","config":{"target":{"processName":"dota2","titleContains":"Dota 2"},"regions":[{"id":"minimap","rect":{"x":0,"y":0.75,"w":0.18,"h":0.25}}],"intervalMs":100}}\n{"v":1,"type":"capture.start"}\n' \
+  | ./target/debug/riki-vision --backend replay --frames fixtures/frames/synthetic
+```
+
+PPM rather than PNG because it needs no decoder — an image crate in the shipped binary for the
+benefit of tests alone is a dependency the perf budget does not owe anyone. `fixtures/frames/` is
+git-lfs for `*.png`/`*.jpg` only, so a small `.ppm` commits plainly.
+
+**2026-08-02 — an unchanged region is still reported, with `changed: false`.** The gate skips
+*recognition*, not reporting. `apps/desktop/src/main/sidecar` treats five quiet seconds as
+`degraded`, so a sidecar that went silent while the scoreboard was closed would be
+indistinguishable from one that had wedged. *Why:* if you are tempted to suppress unchanged
+digests to save bytes, you are trading a liveness signal for nothing measurable at 1–5 Hz.
+
 **2026-08-01 — `clippy::pedantic` is on, and `doc_markdown` will fail your doc comments.**
 `Cargo.toml` sets `pedantic = "warn"` at the workspace level and `pnpm lint:rust` passes
 `-D warnings`, so a warning is a build failure. `doc_markdown` flags any bare identifier-looking
@@ -75,6 +123,16 @@ word in a `//!` or `///` comment — `PipeWire`, `ScreenCaptureKit`, `REPO_SKELE
 skeleton's own three `lib.rs` headers all failed the first time a toolchain existed to run them.
 *Why:* backtick product and file names in doc comments as you write them. `cargo clippy --fix`
 applies these automatically if you have already made the mess.
+
+**2026-08-02 — cargo-deny's `wildcards = "deny"` also fires on our own path dependencies.**
+The first commit in which one workspace crate depended on another failed `cargo deny check bans`
+with `found 2 wildcard dependencies for crate 'riki-vision'` — because `riki-ipc = { path = ... }`
+carries no version, and that is what a wildcard looks like. Fixed with `allow-wildcard-paths = true`
+under `[bans]`. *Why:* this is the second time cargo-deny has failed on **us** rather than on a
+dependency (see the entry below), and the failure reads like a supply-chain problem. If
+`cargo deny` starts failing after you add a crate, check which side it is complaining about before
+you go looking at the dependency tree. It runs in the pre-commit hook, not in `pnpm check`, so it
+surfaces at the commit rather than while you are working.
 
 **2026-08-01 — `license = "UNLICENSED"` is not valid SPDX, and cargo-deny fails on it.**
 The workspace crates inherit it from `[workspace.package]`, so `cargo deny check` reported

@@ -15,6 +15,7 @@
     "@riki/events": "workspace:*",
     "@riki/gsi": "workspace:*",
     "@riki/log-tail": "workspace:*",
+    "@riki/protocol": "workspace:*",
     "@riki/realtime": "workspace:*",
     "@riki/world-model": "workspace:*"
   },

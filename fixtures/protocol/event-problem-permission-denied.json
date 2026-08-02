@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "problem",
+  "problem": {
+    "kind": "permission_denied",
+    "fatal": false,
+    "message": "every captured region has been black for 4 consecutive passes, which on this platform means screen capture was never permitted rather than that the screen is dark",
+    "remedy": "Grant Riki the Screen Recording permission in System Settings > Privacy & Security, then restart Riki."
+  }
+}
