@@ -160,6 +160,33 @@ curl -X POST -H 'Content-Type: application/json' -d "$BODY" http://127.0.0.1:531
 listener never bound. Replaying all of `fixtures/gsi/laning-phase.jsonl` this way is the cheapest
 end-to-end proof that exists, and it needs neither Dota nor a test harness.
 
+**Two traps in that replay, both of which return `200` while proving nothing.** The fixture lines
+are `{"atMs":…,"body":{…}}` envelopes — Dota POSTs the **body**, with `auth` inside it, so posting
+the whole line authenticates fine and parses to nothing at all. And the replay must run at **1x**:
+see the next entry for why an accelerated one is not a faster version of the same test.
+
+**2026-08-02 — a GSI replay cannot be accelerated, and `fixtures/gsi/laning-phase.jsonl` was
+inconsistent for the life of the file.** `packages/gsi`'s session tracker calls a
+`clock_discontinuity` when `map.clock_time` and elapsed wall time disagree by more than
+`DISCONTINUITY_THRESHOLD_SECONDS` (5), and `apps/desktop`'s state subsystem answers one by
+**resetting the world model**. So replaying at 10x *is* a discontinuity, by construction — there is
+no fast version of this test, and `FakeGsiSource`'s `speed` option has the same property.
+
+The fixture had the same defect baked in: its `atMs` values were authored independently of its
+`clock_time` values, so game time ran ~25x wall time and a full replay wiped the world on nine or
+ten of its twenty-two frames. Nothing caught it. `shell.test.ts` — the Tier 4 test for the whole
+loop — advanced a flat 250 ms per line regardless of the recording, which reproduced the same
+disagreement, and it asserted only that *a* coaching turn came out. One did, through ten world
+resets. The visible symptom, once the telemetry was recorded, was suppression reasons that made no
+sense: `not_in_match` and `global_cooldown` mid-match, where a healthy run reports `below_threshold`
+and `high_intensity`.
+
+Both are fixed, and `packages/gsi/src/gsi.test.ts` now asserts the whole corpus replays with zero
+discontinuities. *Why it is worth knowing anyway:* **if you add or edit a `fixtures/gsi/*.jsonl`,
+`atMs` and `map.clock_time` have to advance together** — the paused rows are the only exemption,
+because the tracker skips the check while `paused` is true. And a replay harness must advance its
+clock by the recorded gap, never by a constant; a constant is what hid this.
+
 ## See also
 
 `docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),

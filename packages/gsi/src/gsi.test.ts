@@ -271,6 +271,40 @@ describe('MatchSessionTracker', () => {
   });
 });
 
+describe('the fixture corpus replays without resetting the world', () => {
+  /**
+   * The regression this exists for: `atMs` and `map.clock_time` were authored independently, so
+   * game time ran ~25x wall time, every non-paused frame tripped the discontinuity threshold, and
+   * `apps/desktop`'s state subsystem answered each one by resetting the world model. Roughly ten
+   * resets in a 22-frame replay — which destroys the delta history dota2 §4 asks for — and every
+   * test in the repo still passed, because nothing asserted on it.
+   *
+   * A fixture whose two clocks disagree is not a fixture of anything real, so this is a property of
+   * the corpus rather than of one file: any `fixtures/gsi/*.jsonl` added later is covered too.
+   */
+  for (const name of ['laning-phase.jsonl', 'draft.jsonl']) {
+    it(`${name} keeps wall time and game time in step`, () => {
+      const tracker = createMatchSessionTracker();
+      const parser = createGsiPayloadParser();
+      const discontinuities: { atMs: number; delta: number }[] = [];
+
+      for (const line of fixture(name)) {
+        const parsed = parser.parse(line.body);
+        if (!parsed.ok) continue;
+        // The recorded gap, which is the whole point: a replay that advances its clock by a flat
+        // step instead reintroduces exactly the disagreement this guards against.
+        for (const event of tracker.observe(parsed.value, { observedAt: at(line.atMs) })) {
+          if (event.type === 'clock_discontinuity') {
+            discontinuities.push({ atMs: line.atMs, delta: event.delta });
+          }
+        }
+      }
+
+      expect(discontinuities).toEqual([]);
+    });
+  }
+});
+
 describe('FakeGsiSource', () => {
   it('replays the fixture as observations a consumer cannot tell from the real thing', () => {
     const clock = createManualClock();

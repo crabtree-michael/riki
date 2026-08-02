@@ -50,6 +50,25 @@ import { createSilentSession, type SilentSession } from './silent-session.js';
 
 const FIXTURE = 'fixtures/gsi/laning-phase.jsonl';
 
+/**
+ * Read once, and the source of the replay's timing as well as its content.
+ *
+ * Advancing a flat step per line instead is what hid a real defect for the life of this file:
+ * `packages/gsi` compares the game clock against elapsed wall time, so a replay that invents its
+ * own pacing makes the two disagree, and the state subsystem answers that disagreement by
+ * resetting the world model. This test replayed the whole fixture through ~10 world resets and
+ * asserted nothing about them.
+ */
+const FIXTURE_LINES = parseGsiFixture(readFileSync(FIXTURE, 'utf8'));
+
+/** The gap the recording says comes after line `index`. Zero past the end. */
+function gapAfter(index: number): Millis {
+  const current = FIXTURE_LINES[index];
+  const next = FIXTURE_LINES[index + 1];
+  if (current === undefined || next === undefined) return 0;
+  return Math.max(0, next.atMs - current.atMs);
+}
+
 // -------------------------------------------------------------------------------------------
 // A test's version of every port the shell takes
 // -------------------------------------------------------------------------------------------
@@ -281,12 +300,13 @@ function use(): Harness {
   return harness;
 }
 
-/** Every line of the fixture, then the microtasks the coaching path defers on. */
+/** Every line of the fixture, at the timing it records, then the microtasks the coaching path
+ * defers on. */
 async function replay(): Promise<void> {
   const { gsi, clock } = use();
-  for (;;) {
+  for (let index = 0; ; index += 1) {
     if (!gsi.step()) break;
-    clock.advance(250);
+    clock.advance(gapAfter(index));
     await Promise.resolve();
   }
   await Promise.resolve();
@@ -476,9 +496,9 @@ describe('the inspector (main/debug)', () => {
       const built = build({ debug });
       await built.shell.start();
       try {
-        for (;;) {
+        for (let index = 0; ; index += 1) {
           if (!built.gsi.step()) break;
-          built.clock.advance(250);
+          built.clock.advance(gapAfter(index));
           await Promise.resolve();
         }
         await Promise.resolve();
