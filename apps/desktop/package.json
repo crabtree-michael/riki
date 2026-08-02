@@ -8,9 +8,11 @@
     "postinstall": "install-electron",
     "typecheck": "tsc --build",
     "assets": "node ../../scripts/copy-renderer-assets.mjs",
-    "dev": "pnpm run typecheck && pnpm run assets && electron ."
+    "dev": "pnpm run typecheck && pnpm run assets && pnpm run bundle && electron .",
+    "bundle": "node ../../scripts/bundle.mjs"
   },
   "dependencies": {
+    "@riki/audio": "workspace:*",
     "@riki/config": "workspace:*",
     "@riki/context": "workspace:*",
     "@riki/events": "workspace:*",

@@ -105,6 +105,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0028](adr/0028-mute-has-one-producer-the-menu-row.md)    | Mute has one producer, and it is the menu row | Accepted — amends ui-design §2.3's click gesture |
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
+| [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

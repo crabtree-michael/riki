@@ -66,6 +66,32 @@ unit tests.
 
 ## Learnings
 
+**2026-08-02 — the overlay's preload script had never loaded, since the step that wrote it.**
+Electron loads a preload as **CommonJS**; `apps/desktop/package.json` is `"type": "module"` and
+`tsc` emits ESM, so `dist/preload/index.js` failed with `SyntaxError: Cannot use import statement
+outside a module`. The error goes to the *renderer's* console, which nothing reads — main starts,
+binds its socket and runs the whole coaching pipeline, and `window.rikiOverlay` is simply
+`undefined`. Every unit test passed throughout, because they test the bridge's *modules*, never its
+installation.
+
+`scripts/bundle.mjs` now emits both preloads as `.cjs` with `electron` external, and
+`resolvePaths` points at those (ADR-0034). To see it yourself:
+
+```sh
+cd apps/desktop && ELECTRON_ENABLE_LOGGING=1 xvfb-run -a ./node_modules/.bin/electron .
+```
+
+`ELECTRON_ENABLE_LOGGING=1` is the load-bearing part — it forwards renderer console output to
+stderr, and without it the preload failure is invisible from the terminal. Use it for anything that
+touches a renderer, and grep past the `dbus`/`Gtk`/`vaapi` noise a headless sandbox produces.
+
+**2026-08-02 — there are two renderers now and they build differently.** `renderer/overlay/` is
+hand-written ES modules loaded straight from `tsc` output; `renderer/voice/` imports workspace
+packages and is bundled (ADR-0010, ADR-0034). A `@riki/*` import added to the overlay fails at *run
+time* with an unresolved bare specifier in a window nobody is looking at — which is why the
+`no-restricted-imports` rule banning it is now scoped rather than deleted, and why its message names
+both ADRs.
+
 **2026-08-02 — a tray with a context menu has no left-click to spend.** `tray.setContextMenu(...)`
 makes the icon open that menu on click, on every platform; macOS opens it on *either* button and
 emits `click` as well. So `ui-design.md` §2.3's original "Left-click → toggle mute. Right-click →

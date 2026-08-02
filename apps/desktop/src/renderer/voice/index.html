@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The voice window's document. Never shown (ADR-0010) and deliberately empty: this window's
+      only output is sound.
+
+      The CSP is one directive looser than the overlay's, and the difference is the whole reason
+      this window exists. `connect-src https://api.openai.com` is the SDP exchange —
+      `POST /v1/realtime/calls` — which is the single external egress in the product. `media-src`
+      covers the remote track played by the `<audio>` element `index.js` creates.
+
+      Everything else is still `'none'`: no remote script, no inline script, no images, no styles,
+      no frames. There is no content in this document for anything to be injected into.
+
+      `bundle.js` is `index.ts` compiled by `tsc` and then bundled by
+      `scripts/bundle-voice-renderer.mjs` — unlike the overlay, this renderer imports workspace
+      packages (`@riki/audio`, `@riki/realtime`, `@riki/protocol`), and a browser cannot resolve a
+      bare specifier. See ADR-0034.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; connect-src https://api.openai.com wss://api.openai.com; media-src blob: mediastream:"
+    />
+    <title>Riki voice</title>
+  </head>
+  <body>
+    <script type="module" src="./bundle.js"></script>
+  </body>
+</html>

@@ -37,9 +37,9 @@ import { createConsoleLogTailer, defaultMatchers } from '@riki/log-tail';
 import type { Clock as WorldClock } from '@riki/world-model';
 
 import type { Millis } from '../shared/overlay.js';
-import { loadConfig } from '@riki/config';
+import { loadConfig, voiceEnabled } from '@riki/config';
 
-import { loadOrCreateGsiToken, resolvePaths } from './bootstrap.js';
+import { loadOrCreateGsiToken, loadOrCreateInstallId, resolvePaths } from './bootstrap.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -47,6 +47,8 @@ import { gsiRegistration, logTailRegistration } from './state/index.js';
 import { createNodeChildProcessPort } from './sidecar/index.js';
 import { createElectronTray } from './tray/index.js';
 import { createElectronKeySource } from './trigger/index.js';
+import { createElectronVoiceWindowFactory, createVoiceSession } from './voice/index.js';
+import type { MatchScopedSession } from './shell/index.js';
 import type { RikiShell, ShellConfig } from './shell/index.js';
 import { createRikiShell } from './shell/index.js';
 
@@ -109,8 +111,47 @@ function buildShell(): RikiShell {
 
   const clock = createElectronClock();
 
+  /**
+   * The one line that decides whether Riki speaks.
+   *
+   * With no `RIKI_OPENAI_API_KEY` the app boots with voice disabled and says so (ADR-0006) — which
+   * is the mode every test, every fixture run and CI are in — and the silent stand-in keeps the
+   * whole coaching pipeline observable through the ledger and the counters. With a key, the same
+   * pipeline ends in a hidden renderer that actually talks.
+   *
+   * `createVoiceSession` is handed the key by injection and never reads the environment; it is the
+   * only thing in the process that touches `ClientSecretBroker`, and what crosses the preload
+   * bridge is an ephemeral secret (ADR-0015).
+   */
+  const session: MatchScopedSession | undefined = voiceEnabled(config)
+    ? createVoiceSession({
+        config,
+        windows: createElectronVoiceWindowFactory({
+          preloadPath: paths.voicePreload,
+          entryPath: paths.voiceEntry,
+        }),
+        clock: { now: () => clock.now() as never },
+        safetyIdentifier: loadOrCreateInstallId(dataDir),
+        // Node 22's global. Narrowed to `FetchLike` by the port, so `packages/realtime` still
+        // names no vendor and is still testable with a stub.
+        fetch: (url, init) => fetch(url, init),
+        // ⚠ Every one of these is a no-op, and it is the largest remaining gap in this path.
+        // `packages/telemetry` still exports `{}` and `console.*` is confined to it — so a failed
+        // mint, a bridge decode error and a self-interruption all happen silently in a release
+        // build. The *events* reach the chip; the counters reach nothing. One object literal once
+        // that package exists.
+        telemetry: {
+          speaking: () => undefined,
+          fault: () => undefined,
+          state: () => undefined,
+          bridgeProblem: () => undefined,
+        },
+      })
+    : undefined;
+
   return createRikiShell({
     config,
+    ...(session === undefined ? {} : { session }),
     clock,
     timers: systemTimers,
     platform: process.platform,

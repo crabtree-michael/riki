@@ -47,6 +47,52 @@ path; keep it cheap and unit-test it.
 
 ## Learnings
 
+**2026-08-02 — the voice path is wired end to end, and here is where each half lives.** The renderer
+is `apps/desktop/src/renderer/voice/`: `host.ts` holds every decision and takes the DOM through
+ports, so it is a Tier 1 test; `web-audio.ts`, `media.ts` and `peer.ts` are the three adapters that
+name a browser API and contain no logic. Main is `apps/desktop/src/main/voice/`: `session.ts` is a
+`CoachingSessionPort` over the bridge, `electron-window.ts` is the only Electron import.
+`shell/silent-session.ts` is still there and is still the path with no API key — `main/index.ts`
+chooses between them on `voiceEnabled(config)`, and that one line is the entire difference.
+
+**2026-08-02 — `createRealtimeSession` connected with a placeholder track and discarded the remote
+one, and both failures are silent.** The scaffolded call passed `outbound: { id: 'outbound' }` and an
+empty `onRemoteTrack`, marked as waiting for step 7. Left alone, the session negotiates, the data
+channel opens, `session.update` is accepted, every event flows — and the model hears nothing while
+`PlaybackTracker.audibleMs()` stays zero, which also stops barge-in truncating. There is now a
+`media` field on `RealtimeSessionDeps`; it is optional because `FakeRealtimeTransport` ignores it,
+and it is **not** optional in production. If a live session ever appears to connect and then does
+nothing, check that first.
+
+**2026-08-02 — main allocates the turn id, and two allocators is a turn that silently never
+submits.** `TurnController.beginTurn` now takes an optional `turnId`. It has to: the id is the join
+key for the ledger and the coaching memory, `CoachingAgent.beginPlayerTurn` must return one
+*synchronously* (the overlay's ≤100 ms budget), and an id allocated in a renderer could only come
+back asynchronously. If the renderer allocated its own, `endTurn` would compare it against main's,
+find them different, `return` early — and the turn would end with no `response.create` and no error
+anywhere.
+
+**2026-08-02 — no `MonoMs` may cross the preload bridge.** Main and a renderer do not share a
+`performance.timeOrigin`, so a monotonic timestamp from one is meaningless to the other *and looks
+entirely plausible in a log* — it is off by however long that renderer took to start. So
+`ClientSecret` crosses as `expiresInMs` (a duration) and level frames carry no timestamp at all;
+main stamps them on receipt, which is the clock the overlay's ballistics already use.
+`voice-contract.test.ts` asserts this by walking the schema's field names, so a timestamp added
+later fails rather than being reviewed.
+
+**2026-08-02 — one telemetry signal has no protocol message and dies at the bridge.**
+`VoiceTelemetry.selfInterruption` is the AEC canary — the server reporting speech while our gate is
+shut means the model is hearing itself, which is the loop ADR-0001 chose Electron to avoid. It is
+counted in the renderer (`VoiceHost.selfInterruptions`) and goes no further, because
+`schemas/voice.ts` has no message for it. That is the first thing to add on the next protocol
+change, and until then voice-input §13's open question 1 — does Chromium's AEC survive the Web Audio
+graph? — cannot be answered from a running app.
+
+**2026-08-02 — level frames need an off switch, and it belongs at the sender.** Overlay §5.5 says
+they cross at 30 Hz *while the chip can show bars and not otherwise*, which has no producer unless
+something says which. `voice.level.enable` is that, and the drop happens in the renderer rather than
+in main so an idle Riki costs zero IPC messages rather than thirty a second that main discards.
+
 **2026-08-01 — Under WebRTC, half the things this skill lists are not on the default path.** The
 research note is written transport-agnostically and the repo docs inherited that. Concretely:
 resampling does not run at all (Chromium encodes Opus; the 48k↔24k code is the WebSocket path and

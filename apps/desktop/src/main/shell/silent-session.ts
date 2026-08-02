@@ -1,6 +1,12 @@
 /**
- * ⚠ **A `CoachingSessionPort` that never speaks.** This is the largest gap in the shell, and it is
- * structural rather than an omission.
+ * **A `CoachingSessionPort` that never speaks — now the no-key path rather than the only path.**
+ *
+ * `main/voice/session.ts` is the real one and `main/index.ts` chooses between them on whether
+ * `packages/config` found an API key. This is not dead code and is not a stand-in any more: ADR-0006
+ * makes "absent key, voice disabled, app boots and says so" a supported mode, and it is the mode
+ * every test, every fixture run and CI are in.
+ *
+ * The history below is kept because the reasoning is still why the seam is shaped this way.
  *
  * `RealtimeSession` and its transport do not run in main. ADR-0002 puts the peer connection in a
  * renderer and `voice-input-architecture.md` §2.2 is explicit about why — `getUserMedia`, Web
@@ -15,6 +21,8 @@
  *   injection and a lint rule stops anything but `packages/config` reading the environment, so
  *   there is no key to inject and no permitted way to obtain one (see `config.ts`).
  * - `packages/protocol`, for the messages that cross the preload bridge.
+ *
+ * *(Both of those have since landed — this file's remaining job is the keyless path.)*
  *
  * So this exists to make the shell's remaining seven eighths real. Everything upstream of speech —
  * GSI, fusion, detection, salience, the thirteen gates, the brief — runs against a live game and
@@ -59,6 +67,8 @@ export interface SilentSessionDeps {
 }
 
 export interface SilentSession extends CoachingSessionPort {
+  openMatch(preambleText: string): Promise<void>;
+  closeMatch(reason: string): Promise<void>;
   /** Every turn this port was handed, in order. The Tier 4 assertion for the whole coaching path. */
   readonly turns: readonly { readonly turn: SessionTurn; readonly reason: SpeakReason | null }[];
   dispose(): void;
@@ -103,6 +113,23 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
 
   return {
     turns,
+
+    /**
+     * There is no session to open, and that is the point.
+     *
+     * Present so `MatchScopedSession` has one shape and the shell needs no branch: everything
+     * upstream of speech is identical whether or not there is an API key, and a shell that had to
+     * ask which session it was holding would eventually ask in one place and forget in another.
+     */
+    openMatch(preambleText: string): Promise<void> {
+      void preambleText;
+      return Promise.resolve();
+    },
+
+    closeMatch(reason: string): Promise<void> {
+      void reason;
+      return Promise.resolve();
+    },
 
     speakUnprompted(turn: SessionTurn, reason: SpeakReason): Promise<void> {
       if (disposed) return Promise.resolve();

@@ -35,7 +35,7 @@ import { createCostMeter, MINI_RATES, DEFAULT_BUDGET_USD, type ModelRates } from
 import { parseLocalCommand } from './commands.js';
 import type { ServerEvent } from './wire.js';
 import type { RealtimeSessionConfig } from './session-config.js';
-import type { RealtimeTransport } from './transport.js';
+import type { RealtimeTransport, TransportMedia } from './transport.js';
 import type { TurnController } from './turn.js';
 import type { ContextWindowExecutor } from './window.js';
 import type { TranscriptStream } from './transcript.js';
@@ -85,6 +85,16 @@ export interface RealtimeSessionDeps {
   readonly playback: PlaybackPort;
   readonly clock: Clock;
   readonly telemetry: VoiceTelemetry;
+  /**
+   * The real media, from the voice window: `CaptureGraph.outbound` going out, and the remote track
+   * to hand `PlaybackTracker.attach`.
+   *
+   * Optional, and absent means a placeholder track and a discarded remote one — which is what
+   * every fixture-driven test wants, since `FakeRealtimeTransport` has no media at all. It is
+   * **not** optional in production, and the failure when it is missing is silent in both
+   * directions: nothing is sent, nothing is heard, and no error is raised by either side.
+   */
+  readonly media?: TransportMedia;
 }
 
 /**
@@ -330,13 +340,17 @@ export async function createRealtimeSession(
   const secret = await deps.credentials.acquire();
   sessionId = secret.sessionId;
 
-  await deps.transport.connect(secret, {
-    kind: 'track',
-    outbound: { id: 'outbound' },
-    onRemoteTrack: () => {
-      /* the voice window attaches the playback tracker */
+  await deps.transport.connect(
+    secret,
+    deps.media ?? {
+      kind: 'track',
+      outbound: { id: 'outbound' },
+      onRemoteTrack: () => {
+        // No media injected: a fixture-driven test, where `FakeRealtimeTransport` ignores this
+        // argument entirely. The voice window passes the real graph and attaches the tracker.
+      },
     },
-  });
+  );
 
   // Configure before anything else is sent: a session that receives audio before its format is
   // set interprets it with the default, which is the beta-schema failure by another route.
