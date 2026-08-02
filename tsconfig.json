@@ -15,6 +15,7 @@
     { "path": "packages/log-tail" },
     { "path": "packages/protocol" },
     { "path": "packages/realtime" },
+    { "path": "packages/realtime/test" },
     { "path": "packages/telemetry" },
     { "path": "packages/world-model" },
     { "path": "tools/atlas-build" },

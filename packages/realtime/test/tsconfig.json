@@ -1,0 +1,19 @@
+{
+  // The integration tests, as their own project.
+  //
+  // They need a tsconfig to claim them or ESLint's type-aware rules refuse to lint them with a
+  // "not found by the project service" parsing error that says nothing about the test. Claiming
+  // them from the package's own tsconfig instead is what broke the package's emit path — see the
+  // comment there. Same shape as the repo-level `test/` project.
+  //
+  // `outDir` stays under the package: a workspace package that compiles to a sibling directory
+  // stops resolving its own imports.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist/test",
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": ".." }]
+}

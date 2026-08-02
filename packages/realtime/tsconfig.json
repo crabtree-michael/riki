@@ -1,16 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
-  // `rootDir: "."` rather than `"src"`, and `test/**` in `include`, because this package has an
-  // integration-test directory. `vitest.workspace.ts` already globs
-  // `packages/*/test/**/*.test.ts`, but ESLint's type-aware rules refuse to lint a file that no
-  // tsconfig claims — so a test placed here fails `pnpm lint` with a "not found by the project
-  // service" parsing error that says nothing about the test. `dist/` is typecheck bookkeeping
-  // only; consumers import this package by `main: ./src/index.ts`, so the deeper output path is
-  // inert.
+  // `rootDir: "src"`, like every other package, so the emit is flat: `dist/index.js` is what
+  // `exports.default` promises and what Electron main actually loads (ADR-0025).
+  //
+  // This package is the only one with an integration-test directory outside `src/`, and an earlier
+  // version claimed it here with `rootDir: "."`. That silently moved the output to `dist/src/` —
+  // invisible to `tsc` and Vitest, which both read source through the `riki-source` condition, and
+  // an `ERR_MODULE_NOT_FOUND` the first time the app booted. `test/tsconfig.json` claims those
+  // files instead, which is the same split the repo-level `test/` project already uses.
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "references": [{ "path": "../audio" }]
 }
