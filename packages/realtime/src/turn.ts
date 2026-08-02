@@ -231,6 +231,14 @@ export function createTurnController(
 
     speakUnprompted(context) {
       // No capture, no gesture: the trigger policy already decided (dota2 §6.4).
+      //
+      // The id is reported even though nothing here allocates one. The session stamps every
+      // `turn.*` event with the last id it was told about, and it used to be told only by
+      // `beginTurn` — so a coaching turn's `responseStarted` and `responseEnded` went out under
+      // whichever push-to-talk turn happened to run last, or under the empty string. The
+      // composition root closes its ledger turn by matching that id, so every coaching turn closed
+      // one that was not open and left its own open for the rest of the match.
+      deps.onTurnId?.(context.turnId);
       if (context.snapshotText !== '') {
         deps.send({
           type: 'conversation.item.create',

@@ -157,6 +157,82 @@ describe('connect', () => {
   });
 });
 
+/**
+ * The proactive path — the one the product is actually about, and the one this file never covered.
+ *
+ * `speakUnprompted` is how every coaching turn reaches the model: no capture, no gesture (dota2
+ * §6.4). The composition root allocates the turn id itself (`agent/index.ts`'s `nextCoachTurnId`),
+ * hands it over, and then closes the ledger turn off `turn.responseEnded`.
+ */
+describe('an unprompted coaching turn', () => {
+  it('creates a response from the injected snapshot, with no capture', async () => {
+    const harness = await session();
+    await harness.session.turns.speakUnprompted(
+      { turnId: 'coach_1' as TurnId, snapshotText: 'they have no wards' },
+      { eventId: 'ward_window', salience: 0.7 },
+    );
+
+    expect(harness.isCaptureOpen()).toBe(false);
+    const types = harness.transport.sent().map((event) => event.type);
+    expect(types.indexOf('conversation.item.create')).toBeLessThan(
+      types.indexOf('response.create'),
+    );
+  });
+
+  /**
+   * The seam bug this test exists for.
+   *
+   * `currentTurn` — the id every `turn.*` event is stamped with — was only ever set by
+   * `beginTurn`, so an unprompted turn's `responseStarted`/`responseEnded` carried the *previous*
+   * push-to-talk id, or the empty string when there had never been one. `agent/index.ts` closes
+   * the ledger turn with `close(voice.turnId, 'spoke', …)` and tags `agent_said.topics` by
+   * matching it, so every coaching turn would close a turn that was not open, leave its own open
+   * forever, and record its transcript with no topics.
+   *
+   * Invisible until the real session is wired in: `agent.test.ts` drives a hand-written fake that
+   * echoes back the id it was given, which is precisely what the real one did not do.
+   */
+  it('stamps its own turn id on the events the agent closes the turn with', async () => {
+    const harness = await session();
+
+    // A push-to-talk turn first, so a stale `currentTurn` is available to be wrongly reused.
+    const spoken = harness.session.turns.beginTurn('push', harness.clock.now());
+    const done = harness.session.turns.endTurn(spoken, 'release', {
+      turnId: spoken,
+      snapshotText: 'gold 2400',
+    });
+    harness.expireGrace();
+    await done;
+    harness.transport.emit({ type: 'response.created', response_id: 'resp_1' as never });
+    harness.transport.emit({
+      type: 'response.done',
+      response_id: 'resp_1' as never,
+      usage: null,
+    });
+
+    await harness.session.turns.speakUnprompted(
+      { turnId: 'coach_1' as TurnId, snapshotText: 'they have no wards' },
+      { eventId: 'ward_window', salience: 0.7 },
+    );
+    harness.transport.emit({ type: 'response.created', response_id: 'resp_2' as never });
+    harness.transport.emit({
+      type: 'response.done',
+      response_id: 'resp_2' as never,
+      usage: null,
+    });
+
+    const coaching = harness.events.filter(
+      (event): event is Extract<VoiceEvent, { kind: 'turn' }> =>
+        event.kind === 'turn' && event.turnId === 'coach_1',
+    );
+    expect(coaching.map((event) => event.event)).toEqual([
+      'submitted',
+      'responseStarted',
+      'responseEnded',
+    ]);
+  });
+});
+
 describe('a push-to-talk turn', () => {
   it('opens capture on beginTurn and closes it on endTurn', async () => {
     const harness = await session();
