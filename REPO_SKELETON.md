@@ -520,7 +520,8 @@ RIKI_GSI_TOKEN=                 # generated per-install by tools/setup-gsi-cfg; 
 RIKI_DOTA_PATH=                 # auto-detected; override for non-standard Steam installs
 
 # --- Feature flags / degradation ---
-RIKI_VISION=on                  # on | off — off runs GSI-only (dota2 §9 fallback path)
+RIKI_VISION=off                 # on | off — off runs GSI-only (dota2 §9 fallback path).
+                                # Off until a platform capture backend exists (ADR-0030)
 RIKI_UNPROMPTED=off             # on | off — "only when I ask" mode, dota2 §6.4
 RIKI_CAPTIONS=off               # must default off, ui-design §9.3
 RIKI_LOG_LEVEL=info
@@ -530,7 +531,8 @@ RIKI_REPLAY_FIXTURE=            # path to a fixtures/gsi/*.jsonl to drive a dev 
 RIKI_FAKE_VISION=0              # 1 → FakeVisionSidecar instead of the Rust process
 ```
 
-Three rules:
+`.env.example` is the file, not this block: it has grown the audio, log-tail, privacy and
+hotkey variables since this was written, and each one is documented there. Three rules:
 
 1. **Secrets stay in `.env` and in one module.** `RIKI_OPENAI_API_KEY` is read by
    `packages/config` only, never hardcoded and never committed; a lint boundary, gitleaks, and a
@@ -552,7 +554,7 @@ One name per action, from the repo root. If a command is not here, it should be.
 |---|---|
 | `pnpm install` | Node deps. `cargo build` is invoked by the dev/build scripts. |
 | `pnpm setup` | Install deps, fetch LFS fixtures, generate protocol types, install hooks, create `.env` from `.env.example` if absent. **One command for a fresh clone.** |
-| `pnpm dev` | Launches the Electron app: `tsc --build`, copy the renderer's assets, `electron .`. **No Vite HMR and no `cargo watch` yet** — the renderer is three hand-written ES modules and the sidecar does nothing, so neither has earned a watcher. Reads no `.env`: `packages/config` is step 3, so settings come from `settings.json` under the app's data directory (`main/bootstrap.ts`). |
+| `pnpm dev` | Launches the Electron app: `tsc --build`, copy the renderer's assets, `electron .`. **No Vite HMR and no `cargo watch` yet** — the renderer is three hand-written ES modules and the sidecar does nothing, so neither has earned a watcher. Configuration is `packages/config`'s: CLI flags → `RIKI_*` → `.env` (searched upward from the working directory, so the repo root's is found) → `settings.json` under the app's data directory → defaults. |
 | `pnpm dev:replay` | `pnpm dev` with `FakeGsiSource` + `FakeVisionSidecar` driving a fixture. **No Dota and no API key required.** |
 | `pnpm test` | Vitest + `cargo test`. No game, no network, no GPU, no API key. |
 | `pnpm test:e2e` | Playwright against a built Electron app |
@@ -672,7 +674,7 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 |---|---|---|
 | 1 | Workspace root: pnpm + Cargo, tsconfig, ESLint, Prettier, rustfmt, clippy, lefthook, `pnpm check`, `check:skills`, CI | Everything. Nothing else should land before the gates exist. **Landed except `check:skills` (§13.7) and activating CI (§8.2)** — both still open. |
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work. **Landed for the sidecar boundary.** zod → JSON Schema → Rust is implemented in `scripts/codegen.mjs`, `crates/riki-ipc/src/generated/` is generated from it, and the Tier 3 corpus is `fixtures/protocol/` with a half in each language ([ADR-0029](docs/adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md)). The **main ↔ renderer** messages are still in `apps/desktop/src/shared` and have not moved here |
-| 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work |
+| 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work. **Landed.** `env.ts` is the whole environment surface and everything else in the package is pure, so which layer wins is a Tier 1 test. `RIKI_OPENAI_API_KEY` deliberately has no CLI flag and no `settings.json` row — see §7.1 |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay`. **Landed except `tools/gsi-replay`** — `packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour and tests, `FakeGsiSource` and the fixture corpus exist, but the replay tool and `pnpm dev:replay` still need the composition root (§8 of the state-capture architecture), which belongs to step 6 |
 | 5 | `packages/context` + `fixtures/golden/` | Snapshot and coaching-brief format iteration. **Landed**, including `src/coaching/` and `fixtures/golden/coaching/`. The command surface this step originally included was deleted by ADR-0023 |
 | 5b | `packages/events` + `apps/desktop/src/main/agent/` | Whether Riki speaks at all, and the wiring of events → context → realtime. **Landed** against `coaching-trigger-architecture.md`, which had to be written first — it was cited by four documents and had never been committed. Tuning (its §16 step 3) is open |

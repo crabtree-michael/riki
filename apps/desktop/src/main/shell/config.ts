@@ -1,111 +1,56 @@
 /**
- * ⚠ **A stand-in for `@riki/config`, and it must not outlive it.**
+ * The shell's configuration, which is `@riki/config`'s.
  *
- * REPO_SKELETON.md §10 step 3 — `packages/config`, layered resolution, and the API key — has not
- * landed: that package still exports `{}`. The shell needs a port number and a token before it can
- * bind a socket, so this is the smallest thing that lets step 6 be built and tested, and it is
- * deliberately missing the two features that make `@riki/config` worth having:
+ * This file used to be a stand-in with its own defaults, because REPO_SKELETON.md §10 step 3 had
+ * not landed and the shell needed a port and a token before it could bind a socket. Step 3 has
+ * landed, so what is left is the projection its header promised: a type alias and one adapter for
+ * tests. Nothing here declares a default, and nothing here reads the environment — the lint rule
+ * confining `process.env` to `packages/config` (§6.2) is what keeps `RIKI_OPENAI_API_KEY`
+ * traceable to one auditable file, and the shell now gets the key by injection like everything
+ * else.
  *
- * - **No `process.env`.** A lint rule confines `process.env` to `packages/config` (§6.2), and that
- *   rule is exactly right — it is what keeps `RIKI_OPENAI_API_KEY` traceable to one auditable
- *   file. So none of `.env.example`'s variables are readable from here, `RIKI_OPENAI_API_KEY`
- *   included, and this type has no field for a key. That is the single largest reason the voice
- *   path is not wired in this step; see `silent-session.ts`.
- * - **No layering and no validation.** Defaults, plus whatever the caller passes. `@riki/config`
- *   owns CLI flags → environment → user file → defaults, and owns failing at startup with the
- *   offending key named.
- *
- * When step 3 lands, `ShellConfig` becomes a projection of `RikiConfig` and this file's body goes
- * away. Everything downstream already takes it by injection, so that is a one-file change — which
- * is the only reason writing a temporary one is defensible at all.
+ * `RikiConfig` rather than a narrower projection: every field on it is a setting the composition
+ * root wires somewhere, and a second type listing a subset would be one more thing to update when
+ * a setting is added.
  */
 
-import { DEFAULT_GSI_PORT } from '@riki/gsi';
+import { resolveConfig } from '@riki/config';
+import type { ConfigLayer, RikiConfig } from '@riki/config';
+import type { ApiKey } from '@riki/realtime';
 
-export interface GsiConfig {
-  readonly port: number;
-  /**
-   * Per-install, generated on first run and written into Dota's cfg. Not a secret to share across
-   * machines, but never committed — and never logged: `packages/gsi`'s authenticator is careful
-   * not to echo it and nothing here should undo that.
-   */
-  readonly token: string;
-}
+export type { RikiConfig };
+export type ShellConfig = RikiConfig;
 
-export interface VisionConfig {
-  /**
-   * **Off by default, and that is not a placeholder value.** `crates/riki-vision`'s `main()` is an
-   * empty function: it spawns, exits immediately, and the supervisor backs off and gives up. On
-   * until the sidecar does something would mean every launch spends ten restarts discovering that.
-   */
-  readonly enabled: boolean;
-  /** Absolute path to the `riki-vision` binary. Resolved by the caller; unused while disabled. */
-  readonly binaryPath: string | null;
-}
+export { DEFAULTS, voiceEnabled } from '@riki/config';
 
-export interface LogTailConfig {
-  /** Dota's `console.log`. Null disables the source — the game writes it only with `-conclearlog`. */
-  readonly path: string | null;
-  readonly pollMs: number;
-}
-
-export interface HotkeyConfig {
-  /** ui-design.md §6.3. Electron accelerator syntax. */
-  readonly talk: string;
-}
-
-export interface ShellConfig {
-  readonly gsi: GsiConfig;
-  readonly vision: VisionConfig;
-  readonly logTail: LogTailConfig;
-  readonly hotkey: HotkeyConfig;
-  /** Directory for durable memory (ADR-0013). `app.getPath('userData')` in production. */
+export interface ResolveShellConfigInput {
   readonly dataDir: string;
-  /** dota2 §6.4's off switch, persisted. `RIKI_UNPROMPTED=off` is the same setting. */
-  readonly unprompted: boolean;
-}
-
-/** `.env.example`'s `RIKI_GSI_PORT`, and the port `tools/setup-gsi-cfg` will write into the cfg. */
-export const DEFAULTS: Omit<ShellConfig, 'gsi' | 'dataDir'> & {
-  readonly gsi: Omit<GsiConfig, 'token'>;
-} = {
-  gsi: { port: DEFAULT_GSI_PORT },
-  vision: { enabled: false, binaryPath: null },
-  logTail: { path: null, pollMs: 250 },
-  hotkey: { talk: 'Control+`' },
-  unprompted: true,
-};
-
-export interface ShellConfigOverrides {
-  readonly gsi?: Partial<GsiConfig>;
-  readonly vision?: Partial<VisionConfig>;
-  readonly logTail?: Partial<LogTailConfig>;
-  readonly hotkey?: Partial<HotkeyConfig>;
-  readonly unprompted?: boolean;
-}
-
-export interface ResolveShellConfigInput extends ShellConfigOverrides {
-  readonly dataDir: string;
-  /** The per-install GSI token. The caller generates and persists it; this file does no I/O. */
+  /** Generated per install and persisted by `bootstrap.ts`; this file does no I/O. */
   readonly gsiToken: string;
+  /**
+   * Merged layers, if any. In production `loadConfig` builds this from flags, the environment and
+   * `settings.json`; a test passes the two or three keys it cares about and gets the defaults for
+   * everything else.
+   */
+  readonly layer?: ConfigLayer;
+  /** Absent means voice is disabled, which is the mode every test runs in (ADR-0006). */
+  readonly apiKey?: ApiKey | null;
 }
 
+/**
+ * A `ShellConfig` from an explicit layer — the seam a test drives.
+ *
+ * Production goes through `@riki/config`'s `loadConfig`, which does the I/O and then calls the
+ * same `resolveConfig` this does. Both paths therefore share one set of defaults and one
+ * validator, which is the property the old stand-in could not have.
+ *
+ * @throws ConfigError naming every offending key.
+ */
 export function resolveShellConfig(input: ResolveShellConfigInput): ShellConfig {
-  return {
+  return resolveConfig({
+    layer: input.layer ?? {},
     dataDir: input.dataDir,
-    gsi: {
-      port: input.gsi?.port ?? DEFAULTS.gsi.port,
-      token: input.gsi?.token ?? input.gsiToken,
-    },
-    vision: {
-      enabled: input.vision?.enabled ?? DEFAULTS.vision.enabled,
-      binaryPath: input.vision?.binaryPath ?? DEFAULTS.vision.binaryPath,
-    },
-    logTail: {
-      path: input.logTail?.path ?? DEFAULTS.logTail.path,
-      pollMs: input.logTail?.pollMs ?? DEFAULTS.logTail.pollMs,
-    },
-    hotkey: { talk: input.hotkey?.talk ?? DEFAULTS.hotkey.talk },
-    unprompted: input.unprompted ?? DEFAULTS.unprompted,
-  };
+    gsiToken: input.gsiToken,
+    apiKey: input.apiKey ?? null,
+  });
 }

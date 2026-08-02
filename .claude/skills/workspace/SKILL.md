@@ -206,6 +206,28 @@ tests are reading source. If a *new Vitest project* is added without `resolve.co
 silently assert against the last build instead — which passes, and is wrong in a way no failure
 reveals.
 
+**2026-08-02 — `packages/realtime` emitted to `dist/src/`, and nothing could have noticed until a
+value was imported.** ADR-0025 has every package export three conditions per subpath, with
+`default` at `./dist/index.js` for Node. Nine of the ten packages set `rootDir: "src"` and emit
+exactly that. `packages/realtime` set `rootDir: "."` — deliberately, so its `test/` directory
+belonged to a project ESLint could lint — and therefore emitted `dist/src/index.js`. Its own
+tsconfig said the deeper path was "inert because consumers import `main: ./src/index.ts`", which
+was true only while every consumer imported **types**: `tsc` and Vitest read source, so the whole
+gate passes. The first runtime `import { ApiKey } from '@riki/realtime'` in Electron main is
+`ERR_MODULE_NOT_FOUND`.
+
+The fix is a second project (`packages/realtime/tsconfig.test.json`, the same shape
+`apps/desktop/tsconfig.test.json` already uses) so `rootDir` can be `"src"` like everywhere else. *Why:* the check that means
+anything is not `tsc` — it is `node -e "import('@riki/<name>')"` from `apps/desktop`, which is four
+seconds and the only thing that exercises the `default` condition. Run it for every package you add
+or whose tsconfig you touch:
+
+```sh
+cd apps/desktop && for p in config context events gsi log-tail protocol realtime world-model; do
+  node -e "import('@riki/$p').then(()=>console.log('OK  $p')).catch(e=>console.log('FAIL $p', e.message))"
+done
+```
+
 **2026-08-02 — `packages/protocol` is no longer a skeleton, and `zod` is its first dependency.**
 Until now no `packages/*` manifest had an external dependency at all, so nothing had exercised
 pnpm's strict `node_modules` from a workspace package. Two things follow: a root-level script

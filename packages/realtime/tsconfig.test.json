@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // The integration tests in `test/` (REPO_SKELETON.md §5.1 puts them there rather than beside the
+  // unit under test). They need a project of their own for one reason: ESLint's type-aware rules
+  // refuse to lint a file no tsconfig claims, and failing `pnpm lint` with "not found by the
+  // project service" says nothing at all about the test.
+  //
+  // `rootDir: "."` with the same `outDir` as the sibling project, which is the shape
+  // `apps/desktop/tsconfig.test.json` already uses: the two emit into disjoint halves of `dist/`
+  // (`dist/index.js` and `dist/test/**`), so nothing has to learn a second ignore path. Only `.`
+  // and `./testing` are in `exports`, so the compiled tests are unreachable from outside.
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["test/**/*.ts"],
+  "references": [{ "path": "./tsconfig.json" }, { "path": "../audio" }]
+}

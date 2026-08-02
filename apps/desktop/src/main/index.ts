@@ -37,7 +37,9 @@ import { createConsoleLogTailer, defaultMatchers } from '@riki/log-tail';
 import type { Clock as WorldClock } from '@riki/world-model';
 
 import type { Millis } from '../shared/overlay.js';
-import { loadOrCreateGsiToken, loadSettings, resolvePaths } from './bootstrap.js';
+import { loadConfig } from '@riki/config';
+
+import { loadOrCreateGsiToken, resolvePaths } from './bootstrap.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -46,7 +48,7 @@ import { createNodeChildProcessPort } from './sidecar/index.js';
 import { createElectronTray } from './tray/index.js';
 import { createElectronKeySource } from './trigger/index.js';
 import type { RikiShell, ShellConfig } from './shell/index.js';
-import { createRikiShell, resolveShellConfig } from './shell/index.js';
+import { createRikiShell } from './shell/index.js';
 
 /**
  * The one clock, in Electron's terms.
@@ -92,10 +94,17 @@ function buildShell(): RikiShell {
   const dataDir = app.getPath('userData');
   const paths = resolvePaths(appRoot);
 
-  const config: ShellConfig = resolveShellConfig({
+  // Layered, validated, and thrown from on the first bad key — which is why this is inside
+  // `buildShell` and therefore inside the `try` in `whenReady`. A `ConfigError` here reaches
+  // `fail()` and the app exits naming the variable, rather than half-booting with a broken
+  // setting and discovering it ten minutes into a game (REPO_SKELETON.md §7).
+  //
+  // `process.argv` and `process.cwd()` are Electron's: unrecognised switches are ignored, and the
+  // upward search for `.env` finds the repo root from `apps/desktop` in a dev run.
+  const config: ShellConfig = loadConfig({
     dataDir,
     gsiToken: loadOrCreateGsiToken(dataDir),
-    ...loadSettings(dataDir),
+    argv: process.argv.slice(1),
   });
 
   const clock = createElectronClock();

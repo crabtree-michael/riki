@@ -331,7 +331,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
     // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
     // unprompted speech off never hears a first trigger slip through on launch.
-    engine.setQuietMode(!config.unprompted);
+    engine.setQuietMode(!config.privacy.unprompted);
 
     const agent = createCoachingAgent({
       world: state.world,

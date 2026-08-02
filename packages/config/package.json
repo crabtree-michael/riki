@@ -15,5 +15,10 @@
   },
   "scripts": {
     "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@riki/gsi": "workspace:*",
+    "@riki/realtime": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

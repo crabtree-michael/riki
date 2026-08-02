@@ -1,30 +1,22 @@
 /**
- * The three things the shell needs that only a real machine can answer: where its data lives,
- * what its GSI token is, and where its files are.
+ * The two things the shell needs that only a real machine can answer: what its GSI token is, and
+ * where its files are.
  *
  * Separated from `index.ts` so that file stays what its header promises — lifecycle and nothing
  * else — and separated from `shell/config.ts` because that file does no I/O and this one is
  * entirely I/O.
  *
- * ⚠ Every function here moves into `packages/config` when REPO_SKELETON.md §10 step 3 lands. It is
- * that package's job: layered resolution, validation, and the environment. This does the subset
- * the shell cannot start without, and it does it **without reading `process.env`** — the lint rule
- * that reserves that for `packages/config` is what keeps `RIKI_OPENAI_API_KEY` traceable to one
- * auditable file, and working around it here to save a step would be the exact failure it exists
- * to prevent.
- *
- * The consequence is worth stating plainly: **none of `.env.example` is honoured yet.** A
- * developer who sets `RIKI_GSI_PORT` will find it ignored. The settings that exist live in
- * `settings.json` under the app's data directory instead, which is the "user config file" layer
- * `packages/config` will keep.
+ * **Configuration is no longer here.** `@riki/config` owns the layering, the validation and the
+ * environment, so `.env`, `settings.json`, `RIKI_*` and the CLI flags are all honoured now — the
+ * stand-in this file used to hold honoured none of them. What is left is the one input
+ * `packages/config` deliberately does not produce: the per-install GSI token, which is generated
+ * and persisted rather than configured.
  */
 
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ShellConfigOverrides } from './shell/config.js';
 
-export const SETTINGS_FILE = 'settings.json';
 export const GSI_TOKEN_FILE = 'gsi-token';
 
 /** 32 bytes of base64url. Long enough that guessing it is not the attack (`packages/gsi`'s §4.1). */
@@ -54,23 +46,6 @@ export function loadOrCreateGsiToken(dataDir: string): string {
   // it. `mode` is advisory on Windows and honoured on macOS, the primary target.
   writeFileSync(path, token, { mode: 0o600 });
   return token;
-}
-
-/**
- * `settings.json`, if there is one. Total: a missing or corrupt file is *no overrides*.
- *
- * Deliberately not validated beyond its shape. `@riki/config` owns "fail at startup with the
- * offending key named", and a half-validation here would be a second, weaker set of rules to
- * reconcile with that one later.
- */
-export function loadSettings(dataDir: string): ShellConfigOverrides {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(join(dataDir, SETTINGS_FILE), 'utf8'));
-  } catch {
-    return {};
-  }
-  return typeof raw === 'object' && raw !== null ? raw : {};
 }
 
 export interface ShellPaths {

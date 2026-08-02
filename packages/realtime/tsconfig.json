@@ -1,16 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
-  // `rootDir: "."` rather than `"src"`, and `test/**` in `include`, because this package has an
-  // integration-test directory. `vitest.workspace.ts` already globs
-  // `packages/*/test/**/*.test.ts`, but ESLint's type-aware rules refuse to lint a file that no
-  // tsconfig claims — so a test placed here fails `pnpm lint` with a "not found by the project
-  // service" parsing error that says nothing about the test. `dist/` is typecheck bookkeeping
-  // only; consumers import this package by `main: ./src/index.ts`, so the deeper output path is
-  // inert.
+  // `rootDir: "src"` and a flat `dist/`, exactly like the other nine packages — which is not
+  // cosmetic. Electron main resolves this package through `exports.default` (`./dist/index.js`,
+  // ADR-0025), and while `rootDir` was `"."` — to bring `test/` into a project ESLint could see —
+  // the emit landed at `dist/src/index.js` and every runtime import of a *value* from here failed
+  // with ERR_MODULE_NOT_FOUND. Nothing noticed for nine steps because main imported only types.
+  //
+  // `test/` now has its own project, `tsconfig.test.json`, which is what keeps ESLint's type-aware
+  // rules able to lint it without pulling it into this one's output.
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "references": [{ "path": "../audio" }]
 }

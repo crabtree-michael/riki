@@ -47,6 +47,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@riki/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@riki/context':
         specifier: workspace:*
         version: link:../../packages/context
@@ -78,7 +81,17 @@ importers:
 
   packages/audio: {}
 
-  packages/config: {}
+  packages/config:
+    dependencies:
+      '@riki/gsi':
+        specifier: workspace:*
+        version: link:../gsi
+      '@riki/realtime':
+        specifier: workspace:*
+        version: link:../realtime
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/context: {}
 

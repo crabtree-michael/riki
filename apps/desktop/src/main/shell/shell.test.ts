@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ConfigLayer } from '@riki/config';
 import type { Timers } from '@riki/context';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
@@ -182,7 +183,12 @@ interface Harness {
 
 let harness: Harness | null = null;
 
-function build(): Harness {
+/**
+ * @param layer The config layer, defaulting to "unprompted speech on" because almost every test
+ *   below exercises that path. The shipped default is the opposite and is asserted in "the privacy
+ *   default", which builds its own shell with `{}`.
+ */
+function build(layer: ConfigLayer = { 'privacy.unprompted': true }): Harness {
   const clock = testClock();
   const timers = testTimers();
   const window = createFakeWindow();
@@ -199,7 +205,7 @@ function build(): Harness {
   const session = createSilentSession({ clock: worldClock, timers });
 
   const shell = createRikiShell({
-    config: resolveShellConfig({ dataDir, gsiToken: 'test-token' }),
+    config: resolveShellConfig({ dataDir, gsiToken: 'test-token', layer }),
     clock,
     timers,
     platform: 'darwin',
@@ -265,8 +271,8 @@ function use(): Harness {
 }
 
 /** Every line of the fixture, then the microtasks the coaching path defers on. */
-async function replay(): Promise<void> {
-  const { gsi, clock } = use();
+async function replayInto(harnessed: Harness): Promise<void> {
+  const { gsi, clock } = harnessed;
   for (;;) {
     if (!gsi.step()) break;
     clock.advance(250);
@@ -275,7 +281,34 @@ async function replay(): Promise<void> {
   await Promise.resolve();
 }
 
+async function replay(): Promise<void> {
+  await replayInto(use());
+}
+
 // -------------------------------------------------------------------------------------------
+
+describe('the privacy default', () => {
+  it('says nothing unprompted, because RIKI_UNPROMPTED ships off', async () => {
+    // Not a unit test of `DEFAULTS` — `packages/config` has that. This is the end of the wire:
+    // the default reaches `EventEngine.setQuietMode` and the whole detected-and-gated pipeline
+    // still produces zero turns. The harness above turns it on precisely because it has to.
+    const quiet = build({});
+    try {
+      await quiet.shell.start();
+      await replayInto(quiet);
+
+      const counters = quiet.shell.match?.engine.counters();
+      expect(quiet.shell.match).not.toBeNull();
+      // Something *was* detected, so the zero below is quiet mode and not an inert pipeline.
+      expect(Object.values(counters?.detected ?? {}).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+      expect(counters?.spoken).toBe(0);
+      expect(quiet.session.turns).toHaveLength(0);
+    } finally {
+      await quiet.shell.stop();
+      rmSync(quiet.dataDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the shell starts', () => {
   it('warms the overlay window before anything can ask it to show', () => {

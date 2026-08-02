@@ -11,6 +11,7 @@
     "dev": "pnpm run typecheck && pnpm run assets && electron ."
   },
   "dependencies": {
+    "@riki/config": "workspace:*",
     "@riki/context": "workspace:*",
     "@riki/events": "workspace:*",
     "@riki/gsi": "workspace:*",
