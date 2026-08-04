@@ -231,12 +231,31 @@ export function parseClientSecret(body: string, now: MonoMs): ClientSecret {
   }
 
   const expiresAtSeconds = typeof root.expires_at === 'number' ? root.expires_at : null;
+
+  // Three shapes, newest first. GA nests the whole session object and carries the id as `id`;
+  // the two older spellings are kept because this response has moved twice now and a machine
+  // pinned to an older gateway is not worth a second outage.
+  //
+  // **An id that cannot be found must throw.** `packages/protocol` types `sessionId` as
+  // `z.string().min(1)`, so an empty one does not degrade — the renderer rejects the entire
+  // `voice.session.open` directive as unreadable, no session is ever created, and every later
+  // `voice.turn.speak` no-ops against an undefined session. That failure is invisible from main:
+  // the mint succeeds, the directive sends, and Riki simply never speaks for the whole match.
+  const session =
+    typeof root.session === 'object' && root.session !== null
+      ? (root.session as Record<string, unknown>)
+      : {};
   const sessionId =
-    typeof root.session_id === 'string'
-      ? root.session_id
-      : typeof nested.session_id === 'string'
-        ? nested.session_id
-        : '';
+    typeof session.id === 'string' && session.id !== ''
+      ? session.id
+      : typeof root.session_id === 'string' && root.session_id !== ''
+        ? root.session_id
+        : typeof nested.session_id === 'string' && nested.session_id !== ''
+          ? nested.session_id
+          : null;
+  if (sessionId === null) {
+    throw fault('offline', 'The client-secret response carried no session id.', true);
+  }
 
   return {
     value,

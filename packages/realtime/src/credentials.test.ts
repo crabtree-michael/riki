@@ -175,15 +175,42 @@ describe('parseClientSecret', () => {
   });
 
   it('accepts the nested shape the API has also used', () => {
-    expect(parseClientSecret('{"client_secret":{"value":"ek_2"}}', 0 as MonoMs).value).toBe('ek_2');
+    expect(
+      parseClientSecret('{"client_secret":{"value":"ek_2","session_id":"s2"}}', 0 as MonoMs).value,
+    ).toBe('ek_2');
+  });
+
+  // The GA shape, captured from a live mint on 2026-08-03. The id moved to `session.id`, and the
+  // empty-string fallback made the miss silent: `packages/protocol` requires `sessionId` to be
+  // non-empty, so the renderer rejected the whole `voice.session.open` directive and no session
+  // was ever created.
+  it('accepts the GA shape, where the id is nested under `session`', () => {
+    expect(
+      parseClientSecret(
+        '{"value":"ek_4","expires_at":1700,"session":{"id":"sess_abc","object":"realtime.session"}}',
+        0 as MonoMs,
+      ),
+    ).toEqual({ value: 'ek_4', expiresAt: 1_700_000, sessionId: 'sess_abc' });
   });
 
   it('falls back to a short expiry rather than assuming a long one', () => {
-    expect(parseClientSecret('{"value":"ek_3"}', 5_000 as MonoMs).expiresAt).toBe(65_000);
+    expect(parseClientSecret('{"value":"ek_3","session_id":"s3"}', 5_000 as MonoMs).expiresAt).toBe(
+      65_000,
+    );
   });
 
   it('rejects a response with no secret', () => {
     expect(() => parseClientSecret('{}', 0 as MonoMs)).toThrow();
     expect(() => parseClientSecret('not json', 0 as MonoMs)).toThrow();
+  });
+
+  // Loudly, and this is the point of the change: an empty `sessionId` satisfies this function's
+  // return type and then fails `packages/protocol`'s `min(1)` inside the renderer, where the only
+  // symptom is a Riki that never speaks. A throw here becomes a retryable fault on the chip.
+  it('rejects a response whose session id is missing rather than returning an empty one', () => {
+    expect(() => parseClientSecret('{"value":"ek_5"}', 0 as MonoMs)).toThrow(/no session id/);
+    expect(() => parseClientSecret('{"value":"ek_6","session":{}}', 0 as MonoMs)).toThrow(
+      /no session id/,
+    );
   });
 });
