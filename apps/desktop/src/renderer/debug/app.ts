@@ -23,6 +23,11 @@
  * focus back on the node that has it. It is the focus counterpart of what `scroll.ts` does for
  * position, and it is eight lines.
  *
+ * The restore is `focus({ preventScroll: true })`, because the two halves run in the same frame and
+ * the default would have the second undo the first: `focus()` scrolls its element into view inside
+ * the very column `scroll.ts` has just put back. A focused control is in the topmost panel, so the
+ * effect was a reader who moved one setting and then could not scroll down to watch it work.
+ *
  * ## Freeze is why this window is usable
  *
  * Frames arrive at 4 Hz and the interesting ones last one tick. Without a freeze, reading a gate
@@ -158,7 +163,13 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
 
     if (focusKey !== null) {
       const restored = root.querySelector(`[data-focus="${cssEscape(focusKey)}"]`);
-      if (restored instanceof HTMLElement) restored.focus();
+      // `preventScroll`, and it is load-bearing rather than tidy: `focus()` also scrolls the element
+      // into view inside its scrolling ancestor, which is the column `scroll.ts` has just finished
+      // restoring. Without it, touching a control and then scrolling down to read what it did to the
+      // gates or the world model is impossible — the control still holds focus, it sits in the first
+      // panel, and every frame scrolls it back into view. That is the same complaint ADR-0036 fixed,
+      // arriving by a different route: this half runs after the restore and overrides it.
+      if (restored instanceof HTMLElement) restored.focus({ preventScroll: true });
     }
   }
 

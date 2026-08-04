@@ -103,11 +103,19 @@ Focus is the subtler half — a redraw replaces the node the user is standing on
 control or holding a key down is impossible unless focus is restored by hand. Every actionable node
 carries a `data-focus` key and `draw()` re-focuses the matching node afterwards; it is eight lines.
 
-Two traps in those eight lines: `happy-dom` does **not** implement `CSS.escape`, so a naive
+Three traps in those eight lines. `happy-dom` does **not** implement `CSS.escape`, so a naive
 `querySelector` with a template key throws on the first redraw after a click and reads as a test
-failure with no defect behind it; and one delegated `click` listener on the root is worth writing
-rather than per-node listeners, which would otherwise be created and discarded four times a second
-for the life of the window.
+failure with no defect behind it. One delegated `click` listener on the root is worth writing rather
+than per-node listeners, which would otherwise be created and discarded four times a second for the
+life of the window. And restoring focus **must** pass `preventScroll: true` when anything else is
+managing the scroll position: `focus()` scrolls its element into view in the nearest scrolling
+ancestor, so a per-frame focus restore silently overrides a per-frame scroll restore that ran a line
+earlier, and the reader is dragged back to whatever they last clicked. `happy-dom` moves
+`document.activeElement` and scrolls nothing, so no Tier 1 test sees this unless it models the
+scroll the way `app.test.ts`'s `modelFocusScrolling` does.
+
+*Why:* it reproduces as "live updates reset my scroll position" — the complaint ADR-0036 already
+fixed — so the obvious first move is to go looking in `scroll.ts`, where nothing is wrong.
 
 **2026-08-02 — the overlay's preload script had never loaded, since the step that wrote it.**
 Electron loads a preload as **CommonJS**; `apps/desktop/package.json` is `"type": "module"` and

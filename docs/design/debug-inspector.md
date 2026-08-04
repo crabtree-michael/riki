@@ -105,7 +105,10 @@ column is still rebuilt whole — the property that keeps a stale node from surv
 untouched. The Controls panel's own buttons live *inside* a column and are therefore
 rebuilt, so `app.ts` restores keyboard focus by the `data-focus` key each of them carries — the
 focus counterpart of what `scroll.ts` does for position, and the reason tabbing to a stepper or
-holding `+` down works at all (§4.2).
+holding `+` down works at all (§4.2). That restore passes `preventScroll: true`, because otherwise
+the two halves fight: `focus()` scrolls its element into view inside the column `scroll.ts` has just
+restored, and a focused control is in the topmost panel. Moving a setting and then scrolling down to
+watch it work was the reported bug, and it looked exactly like the one above.
 
 **Position is content, not a number.** The panels that grow render newest-first, so a new tick is
 prepended and every pixel offset below it is wrong the moment it lands. `renderer/debug/scroll.ts`

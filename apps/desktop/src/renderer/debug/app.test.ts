@@ -183,6 +183,51 @@ function fakeBridge(): FakeBridge {
   };
 }
 
+/** Crude geometry for the focus model below, in the same spirit as `scroll.test.ts`'s. */
+const ROW_PX = 100;
+const VIEWPORT_PX = 300;
+
+/**
+ * Models the half of `HTMLElement.focus()` that `happy-dom` leaves out: Chromium also scrolls the
+ * focused element into view, inside its nearest scrollable ancestor — here, a `.ins-column`.
+ *
+ * `happy-dom` moves `document.activeElement` and stops, so a redraw that yanks the column back to a
+ * focused control is invisible to every other test in this file. The modelled position is the
+ * element's place among the column's focusable nodes at `ROW_PX` each, which is crude in the way
+ * `scroll.test.ts`'s row heights are crude and for the same reason: the arithmetic is not the point,
+ * the movement is. `preventScroll` is honoured, because that is what the fix turns on.
+ *
+ * Returns the undo, which the caller owes the rest of the suite — this patches a prototype.
+ */
+function modelFocusScrolling(): () => void {
+  // Off the descriptor rather than off `HTMLElement.prototype.focus`, which is a method reference
+  // separated from its object and rightly refused by `@typescript-eslint/unbound-method`. It is
+  // called with an explicit receiver below, which is the thing that rule exists to make you prove.
+  const own: unknown = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'focus')?.value;
+  if (typeof own !== 'function') throw new Error('no HTMLElement.prototype.focus to model');
+  const native = own as (this: HTMLElement, options?: FocusOptions) => void;
+
+  HTMLElement.prototype.focus = function patched(this: HTMLElement, options?: FocusOptions): void {
+    native.call(this, options);
+    if (options?.preventScroll === true) return;
+
+    const column = this.closest('.ins-column');
+    if (!(column instanceof HTMLElement)) return;
+    const focusable = Array.from(column.querySelectorAll<HTMLElement>('[data-focus]'));
+    const index = focusable.indexOf(this);
+    if (index === -1) return;
+
+    const top = index * ROW_PX;
+    if (top < column.scrollTop) column.scrollTop = top;
+    else if (top + ROW_PX > column.scrollTop + VIEWPORT_PX) {
+      column.scrollTop = top + ROW_PX - VIEWPORT_PX;
+    }
+  };
+  return () => {
+    HTMLElement.prototype.focus = native;
+  };
+}
+
 let root: HTMLElement;
 
 beforeEach(() => {
@@ -746,6 +791,34 @@ describe('the Controls panel (ADR-0037)', () => {
     // Without this, holding down `+` while the pump ticks moves focus to the document body four
     // times a second, and the panel is unusable from a keyboard.
     expect(document.activeElement).toBe(button('trigger.speakThreshold:up'));
+  });
+
+  it('does not drag the column back to the focused control on every frame', () => {
+    const restore = modelFocusScrolling();
+    try {
+      const view = mountInspector(root, fakeBridge());
+      const controls = [control()];
+      view.apply(frame({ controls }));
+
+      const state = root.querySelector<HTMLElement>('.ins-column');
+      expect(state).not.toBeNull();
+      if (state === null) return;
+
+      // Touch a control, then go and read what it did to the gates and the world model — which are
+      // panels below Controls in the same scrolling column.
+      button('trigger.speakThreshold:up').click();
+      button('trigger.speakThreshold:up').focus();
+      state.scrollTop = 600;
+
+      view.apply(frame({ revision: 2, controls }));
+
+      // `scroll.ts` puts the reader back and then focus restoration takes them away again: the
+      // control that still holds focus is in the first panel, so scrolling it into view is
+      // scrolling to the top. At 4 Hz the column cannot be scrolled away from that control at all.
+      expect(state.scrollTop).toBe(600);
+    } finally {
+      restore();
+    }
   });
 
   it('says so when there is no control port behind the panel', () => {
