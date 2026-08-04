@@ -51,6 +51,7 @@ import type { Timers } from '@riki/context';
 
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugHub, DebugSurface, DebugWindow, DebugWindowFactory } from './contracts.js';
+import type { DebugActionPort } from './actions.js';
 import type { DebugControlPort } from './controls.js';
 import type { DebugRehearsalPort } from './rehearsal.js';
 import { createDebugHub } from './hub.js';
@@ -66,6 +67,10 @@ export type { DebugTelemetryDeps } from './telemetry.js';
 export { projectCounters, projectWorld, renderValue } from './projections.js';
 export type { WorldProjectionDeps } from './projections.js';
 export { createDebugControls } from './controls.js';
+export { createDebugActions } from './actions.js';
+export type { DebugActionDeps, DebugActionOutcome, DebugActionPort } from './actions.js';
+export { stackWindowScript, runMatchScenario } from './scenarios.js';
+export type { MatchScenarioDeps, ScenarioFrame } from './scenarios.js';
 export type {
   CoachModeControl,
   DebugControlOutcome,
@@ -126,6 +131,13 @@ export interface DebugSurfaceDeps {
    * packaged build or in a test that only drives the hub.
    */
   readonly rehearsal?: DebugRehearsalPort;
+  /**
+   * Absent means **display but do not run** — every `action` intent is refused and recorded.
+   *
+   * Optional for the reason `controls` is: a headless replay wants frames, and a shell built before
+   * ADR-0039 compiles unchanged.
+   */
+  readonly actions?: DebugActionPort;
 }
 
 /**
@@ -228,6 +240,24 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     );
   }
 
+  /**
+   * Start a scenario, and answer in the same frame.
+   *
+   * The same argument `applyControl` makes about latency, one step stronger: a scenario takes
+   * seconds, so the only immediate feedback is the row turning to `running` — and a click that
+   * produced no visible change for a quarter of a second is one somebody clicks twice.
+   */
+  function runAction(id: string): void {
+    const outcome = deps.actions?.run(id) ?? {
+      ok: false,
+      reason: 'this inspector has no action port',
+    };
+    if (!outcome.ok) {
+      hub.recordProblem('inspector', `${id}: ${outcome.reason ?? 'refused'}`, deps.now());
+    }
+    sendFrame();
+  }
+
   const stopIntent = window.onIntent((intent) => {
     // The window remounting after a crash: answer immediately rather than making it wait out the
     // interval on an empty document.
@@ -237,6 +267,11 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     if (intent.kind === 'rehearse') rehearse(intent.stateId);
     if (intent.kind === 'reset-controls') {
       deps.controls?.reset();
+      sendFrame();
+    }
+    if (intent.kind === 'action') runAction(intent.id);
+    if (intent.kind === 'clear-trace') {
+      hub.clearTrace();
       sendFrame();
     }
   });
@@ -249,6 +284,7 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     hub,
     controls: deps.controls ?? null,
     rehearsal: deps.rehearsal ?? null,
+    actions: deps.actions ?? null,
 
     async open(): Promise<void> {
       if (disposed) return;

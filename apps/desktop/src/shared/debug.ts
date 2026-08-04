@@ -80,6 +80,16 @@ export interface DebugFrame {
    * value is worse than no control.
    */
   readonly controls: readonly DebugControl[];
+  /** Every scenario the window may run — see `DebugAction` (ADR-0039). */
+  readonly actions: readonly DebugAction[];
+  /**
+   * The coaching chain in order, newest last. Capped; see `DEBUG_LIMITS`.
+   *
+   * The one panel that is a *sequence* rather than a state. Every other panel answers "what is true
+   * now", and the failure that motivated ADR-0038 was invisible to all of them because the question
+   * worth asking was "what happened, in order, and where did it stop".
+   */
+  readonly trace: readonly DebugTraceStep[];
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -489,6 +499,60 @@ export interface DebugMockState {
 }
 
 // -----------------------------------------------------------------------------------------------
+// Actions and the trace — what the window may run, and what it produced (ADR-0039)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * One runnable scenario.
+ *
+ * Deliberately not a `DebugControl` with a `kind: 'action'`. A control describes a *value* — it has
+ * a `base`, an `overridden`, a range — and every one of those fields would be null here, which is
+ * the shape of a union pretending to be a record. More to the point they are different privileges:
+ * ADR-0037 admitted settings and refused actions in the same breath, so an action arriving through
+ * the control registry would make that distinction unreadable at exactly the boundary that enforces
+ * it.
+ */
+export interface DebugAction {
+  /** Stable: `scenario.match`, `scenario.speak`. */
+  readonly id: string;
+  readonly group: string;
+  readonly label: string;
+  /** What it will do, and what it costs — `scenario.speak` spends an API call per press. */
+  readonly note: string;
+  /**
+   * True while a run is in flight. The renderer draws the row disabled.
+   *
+   * Main refuses a second run of the same id anyway; this is so the window says why rather than
+   * appearing to ignore the click.
+   */
+  readonly running: boolean;
+  /** How the last run ended, or null if it has not been run. Cleared when a new run starts. */
+  readonly lastOutcome: string | null;
+}
+
+/**
+ * One step of the coaching chain.
+ *
+ * `stage` is a coarse bucket the renderer colours by; `message` is the line. Both are built in main
+ * — the renderer formats nothing, for the same reason the panels never infer.
+ */
+export interface DebugTraceStep {
+  readonly at: DebugMillis;
+  /** Monotonic within the app's run, so the renderer can key rows without comparing timestamps. */
+  readonly seq: number;
+  /** `detect` | `salience` | `gates` | `coach` | `session` | `renderer` | `scenario` | `fault`. */
+  readonly stage: string;
+  readonly message: string;
+  /**
+   * Milliseconds since the run that produced this step began, or null outside a run.
+   *
+   * A wall-clock time answers "when"; this answers "how long after the trigger", which is the
+   * question a chain that stalls actually poses.
+   */
+  readonly sinceRunMs: DebugMillis | null;
+}
+
+// -----------------------------------------------------------------------------------------------
 // The bridge
 // -----------------------------------------------------------------------------------------------
 
@@ -506,6 +570,14 @@ export const DEBUG_LIMITS = {
   /** How many mock states a frame carries. A dropdown is not a file browser. */
   mockStates: 64,
   mockIdChars: 64,
+  /**
+   * Trace steps kept (ADR-0038).
+   *
+   * A single `scenario.match` run produces roughly a dozen; 200 is several runs plus whatever the
+   * live app contributed between them, and it is a ring buffer rather than a log — the point is the
+   * last thing that happened, not the session's history.
+   */
+  trace: 200,
 } as const;
 
 /** How often main pushes a frame while the window is open. 4 Hz reads as live and costs nothing. */
@@ -542,7 +614,17 @@ export type DebugIntent =
    * world, a scratch coach and a scratch context, none of which the live match can see, and no
    * session turn at any point. It cannot make Riki speak.
    */
-  | { readonly kind: 'rehearse'; readonly stateId: string };
+  | { readonly kind: 'rehearse'; readonly stateId: string }
+  /**
+   * Run one scenario, by id (ADR-0039).
+   *
+   * Checked in the same two places and for the same two different questions as `control`: preload
+   * asks whether this is *shaped* like an action intent, main asks whether the id is a registered
+   * action that is not already running.
+   */
+  | { readonly kind: 'action'; readonly id: string }
+  /** Drop the trace ring buffer, so the next run reads from an empty panel. */
+  | { readonly kind: 'clear-trace' };
 
 /**
  * The inspector renderer's entire view of the outside world, as `window.rikiDebug`.
@@ -552,6 +634,10 @@ export type DebugIntent =
  * `packages/events/src/config.ts` visible and left "so what happens if I move this" as a rebuild.
  * The answer is a fourth member, `control`, and the property that replaces read-only-by-construction
  * is narrower and enforced in three places rather than assumed:
+ *
+ * ADR-0039 adds `action` and `clear-trace`. `scenario.match` drives the real chain by posting GSI
+ * frames at our own server, and `scenario.speak` reaches the session port — which is the one thing
+ * ADR-0038 refused, and is reversed there with the reasoning.
  *
  * ADR-0038 adds a fifth, `rehearse`, and it is the first that is an *action*. It does not widen the
  * paragraph below, because a rehearsal reaches none of the objects the live match uses: it builds a

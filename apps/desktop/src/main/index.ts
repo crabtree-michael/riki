@@ -54,6 +54,7 @@ import {
   createMockStateLibrary,
   nodeMockStateFiles,
 } from './debug/index.js';
+import type { DebugHub } from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -62,6 +63,7 @@ import { createNodeChildProcessPort } from './sidecar/index.js';
 import { createElectronTray } from './tray/index.js';
 import { createElectronKeySource } from './trigger/index.js';
 import { createElectronVoiceWindowFactory, createVoiceSession } from './voice/index.js';
+import type { VoiceSessionTelemetry } from './voice/index.js';
 import type { MatchScopedSession } from './shell/index.js';
 import type { RikiShell, ShellConfig } from './shell/index.js';
 import { createRikiShell } from './shell/index.js';
@@ -130,6 +132,7 @@ function buildShell(): RikiShell {
 
   const clock = createElectronClock();
   const apiKey = config.openai.apiKey;
+  const voiceTrace = createVoiceTrace();
 
   /**
    * The one line that decides whether Riki speaks.
@@ -155,21 +158,16 @@ function buildShell(): RikiShell {
         // Node 22's global. Narrowed to `FetchLike` by the port, so `packages/realtime` still
         // names no vendor and is still testable with a stub.
         fetch: (url, init) => fetch(url, init),
-        // ⚠ Every one of these is a no-op, and it is the largest remaining gap in this path.
-        // `packages/telemetry` still exports `{}` and `console.*` is confined to it — so a failed
-        // mint, a bridge decode error and a self-interruption all happen silently in a release
-        // build. The *events* reach the chip; the counters reach nothing. One object literal once
-        // that package exists.
-        telemetry: {
-          speaking: () => undefined,
-          fault: () => undefined,
-          state: () => undefined,
-          bridgeProblem: () => undefined,
-        },
+        // Forwarded into the inspector's trace when there is one, dropped when there is not
+        // (ADR-0038). Until `packages/telemetry` lands this is the only place a session fault is
+        // visible at all — these four were no-ops until 2026-08-04, which is why a mint that
+        // returned an unusable session id cost a day to find: main sent the directive, the renderer
+        // rejected it as unreadable, and nothing anywhere said so.
+        telemetry: voiceTrace.sink,
       })
     : undefined;
 
-  return createRikiShell({
+  const shell = createRikiShell({
     config,
     ...(session === undefined ? {} : { session }),
     clock,
@@ -260,6 +258,60 @@ function buildShell(): RikiShell {
     // which is what a packaged build gets.
     mockStates: createMockStateLibrary({ files: nodeMockStateFiles(paths.mockStates) }),
   });
+
+  // After construction, because the hub is the shell's and the session is built before it. Null
+  // with the flag off, which puts the sink back to dropping everything.
+  voiceTrace.attach(shell.debug?.hub ?? null);
+  return shell;
+}
+
+/**
+ * The voice session's telemetry, pointed at the inspector's hub once there is one (ADR-0038).
+ *
+ * Late-bound because of a construction order that is not worth inverting: `createVoiceSession` needs
+ * its telemetry at construction, the hub belongs to the shell, and the shell needs the session. A
+ * mutable sink is the small half of that knot — everything it forwards is a string, and with no hub
+ * attached it is exactly the four no-ops it replaced.
+ */
+function createVoiceTrace(): {
+  readonly sink: VoiceSessionTelemetry;
+  attach(hub: DebugHub | null): void;
+} {
+  let hub: DebugHub | null = null;
+  let now = (): number => 0;
+
+  const record = (stage: string, message: string): void => {
+    hub?.recordTrace(stage, message, now());
+  };
+
+  return {
+    sink: {
+      speaking: (turnId, reason, chars) => {
+        record(
+          'session',
+          reason === null
+            ? `turn ${turnId} closed, ${String(chars)} chars`
+            : `speakUnprompted ${turnId} sent — ${reason.eventId} at salience ${reason.salience.toFixed(3)}, ${String(chars)} chars`,
+        );
+      },
+      // The line that would have named the bug on 2026-08-04's first run.
+      fault: (kind, message) => {
+        record('fault', `voice ${kind}: ${message}`);
+        hub?.recordProblem('renderer', `voice ${kind}: ${message}`, now());
+      },
+      state: (next) => {
+        record('session', `session state → ${next}`);
+      },
+      bridgeProblem: (detail) => {
+        record('fault', `voice bridge: ${detail}`);
+        hub?.recordProblem('renderer', `voice bridge: ${detail}`, now());
+      },
+    },
+    attach(next: DebugHub | null): void {
+      hub = next;
+      now = () => Date.now();
+    },
+  };
 }
 
 /** What the data directory and the tray tooltip are named after. Not the npm package name. */

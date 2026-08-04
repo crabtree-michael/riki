@@ -30,6 +30,7 @@ import type {
   DebugFrame,
   DebugProblem,
   DebugTick,
+  DebugTraceStep,
   DebugTurn,
 } from '../../shared/debug.js';
 import { DEBUG_LIMITS } from '../../shared/debug.js';
@@ -43,6 +44,13 @@ import type {
 
 /** How long a window the version-rate estimate covers. Short enough to react, long enough to settle. */
 const RATE_WINDOW_MS = 3_000;
+
+/**
+ * A trace line is one sentence. Longer than this is a payload, and a payload belongs in a turn.
+ *
+ * Clipped rather than refused so a message that grows a field later still shows what it can.
+ */
+const TRACE_MESSAGE_CHARS = 240;
 
 const EMPTY_BUS: DebugBus = { depth: 0, dropped: [], gaps: [] };
 
@@ -69,6 +77,12 @@ export function createDebugHub(): DebugHub {
   const ticks: DebugTick[] = [];
   const turns: DebugTurn[] = [];
   const problems: DebugProblem[] = [];
+  /** ADR-0039. Survives `resetMatch` — a scenario that ends the match must not erase its own trace. */
+  const trace: DebugTraceStep[] = [];
+
+  let traceSeq = 0;
+  /** Non-null while a scenario run is in flight; every step in it carries `sinceRunMs`. */
+  let traceRunStartedAt: number | null = null;
 
   let tickSeq = 0;
   let revision = 0;
@@ -196,6 +210,8 @@ export function createDebugHub(): DebugHub {
         // and a threshold that silently snapped back to the config at the horn would be the most
         // confusing thing this window could do to somebody halfway through measuring something.
         controls: sources.controls?.() ?? [],
+        actions: sources.actions?.() ?? [],
+        trace: [...trace],
       };
     },
 
@@ -309,6 +325,29 @@ export function createDebugHub(): DebugHub {
 
     recordEmptyBrief(): void {
       emptyBriefs += 1;
+    },
+
+    recordTrace(stage: string, message: string, at: number): void {
+      traceSeq += 1;
+      push(
+        trace,
+        {
+          at,
+          seq: traceSeq,
+          stage,
+          message: clip(message, TRACE_MESSAGE_CHARS),
+          sinceRunMs: traceRunStartedAt === null ? null : at - traceRunStartedAt,
+        },
+        DEBUG_LIMITS.trace,
+      );
+    },
+
+    markTraceRun(startedAt: number | null): void {
+      traceRunStartedAt = startedAt;
+    },
+
+    clearTrace(): void {
+      trace.length = 0;
     },
 
     observe(next: DebugSources): void {

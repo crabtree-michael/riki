@@ -62,7 +62,7 @@
 
 import type { CoachModel, CoachTelemetry, LlmCoachConfig } from '@riki/coach';
 import { createLlmCoach, withCoachConfig } from '@riki/coach';
-import type { MatchId, RikiContext, Timers } from '@riki/context';
+import type { MatchId, RikiContext, Timers, TurnId } from '@riki/context';
 import {
   createContextAssembler,
   createPlayerMemoryStore,
@@ -92,19 +92,23 @@ import {
 } from '../agent/index.js';
 import { createVoiceBridge } from '../adapters/voice.js';
 import type {
+  DebugActionPort,
   DebugControls,
   DebugRehearsalPort,
   DebugSessionInput,
   DebugSurface,
+  DebugTickInput,
   DebugWindowFactory,
   MockStateLibrary,
   RehearsalStack,
 } from '../debug/index.js';
 import {
+  createDebugActions,
   createDebugControls,
   createDebugHub,
   createDebugRehearsal,
   createDebugSurface,
+  runMatchScenario,
   createObservingPolicy,
   observeContext,
   projectCounters,
@@ -253,6 +257,14 @@ export interface MatchRuntime {
   readonly driver: CoachDriver;
   readonly agent: CoachingAgent;
   /**
+   * The match's event tape, shared by the engine and the narrator.
+   *
+   * Exposed for `scenario.speak` (ADR-0039), which narrates the current world the way the LLM coach
+   * does. Per-match like everything else here — a tape that outlived its match would narrate the
+   * previous one's events into the next one's first turn.
+   */
+  readonly tape: EventTape;
+  /**
    * Replace the coach in place. Driven by `RikiShell.setCoachMode`, never called directly.
    *
    * On the runtime rather than on the shell because the two objects own different halves of the
@@ -377,6 +389,119 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           stack: buildRehearsalStack,
         });
 
+  /** Every trace line goes through here, so `debug.enabled` off costs one null check (ADR-0039). */
+  function trace(stage: string, message: string): void {
+    debugHub?.recordTrace(stage, message, clock.now());
+  }
+
+  /**
+   * One tick, as the three trace lines it is worth (ADR-0039).
+   *
+   * Only ticks that produced a candidate, and only the winner's arithmetic. A match spends most of
+   * its time producing empty ticks at 2–8 Hz, and tracing those would push the interesting six lines
+   * out of a 200-row ring buffer within a minute — the Triggers panel already shows every tick, and
+   * this panel exists to show a *sequence* somebody can read.
+   */
+  function traceTick(tick: DebugTickInput): void {
+    if (debugHub === null) return;
+    const winner = tick.candidates.find((candidate) => candidate.rank === 'winner');
+    if (winner === undefined) return;
+
+    trace(
+      'detect',
+      `${winner.kind} — ${winner.text} (mag ${winner.magnitude.toFixed(2)}, conf ${winner.confidence.toFixed(2)})`,
+    );
+    trace(
+      'salience',
+      `${winner.salience.toFixed(3)} against threshold ${tick.gates.speakThreshold.toFixed(3)}`,
+    );
+
+    if (tick.decision.speak) {
+      trace('gates', `all passed — speaking on ${tick.decision.key}`);
+      return;
+    }
+    trace('gates', `refused: ${tick.decision.reason}`);
+  }
+
+  /**
+   * The scenarios the inspector may run (ADR-0039), or null when there is no inspector.
+   *
+   * Both seams are asked for their availability on every frame, so the panel says *why* a row cannot
+   * run rather than rendering a button that does nothing.
+   */
+  const debugActions: DebugActionPort | null =
+    debugHub === null
+      ? null
+      : createDebugActions({
+          match: {
+            unavailable: () =>
+              config.gsi.token === ''
+                ? 'no GSI token — the server would refuse the scenario'
+                : null,
+            run: () =>
+              runMatchScenario({
+                post: postScenarioFrame,
+                sleep: (ms) =>
+                  new Promise<void>((resolve) => {
+                    timers.after(ms, resolve);
+                  }),
+                trace,
+              }),
+          },
+          speak: {
+            unavailable: () => (match === null ? 'no coaching root — start a match first' : null),
+            run: () => speakCurrentSnapshot(),
+          },
+          trace,
+          markRun: (startedAt) => {
+            debugHub.markTraceRun(startedAt);
+          },
+          now: () => clock.now(),
+        });
+
+  /**
+   * One scenario frame, posted at our own GSI server exactly as Dota 2 would.
+   *
+   * `scenarios.ts`'s header says why this is a POST rather than a shortcut into the bus. `fetch` is
+   * Node 22's global; it is reached directly rather than injected because this function exists only
+   * under `config.debug.enabled` and the seam it would add would be untestable in the same breath.
+   */
+  async function postScenarioFrame(body: Record<string, unknown>): Promise<number> {
+    const response = await fetch(`http://127.0.0.1:${String(config.gsi.port)}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, auth: { token: config.gsi.token } }),
+    });
+    return response.status;
+  }
+
+  /**
+   * `scenario.speak` — the current snapshot, straight to the session port.
+   *
+   * The narrator rather than `context.openTurn`, deliberately: this must not append to the ledger or
+   * spend the conversation window, because a debug button that changed what the model remembers
+   * would make the next real turn different for having pressed it.
+   */
+  let scenarioTurns = 0;
+  async function speakCurrentSnapshot(): Promise<void> {
+    const live = match;
+    if (live === null) throw new Error('no coaching root');
+
+    scenarioTurns += 1;
+    const turnId = `scenario_${String(scenarioTurns)}` as TurnId;
+    const text = createSnapshotNarrator({
+      world: toContextReader(state.world, { staleness }),
+      tape: toEventTapeReader(live.tape),
+    }).narrate(worldClock.now());
+
+    trace('coach', `scenario turn ${turnId}, ${String(text.length)} chars of snapshot`);
+    await session.speakUnprompted(
+      { turnId, snapshotText: text },
+      { eventId: 'scenario.speak', salience: 1 },
+    );
+    trace('session', `speakUnprompted handed over for ${turnId}`);
+  }
+
   const debug: DebugSurface | null =
     debugHub === null
       ? null
@@ -385,6 +510,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
           ...(debugControls === null ? {} : { controls: debugControls }),
           ...(debugRehearsal === null ? {} : { rehearsal: debugRehearsal }),
+          ...(debugActions === null ? {} : { actions: debugActions }),
           timers,
           now: () => clock.now(),
         });
@@ -676,6 +802,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
               worldVersion: () => world.version,
               report: (tick) => {
                 debug.hub.recordTick(tick);
+                traceTick(tick);
               },
             }),
     });
@@ -794,6 +921,10 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
             clock: () => state.world.snapshot(worldClock.now()).clock,
             onOpened: (turn) => {
               debug.hub.recordTurnOpened(turn);
+              trace(
+                'coach',
+                `turn ${turn.turnId} opened — ${turn.cause}, ${String(turn.snapshotText.length)} chars of snapshot`,
+              );
             },
             onClosed: (turnId, outcome) => {
               debug.hub.recordTurnClosed(turnId, outcome);
@@ -855,6 +986,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     match = {
       matchId: matchId as MatchId,
       context,
+      tape,
       get driver(): CoachDriver {
         return driver;
       },

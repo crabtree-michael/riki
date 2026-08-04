@@ -68,6 +68,7 @@ import { captureScroll, restoreScroll } from './scroll.js';
 import {
   DEFAULT_VIEW_OPTIONS,
   el,
+  renderActions,
   renderControls,
   renderCounters,
   renderDerived,
@@ -76,6 +77,7 @@ import {
   renderHeader,
   renderProblems,
   renderRehearsal,
+  renderTrace,
   renderTicks,
   renderTurns,
   renderWorld,
@@ -148,10 +150,12 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
     drawHeader(frame);
 
     fill(stateColumn, [
-      // First, above everything: it is the only panel that *acts*, and what it produces lands two
-      // columns over. Below it, Controls — a rehearsal is run against whatever that panel currently
-      // says, so the reading order is the causal one (ADR-0038, then ADR-0037).
+      // First, above everything: the two panels that *act*, and what they produce lands
+      // two columns over and in the Trace. Below them, Controls — a rehearsal and a
+      // scenario both run against whatever that panel currently says, so the reading order
+      // is the causal one (ADR-0038 and ADR-0039, then ADR-0037).
       renderRehearsal(frame.mocks, options),
+      renderActions(frame.actions),
       renderControls(frame.controls, options),
       renderGates(frame.session.gates, frame.at),
       renderWorld(frame.world),
@@ -162,6 +166,7 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
     fill(coachColumn, [
       renderTurns(frame),
       renderCounters(frame),
+      renderTrace(frame.trace, frame.at),
       renderProblems(frame.problems, frame.at),
     ]);
 
@@ -302,6 +307,19 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
 
     if (button.dataset.reset !== undefined) {
       bridge.send({ kind: 'reset-controls' });
+      return;
+    }
+
+    if (button.dataset.clearTrace !== undefined) {
+      bridge.send({ kind: 'clear-trace' });
+      return;
+    }
+
+    const action = button.dataset.action;
+    if (action !== undefined) {
+      // Sent and forgotten, exactly as a control is: the row turns to `running` because the *next*
+      // frame says so, not because this handler assumed it would.
+      bridge.send({ kind: 'action', id: action });
       return;
     }
 

@@ -25,6 +25,7 @@
  */
 
 import type {
+  DebugAction,
   DebugCandidate,
   DebugControl,
   DebugControlValue,
@@ -34,6 +35,7 @@ import type {
   DebugMockState,
   DebugProblem,
   DebugTick,
+  DebugTraceStep,
   DebugTurn,
   DebugWorld,
 } from '../../shared/debug.js';
@@ -951,6 +953,91 @@ export function renderCounters(frame: DebugFrame): HTMLElement {
   }
 
   return panel('Counters and sources', null, body);
+}
+
+// -----------------------------------------------------------------------------------------------
+// Scenarios and the trace (ADR-0039)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * The two scenario buttons.
+ *
+ * Buttons and nothing else, for ADR-0032's reason restated by `scroll.ts`: this document is redrawn
+ * whole at 4 Hz, so a click is the only gesture that survives a redraw intact. A row mid-run is
+ * disabled and says so — a button that looks clickable while its run is in flight is one somebody
+ * presses twice, and main refuses the second press for a reason nobody would see.
+ */
+export function renderActions(actions: readonly DebugAction[]): HTMLElement {
+  const body = el('div');
+
+  if (actions.length === 0) {
+    body.append(empty('this inspector can display but not run — no action port is wired'));
+    return panel('Scenarios', null, body);
+  }
+
+  for (const action of actions) {
+    const row = el('div', 'ins-action');
+
+    const button = el('button', 'ins-button', action.running ? `${action.label} …` : action.label);
+    button.setAttribute('type', 'button');
+    button.dataset.action = action.id;
+    button.dataset.focus = `action:${action.id}`;
+    if (action.running) button.setAttribute('disabled', '');
+    row.append(button);
+
+    if (action.lastOutcome !== null) {
+      row.append(pill(action.lastOutcome, action.lastOutcome.startsWith('ok') ? 'good' : 'bad'));
+    }
+    row.append(el('div', 'ins-action-note', action.note));
+    body.append(keyed(row, `action:${action.id}`));
+  }
+
+  return panel('Scenarios', 'a run drives the real chain — nothing here fakes a stage', body);
+}
+
+/**
+ * The coaching chain in order — the one panel that is a sequence.
+ *
+ * Oldest first, unlike Problems: this is read as a story with an end, and the end is the last line.
+ * `sinceRunMs` is shown in preference to an age because "how long after the trigger" is the question
+ * a chain that stalls actually poses, and a wall-clock age answers a different one.
+ */
+export function renderTrace(trace: readonly DebugTraceStep[], now: number): HTMLElement {
+  const body = el('div');
+
+  if (trace.length === 0) {
+    body.append(empty('nothing traced yet — run a scenario, or wait for a detection'));
+    return panel('Trace', null, body);
+  }
+
+  for (const step of trace) {
+    const row = el('div', 'ins-trace');
+    row.append(
+      el(
+        'span',
+        'ins-meta',
+        step.sinceRunMs === null
+          ? `${formatAge(Math.max(0, now - step.at))} ago`
+          : `+${formatDuration(step.sinceRunMs)}`,
+      ),
+      el('span', `ins-trace-stage ins-stage-${step.stage}`, step.stage),
+      el('span', 'ins-trace-message', step.message),
+    );
+    body.append(keyed(row, `trace:${String(step.seq)}`));
+  }
+
+  const clear = el('button', 'ins-button', 'Clear trace');
+  clear.setAttribute('type', 'button');
+  clear.dataset.clearTrace = 'all';
+  clear.dataset.focus = 'trace:clear';
+  body.append(clear);
+
+  return panel('Trace', `${plural(trace.length, 'step')}, oldest first`, body);
+}
+
+/** `ms` under a second, then seconds to one decimal. A run is seconds; a stage is milliseconds. */
+function formatDuration(ms: number): string {
+  return ms < 1_000 ? `${String(Math.round(ms))} ms` : `${(ms / 1_000).toFixed(1)} s`;
 }
 
 export function renderProblems(problems: readonly DebugProblem[], now: number): HTMLElement {

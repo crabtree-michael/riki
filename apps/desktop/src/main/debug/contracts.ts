@@ -28,6 +28,7 @@
  */
 
 import type {
+  DebugAction,
   DebugCommand,
   DebugControl,
   DebugFrame,
@@ -35,6 +36,7 @@ import type {
   DebugMockState,
 } from '../../shared/debug.js';
 import type { Unsubscribe } from '../../shared/overlay.js';
+import type { DebugActionPort } from './actions.js';
 import type { DebugControlPort } from './controls.js';
 import type { DebugRehearsalPort } from './rehearsal.js';
 
@@ -67,6 +69,18 @@ export interface DebugHub {
   recordPlayerTranscript(turnId: string, chars: number): void;
   recordProblem(origin: string, message: string, at: number): void;
   recordEmptyBrief(): void;
+
+  /**
+   * One step of the coaching chain, in order (ADR-0039).
+   *
+   * Separate from `recordProblem` because a trace step is usually not a fault — it is the ordinary
+   * progress of a chain, and the reason the panel exists is that a chain which stops halfway
+   * produces *no* fault anywhere. The absence of the next step is the finding.
+   */
+  recordTrace(stage: string, message: string, at: number): void;
+  /** Mark the start of a run, so subsequent steps carry `sinceRunMs`. Null ends the run. */
+  markTraceRun(startedAt: number | null): void;
+  clearTrace(): void;
 
   /** Everything that is read rather than pushed arrives through these, set by the shell. */
   observe(sources: DebugSources): void;
@@ -107,6 +121,8 @@ export interface DebugSources {
    * in the dropdown without a restart — which a value captured at wiring time could not do.
    */
   readonly mocks?: () => readonly DebugMockState[];
+  /** The Actions panel. Pulled like the controls, and for the same reason: `running` changes. */
+  readonly actions?: () => readonly DebugAction[];
 }
 
 export interface DebugSessionInput {
@@ -297,6 +313,8 @@ export interface DebugSurface {
    * the live match's world, latches and ledger exactly where they were.
    */
   readonly rehearsal: DebugRehearsalPort | null;
+  /** ADR-0039. Null means the window may display scenarios and not run them. */
+  readonly actions: DebugActionPort | null;
   /** Idempotent: opening an already-open inspector focuses it rather than making a second one. */
   open(): Promise<void>;
   close(): void;

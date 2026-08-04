@@ -70,6 +70,35 @@ unit tests.
 
 ## Learnings
 
+**2026-08-04 — the inspector can run two scenarios now, and the panel worth having is the *trace*
+(ADR-0039).** `main/debug/actions.ts` is a second registry beside `controls.ts` — a control is a
+value you move, an action is something you start, and ADR-0037 admitted the first while explicitly
+refusing the second, so they are kept apart rather than folded into one row type. Two rows,
+`scenario.match` and `scenario.speak`; a third needs an ADR.
+
+Three things learned building it, each of which cost a cycle:
+
+- **The `controls.ts` header says "Force a tick", "say this now" are deliberately unreachable.**
+  Read it before adding anything that *does* something to that file. Reversing it was fine; doing so
+  without noticing would have left the file contradicting itself.
+- **A scenario's GSI frames cannot skip ahead.** `packages/gsi` raises `clock_discontinuity` when a
+  frame's clock differs from the previous one extrapolated by wall time by more than 5 s, and a
+  discontinuity resyncs the world model — clearing the latch set and cooldowns the run exists to
+  exercise. 2 game seconds per 500 ms is safe; a jump from pre-game straight to 2:30 is not, which
+  is why the script walks continuously and why it aims at the **0:53 stack** rather than the 3:00
+  bounty (a continuous walk to the bounty is 45 s of button).
+- **A caption keyed on an equality that cannot hold is a silent nothing.** The script steps the
+  clock by 2 from an even number and the stack is at an odd one, so `until === 12` never fired.
+  Both notes are boundary crossings now, and a test asserts all four actually appear — the compiled
+  script printed two of four, which is how it was caught.
+
+**The load-bearing half is not the buttons.** `main/index.ts` passed `createVoiceSession` four no-op
+telemetry arrows, so no session fault reached the hub and the Problems panel's silence read as
+"nothing failed". They now forward into the hub's trace, late-bound because the session is built
+before the shell that owns the hub. Every panel in this window is *state* — "what is true now" —
+and the failure in the `voice-realtime` skill's 2026-08-04 entry was invisible to all of them
+because the only useful question was "what happened, in order, and where did it stop".
+
 **2026-08-02 — drive a real window from a throwaway `main.mjs`; it is fifteen minutes and it is the
 only thing that checks the renderer↔main round trip.** Every window in this app is Tier-5-untested
 (there is no Playwright harness), and unit tests cover both halves of a bridge and never its

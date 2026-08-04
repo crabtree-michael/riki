@@ -48,7 +48,7 @@ export function isOverlayIntent(payload: unknown): payload is OverlayIntent {
 }
 
 /**
- * The same allow-list discipline for the inspector, which has five things to say.
+ * The same allow-list discipline for the inspector, which has seven things to say.
  *
  * It is checked at both boundaries for the same reason the overlay's is, and it matters more here
  * than anywhere else in the app: the inspector window is *focusable*, loads a document with a
@@ -91,6 +91,20 @@ export function parseDebugIntent(payload: unknown): DebugIntent | null {
       return typeof candidate.stateId === 'string' && candidate.stateId !== ''
         ? { kind: 'rehearse', stateId: candidate.stateId.slice(0, DEBUG_LIMITS.mockIdChars) }
         : null;
+
+    // ADR-0039. Shape only, exactly as `control` and `rehearse` above.
+    //
+    // A second verb beside `rehearse` rather than a merge of the two, because they carry different
+    // things: `rehearse` names a mock state and builds a scratch world around it, `action` names a
+    // row in a registry and takes no argument. Folding them would give one of the two a parameter it
+    // never uses, and the shapes are what this file exists to check.
+    case 'action': {
+      if (typeof candidate.id !== 'string' || candidate.id === '') return null;
+      return { kind: 'action', id: candidate.id.slice(0, DEBUG_LIMITS.controlIdChars) };
+    }
+
+    case 'clear-trace':
+      return { kind: 'clear-trace' };
 
     default:
       return null;

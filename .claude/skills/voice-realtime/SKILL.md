@@ -47,6 +47,39 @@ path; keep it cheap and unit-test it.
 
 ## Learnings
 
+**2026-08-04 — the mint's session id moved to `session.id`, and an empty one fails four layers away
+as silence.** `parseClientSecret` read `session_id` from the response root or from `client_secret`,
+and fell back to `''` when it found neither. The GA response nests the whole session object and
+carries the id as `session.id` — verified against a live mint, not read:
+
+```
+value = ek_…            expires_at = 1785811753
+session.id = sess_E8zLdppJmMk5GEYSW53s4      ← here
+```
+
+The `''` then failed `packages/protocol`'s `sessionId: z.string().min(1)` **inside the renderer**,
+which rejected the entire `voice.session.open` directive as unreadable. No session was created, and
+every later `voice.turn.speak` hit `await live?.session…` in `renderer/voice/host.ts` — optional
+chaining — so it silently did nothing and never sent back `responseEnded`. Symptom: the whole
+coaching chain works, the inspector shows `spoke:` turns, `agent speaking` sticks on forever
+(nothing disarms gate 4), and no sound ever comes out.
+
+`parseClientSecret` now reads all three spellings newest-first and **throws** when it finds none.
+That throw is the actual fix: an empty id cannot degrade, because the renderer refuses the message,
+so the only outcomes are a working session or a silent match.
+
+*Why:* this cost a day, and none of it was spent near the bug. Two things would have found it in
+minutes and both are now in place — the voice telemetry in `main/index.ts` was four no-op arrows, so
+the `session-lost` fault reached nothing, and there was no way to drive a coaching flow without an
+external script. See ADR-0039 and the `overlay-ui` skill. **When Riki is silent, the first question
+is whether a session exists at all** — `lsof -nP -i -a -p <pid>` on the Electron processes answers
+it, and one established connection to the Realtime endpoint plus mDNS on `*:5353` is what a live
+WebRTC session looks like.
+
+*Second-order:* do not trust a one-second socket poll to prove "the app never touched the network".
+The mint is a ~300 ms HTTPS round trip and it hides between samples; it was there all along in a run
+I reported as having no network activity at all.
+
 **2026-08-02 — the voice path is wired end to end, and here is where each half lives.** The renderer
 is `apps/desktop/src/renderer/voice/`: `host.ts` holds every decision and takes the DOM through
 ports, so it is a Tier 1 test; `web-audio.ts`, `media.ts` and `peer.ts` are the three adapters that

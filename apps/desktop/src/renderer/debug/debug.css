@@ -390,6 +390,68 @@ body {
   letter-spacing: 0.06em;
 }
 
+/* -------------------------------------------------- scenarios and the trace */
+
+.ins-action {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ins-line);
+  align-items: baseline;
+}
+
+.ins-action-note {
+  grid-column: 1 / -1;
+  color: var(--ins-dim);
+  overflow-wrap: anywhere;
+}
+
+.ins-trace {
+  display: grid;
+  grid-template-columns: 68px 72px 1fr;
+  gap: 8px;
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--ins-line);
+  align-items: baseline;
+}
+
+.ins-trace-message {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * One colour per stage, and they are the panel's whole navigation: a run is read by looking for
+ * where the sequence stops, which means the eye needs to find the stage names before the words.
+ */
+.ins-trace-stage {
+  white-space: nowrap;
+  color: var(--ins-dim);
+}
+
+.ins-stage-detect,
+.ins-stage-salience {
+  color: var(--ins-info);
+}
+
+.ins-stage-gates {
+  color: var(--ins-accent);
+}
+
+.ins-stage-coach,
+.ins-stage-session,
+.ins-stage-renderer {
+  color: var(--ins-pass);
+}
+
+.ins-stage-scenario {
+  color: var(--ins-text);
+}
+
+.ins-stage-fault {
+  color: var(--ins-refuse);
+}
+
 /* ---------------------------------------------------------------- problems */
 
 .ins-problem {

@@ -104,6 +104,8 @@ function frame(overrides: Partial<DebugFrame> = {}): DebugFrame {
     problems: [],
     mocks: [],
     controls: [],
+    actions: [],
+    trace: [],
     ...overrides,
   };
 }

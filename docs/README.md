@@ -128,6 +128,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0036](adr/0036-the-inspector-anchors-on-content-not-on-offset.md) | The inspector anchors on content, not on an offset | Accepted — the three columns survive the redraw; a prepending list makes a saved `scrollTop` wrong |
 | [0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md) | The inspector is a control surface, within a registry | Accepted — amends ADR-0032's read-only half; inert unless clicked, and `packages/events` still has no setter |
 | [0038](adr/0038-a-rehearsal-is-a-turn-against-a-world-nobody-is-playing.md) | A rehearsal is a coach turn against a world nobody is playing | Accepted — extends ADR-0037 to one action; a scratch coaching root, and no session is reachable from it |
+| [0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md) | A scenario drives the real chain, and the trace shows where it stopped | Accepted — ordered trace of the coaching chain, two scenario rows, and the voice telemetry made real; amends ADR-0038 on whether a debug window may make Riki speak |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
