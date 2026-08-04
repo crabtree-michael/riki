@@ -7,9 +7,15 @@
  * whether a payload is *shaped* like a control intent, and main asks the question that matters,
  * which is whether the id names a registered, unlocked control (`main/debug/controls.ts`).
  *
- * What is still deliberately absent: `evaluate`, "replay this tick", "say this now", and any way to
- * name a field rather than a control. The window can turn knobs the app was built with; it cannot
- * drive the app.
+ * ADR-0038 adds `rehearse`, which is the first intent that *does* something rather than setting
+ * something — and the same split applies: this boundary checks that a state id is a bounded string,
+ * and main checks whether it names a row in a library it assembled from one directory. What it runs
+ * is a scratch world, a scratch coach and a scratch context, so a rehearsal reaches nothing the live
+ * match uses.
+ *
+ * What is still deliberately absent: "replay this tick", "say this now", and any way to name a field
+ * or a file rather than a registered control or a listed mock state. The window can turn knobs the
+ * app was built with and ask the coach a question in a sandbox; it cannot make Riki speak.
  *
  * The same three window settings hold as for the overlay: `contextIsolation`, no Node, and
  * `sandbox: true`. This renderer displays live match state and rendered model input, so it must be

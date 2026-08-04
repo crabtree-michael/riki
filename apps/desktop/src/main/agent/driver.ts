@@ -26,10 +26,10 @@
 
 import type { EventId } from '@riki/context';
 import type { CoachEvent, EventEngine, SuppressionReason } from '@riki/events';
-import type { LlmCoach } from '@riki/coach';
-import { eventIdOf } from '@riki/coach';
+import type { CoachCounters, LlmCoach } from '@riki/coach';
+import { SKIP_REASONS, eventIdOf } from '@riki/coach';
 import type { MonoMs } from '@riki/world-model';
-import type { CoachDriver, CoachProposal } from './contracts.js';
+import type { CoachConsultation, CoachDriver, CoachProposal } from './contracts.js';
 
 /**
  * The adapters keep a handle on what they wrapped, and the port does not.
@@ -100,6 +100,38 @@ export function staticCoachDriver(engine: EventEngine): StaticCoachDriver {
       engine.setMuted(until);
     },
 
+    /**
+     * `evaluate`, widened to the port's vocabulary.
+     *
+     * Synchronous underneath and wrapped in a resolved promise, which is the honest shape: the
+     * deterministic coach cannot fail to answer and cannot take time to do it.
+     *
+     * `event === null` — the detectors produced nothing at all — is not a refusal, and the engine
+     * pointedly does not count it as one. It still has to become a string here, because the caller
+     * asked a question and "no reason, there was nothing" is an answer. `no_candidates` is the one
+     * word in this file that is not a `SuppressionReason`, and it is spelled unlike any of the
+     * thirteen so it cannot be mistaken for one.
+     */
+    consult: (now: MonoMs): Promise<CoachConsultation> => {
+      const decision = engine.evaluate(now);
+      if (decision.speak) {
+        return Promise.resolve({
+          spoke: true,
+          proposal: {
+            id: decision.event.id,
+            topic: decision.event.topic,
+            salience: decision.event.salience,
+            guidance: null,
+            at: decision.event.at,
+          },
+        });
+      }
+      return Promise.resolve({
+        spoke: false,
+        reason: decision.event === null ? 'no_candidates' : decision.reason,
+      });
+    },
+
     dispose: () => {
       engine.dispose();
     },
@@ -158,10 +190,74 @@ export function llmCoachDriver(coach: LlmCoach): LlmCoachDriver {
       coach.setMuted(until);
     },
 
+    /**
+     * `LlmCoach.consult`, plus the work of finding out *why* when it answers null.
+     *
+     * The push path does not need this and therefore does not do it: a decline is announced through
+     * `onDeclined`, and a **skip** — quiet mode, a turn already open, a world with nothing in it —
+     * is announced nowhere at all, because on the push path there is nothing waiting for an answer.
+     * A caller that asked a question is owed one, so the two are reconstructed here:
+     *
+     * - The model's own sentence, caught off `onDeclined` for the length of the call.
+     * - Otherwise the counters, which are the coach's tuning surface (§7) and whose *difference*
+     *   across one consultation names exactly what happened to it.
+     *
+     * ⚠ The listener is global to the coach, so a decline from a concurrent push consultation would
+     * be attributed here. `in_flight` makes that unreachable for the coach the rehearsal builds —
+     * one judgement at a time, and nothing else holds a reference to it — and this method has no
+     * other caller.
+     */
+    consult: async (now: MonoMs): Promise<CoachConsultation> => {
+      const before = coach.counters();
+      // A holder rather than a `let`: TypeScript does not track an assignment made inside a
+      // callback, so a plain binding would narrow to `null` and the `??` below would be dead code.
+      const declined: { reason: string | null } = { reason: null };
+      const stop = coach.onDeclined((reason) => {
+        declined.reason = reason;
+      });
+
+      try {
+        const utterance = await coach.consult(now);
+        if (utterance === null) {
+          return { spoke: false, reason: declined.reason ?? whyNot(before, coach.counters()) };
+        }
+        return {
+          spoke: true,
+          proposal: {
+            id: eventIdOf(utterance.kind),
+            topic: utterance.topic,
+            salience: utterance.weight,
+            guidance: utterance.say,
+            at: utterance.at,
+          },
+        };
+      } finally {
+        stop();
+      }
+    },
+
     dispose: () => {
       coach.dispose();
     },
   };
+}
+
+/**
+ * What happened to a consultation that produced neither an utterance nor a sentence.
+ *
+ * Every arm is a counter that rose, so this cannot invent a cause: with no counter moved at all the
+ * answer says exactly that, which is a bug report rather than a reason and is spelled to read like
+ * one.
+ */
+function whyNot(before: CoachCounters, after: CoachCounters): string {
+  for (const reason of SKIP_REASONS) {
+    if (after.skipped[reason] > before.skipped[reason]) return `skipped: ${reason}`;
+  }
+  if (after.failed > before.failed) return 'the model call failed — see the coach telemetry';
+  if (after.discarded > before.discarded) {
+    return 'the judgement was discarded: it named a signal it was not shown, or arrived too late';
+  }
+  return 'the coach answered nothing and moved no counter';
 }
 
 /** Narrowing helper for a proposal built by hand in a test. */

@@ -372,6 +372,17 @@ body {
   border-left-color: var(--ins-pass);
 }
 
+/*
+ * The coach's drafted line — what it decided to say, before any voice model saw it.
+ *
+ * `--ins-warn` rather than `--ins-pass`, and the distinction is the point: a drafted line is not a
+ * transcript. On a rehearsal it is the entire output and nothing was ever spoken, so borrowing the
+ * colour that means "Riki said this" would be the panel telling the reader something untrue.
+ */
+.ins-text--guidance {
+  border-left-color: var(--ins-warn);
+}
+
 .ins-text-label {
   color: var(--ins-faint);
   font-size: 10px;
@@ -454,6 +465,50 @@ body {
 
 .ins-control > .ins-meta:empty {
   display: none;
+}
+
+/* ------------------------------------------------------- rehearsal (ADR-0038) */
+
+/*
+ * One option in the mock-state dropdown: the choice, then how much recording is behind it.
+ *
+ * A row rather than a bare button because the observation count belongs beside the name — a
+ * scenario that replays four payloads and one that replays four hundred are different claims about
+ * what a rehearsal against it proves. The note (captured or synthesised) is the row's `title`, for
+ * the reason a control's is: a 280px column turns every sentence into four lines.
+ */
+.ins-mock-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 2px 20px;
+}
+
+.ins-mock-option > .ins-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ins-mock-run {
+  padding: 5px 10px 7px;
+}
+
+/*
+ * The one button on this screen that makes the app do something rather than remember something.
+ *
+ * `--ins-accent` is the same colour the brief and the override count already use, so it reads as
+ * *this is the inspector acting* rather than as a new vocabulary. Not red: the no-red rule holds
+ * here as everywhere (the `overlay-ui` skill) — a rehearsal is not a warning.
+ */
+.ins-button--go {
+  border-color: var(--ins-accent);
+  color: var(--ins-accent);
+}
+
+.ins-button--go:hover:not([disabled]) {
+  background: var(--ins-accent);
+  color: var(--ins-bg);
 }
 
 .ins-group-note {

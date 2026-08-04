@@ -17,6 +17,8 @@ import type {
   DebugControl,
   DebugFrame,
   DebugIntent,
+  DebugMockState,
+  DebugTurn,
   RikiDebugBridge,
 } from '../../shared/debug.js';
 import { mountInspector } from './app.js';
@@ -100,7 +102,33 @@ function frame(overrides: Partial<DebugFrame> = {}): DebugFrame {
     turns: [],
     counters: { detected: [], suppressed: [], spoken: 0, emptyBriefs: 0, ticks: 0 },
     problems: [],
+    mocks: [],
     controls: [],
+    ...overrides,
+  };
+}
+
+/** One turn, defaulted to a real (not rehearsed) coaching turn — the shape most tests want. */
+function turn(overrides: Partial<DebugTurn> = {}): DebugTurn {
+  return {
+    turnId: 'coach_1',
+    at: 9_000,
+    clock: 600,
+    cause: 'trigger',
+    eventId: 'ult_ready',
+    salience: 0.8,
+    snapshotText: 'clock 10:00',
+    snapshotTokens: 42,
+    briefText: 'your ult is up',
+    briefTokens: 18,
+    briefSections: ['cooldowns'],
+    briefOmitted: [],
+    briefEmpty: false,
+    guidance: null,
+    mockState: null,
+    outcome: 'spoke',
+    agentSaid: null,
+    playerSaidChars: null,
     ...overrides,
   };
 }
@@ -492,24 +520,11 @@ describe('turns', () => {
     view.apply(
       frame({
         turns: [
-          {
-            turnId: 'coach_1',
-            at: 9_000,
-            clock: 600,
-            cause: 'trigger',
-            eventId: 'ult_ready',
-            salience: 0.8,
+          turn({
             snapshotText: 'clock 10:00\nself lvl 9',
-            snapshotTokens: 42,
-            briefText: 'your ult is up',
-            briefTokens: 18,
-            briefSections: ['cooldowns'],
             briefOmitted: ['history'],
-            briefEmpty: false,
-            outcome: 'spoke',
             agentSaid: 'Your ult is up — go.',
-            playerSaidChars: null,
-          },
+          }),
         ],
       }),
     );
@@ -525,24 +540,16 @@ describe('turns', () => {
     view.apply(
       frame({
         turns: [
-          {
+          turn({
             turnId: 'coach_2',
-            at: 9_000,
-            clock: 600,
-            cause: 'trigger',
             eventId: 'stack_now',
             salience: 0.5,
-            snapshotText: 'clock 10:00',
-            snapshotTokens: 20,
             briefText: '',
             briefTokens: 0,
             briefSections: [],
-            briefOmitted: [],
             briefEmpty: true,
             outcome: 'silent',
-            agentSaid: null,
-            playerSaidChars: null,
-          },
+          }),
         ],
       }),
     );
@@ -557,24 +564,15 @@ describe('turns', () => {
     view.apply(
       frame({
         turns: [
-          {
+          turn({
             turnId: 'turn_1',
-            at: 9_000,
-            clock: 600,
             cause: 'player',
             eventId: null,
             salience: null,
-            snapshotText: 'clock 10:00',
-            snapshotTokens: 20,
             briefText: 'wide',
-            briefTokens: 4,
             briefSections: ['positions'],
-            briefOmitted: [],
-            briefEmpty: false,
-            outcome: 'spoke',
-            agentSaid: null,
             playerSaidChars: 18,
-          },
+          }),
         ],
       }),
     );
@@ -825,6 +823,155 @@ describe('the Controls panel (ADR-0037)', () => {
     const view = mountInspector(root, fakeBridge());
     view.apply(frame({ controls: [] }));
     expect(root.textContent).toContain('display but not change');
+  });
+});
+
+describe('the Rehearsal panel (ADR-0038)', () => {
+  function mock(overrides: Partial<DebugMockState> = {}): DebugMockState {
+    return {
+      id: 'laning-phase',
+      label: 'laning phase',
+      note: 'SYNTHETIC — assembled from the component list',
+      observations: 12,
+      ...overrides,
+    };
+  }
+
+  const draft = mock({ id: 'draft', label: 'draft', observations: 4 });
+
+  /** The button carrying this `data-focus` key, or a throw naming what was missing. */
+  function button(key: string): HTMLElement {
+    const found = root.querySelector(`[data-focus="${key}"]`);
+    if (!(found instanceof HTMLElement)) throw new Error(`no button ${key}`);
+    return found;
+  }
+
+  function withMocks(mocks: readonly DebugMockState[]): FakeBridge {
+    const bridge = fakeBridge();
+    const view = mountInspector(root, bridge);
+    view.apply(frame({ mocks }));
+    return bridge;
+  }
+
+  it('rehearses the first state offered, before anything has been picked', () => {
+    const bridge = withMocks([mock(), draft]);
+
+    // The dropdown shows a selection from the first frame, so the button has to mean it. Sending
+    // `null` here — the literal value of `options.selectedMock` — would be a button whose label and
+    // effect disagreed.
+    expect(button('mock:toggle').textContent).toContain('laning phase');
+    button('rehearse').click();
+
+    expect(bridge.sent.at(-1)).toEqual({ kind: 'rehearse', stateId: 'laning-phase' });
+  });
+
+  it('opens the dropdown, picks a state, and closes on the choice', () => {
+    const bridge = withMocks([mock(), draft]);
+
+    // Collapsed until asked: sixty-four scenarios is a panel, not a row.
+    expect(root.querySelector('[data-focus="mock:draft"]')).toBeNull();
+
+    button('mock:toggle').click();
+    expect(button('mock:draft').getAttribute('aria-pressed')).toBe('false');
+
+    button('mock:draft').click();
+    expect(root.querySelector('[data-focus="mock:draft"]')).toBeNull();
+    expect(button('mock:toggle').textContent).toContain('draft');
+
+    // Choosing is view state and never leaves the renderer — only the run does.
+    expect(bridge.sent.filter((intent) => intent.kind === 'rehearse')).toHaveLength(0);
+
+    button('rehearse').click();
+    expect(bridge.sent.at(-1)).toEqual({ kind: 'rehearse', stateId: 'draft' });
+  });
+
+  it('falls back when the selected state is renamed out from under it', () => {
+    const bridge = fakeBridge();
+    const view = mountInspector(root, bridge);
+    view.apply(frame({ mocks: [mock(), draft] }));
+
+    button('mock:toggle').click();
+    button('mock:draft').click();
+    expect(button('mock:toggle').textContent).toContain('draft');
+
+    // The library is a directory read at 4 Hz, so a fixture can be deleted while the window is
+    // open. Holding the selection would leave a button that rehearses nothing and says only that
+    // it could not find it.
+    view.apply(frame({ revision: 2, mocks: [mock()] }));
+    expect(button('mock:toggle').textContent).toContain('laning phase');
+
+    button('rehearse').click();
+    expect(bridge.sent.at(-1)).toEqual({ kind: 'rehearse', stateId: 'laning-phase' });
+  });
+
+  it('says how to populate an empty library, and offers nothing to click', () => {
+    const bridge = withMocks([]);
+
+    // A packaged build and an empty `fixtures/gsi/` are the same picture, and one of them is fixed
+    // by adding a file.
+    expect(root.textContent).toContain('add a .jsonl to fixtures/gsi/');
+    expect(root.querySelector('[data-focus="rehearse"]')).toBeNull();
+    expect(bridge.sent.filter((intent) => intent.kind === 'rehearse')).toHaveLength(0);
+  });
+
+  it('keeps the dropdown open across a frame, and the selection with it', () => {
+    const bridge = fakeBridge();
+    const view = mountInspector(root, bridge);
+    view.apply(frame({ mocks: [mock(), draft] }));
+
+    button('mock:toggle').click();
+    view.apply(frame({ revision: 2, mocks: [mock(), draft] }));
+
+    // The document is rebuilt whole four times a second. Anything the DOM would normally remember
+    // has to be held outside it, which is why this is view state in `app.ts` and not a `<select>`.
+    expect(root.querySelector('[data-focus="mock:draft"]')).not.toBeNull();
+    expect(button('mock:toggle').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('shows the coach output and marks the turn as rehearsed, not spoken', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        turns: [
+          turn({
+            turnId: 'rehearsal_1',
+            cause: 'rehearsal',
+            mockState: 'laning-phase',
+            guidance: 'back off — their jungler is missing',
+            outcome: 'rehearsed',
+            agentSaid: null,
+          }),
+        ],
+      }),
+    );
+
+    // The whole of what the feature is for: the coach's text, in the panel, without a match.
+    expect(root.textContent).toContain('back off — their jungler is missing');
+    expect(root.textContent).toContain('coach drafted');
+    // And the pill that stops a fabricated moment being read as a played one.
+    expect(root.textContent).toContain('mock: laning-phase');
+    expect(root.textContent).toContain('rehearsed');
+    expect(root.querySelector('.ins-text--guidance')).not.toBeNull();
+    // `riki said` is a transcript, and nothing spoke.
+    expect(root.textContent).not.toContain('riki said');
+  });
+
+  it('leaves a real turn unmarked', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ turns: [turn({ agentSaid: 'Your ult is up — go.' })] }));
+
+    expect(root.textContent).toContain('riki said');
+    expect(root.textContent).not.toContain('mock:');
+    expect(root.querySelector('.ins-text--guidance')).toBeNull();
+  });
+
+  it('escapes a mock state name rather than parsing it', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ mocks: [mock({ id: '<img src=x>', label: '<img src=x>' })] }));
+
+    // A mock state's name is a file name off disk, which is no more ours than a hero name is.
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.textContent).toContain('<img src=x>');
   });
 });
 

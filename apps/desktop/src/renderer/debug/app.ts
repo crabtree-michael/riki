@@ -1,14 +1,20 @@
 /**
  * Mounts the inspector and drives it from the bridge.
  *
- * Everything stateful about the view is here and it is four things: the last frame drawn, whether
- * drawing is frozen, whether `not_in_match` ticks are hidden, and which Controls groups are
- * expanded. `view.ts` is pure.
+ * Everything stateful about the view is here and it is six things: the last frame drawn, whether
+ * drawing is frozen, whether `not_in_match` ticks are hidden, which Controls groups are expanded,
+ * which mock game state is selected, and whether that dropdown is open. `view.ts` is pure.
+ *
+ * The last two are view state for the same reason the others are, and for one more: the selection
+ * is *null until somebody picks*, because the mock library is re-read off disk four times a second
+ * and a default captured at mount would be a guess that goes stale. `renderRehearsal` resolves null
+ * against the list in the frame it is drawing, and the Rehearse button carries the id it resolved
+ * to — so what is sent is always what the button said it would send.
  *
  * ## One listener, not four hundred
  *
- * The Controls panel (ADR-0037) is the only interactive surface inside a column, and a column's
- * children are replaced four times a second. Per-node listeners would be created and discarded at
+ * The Controls panel (ADR-0037) and the Rehearsal panel (ADR-0038) are the only interactive
+ * surfaces inside a column, and a column's children are replaced four times a second. Per-node listeners would be created and discarded at
  * that rate for the life of the window, so `view.ts` marks its buttons with `data-control` and this
  * file puts a single delegated `click` on the root. The value crosses as a string and is decoded
  * here against `data-kind`, which is the same shape as every other boundary in this app: the sender
@@ -69,6 +75,7 @@ import {
   renderGates,
   renderHeader,
   renderProblems,
+  renderRehearsal,
   renderTicks,
   renderTurns,
   renderWorld,
@@ -141,8 +148,10 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
     drawHeader(frame);
 
     fill(stateColumn, [
-      // First, above the state it governs. Everything below this panel is a reading of whatever it
-      // currently says, which is the order it should be read in.
+      // First, above everything: it is the only panel that *acts*, and what it produces lands two
+      // columns over. Below it, Controls — a rehearsal is run against whatever that panel currently
+      // says, so the reading order is the causal one (ADR-0038, then ADR-0037).
+      renderRehearsal(frame.mocks, options),
       renderControls(frame.controls, options),
       renderGates(frame.session.gates, frame.at),
       renderWorld(frame.world),
@@ -264,6 +273,30 @@ export function mountInspector(root: HTMLElement, bridge: RikiDebugBridge): Insp
     if (group !== undefined) {
       options = { ...options, openGroups: toggleGroup(group) };
       draw();
+      return;
+    }
+
+    // The three the Rehearsal panel adds (ADR-0038). The first two are view state and never leave
+    // the renderer; only the third sends, and it sends the id the button was drawn with rather than
+    // `options.selectedMock` — which is null until somebody picks, while the button has been
+    // showing the library's first state all along.
+    if (button.dataset.mockToggle !== undefined) {
+      options = { ...options, mockOpen: !options.mockOpen };
+      draw();
+      return;
+    }
+
+    const mock = button.dataset.mock;
+    if (mock !== undefined) {
+      // Closed on choice, which is what a dropdown does and what keeps the panel short between uses.
+      options = { ...options, selectedMock: mock, mockOpen: false };
+      draw();
+      return;
+    }
+
+    const rehearse = button.dataset.rehearse;
+    if (rehearse !== undefined) {
+      bridge.send({ kind: 'rehearse', stateId: rehearse });
       return;
     }
 

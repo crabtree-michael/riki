@@ -77,12 +77,30 @@ export interface CoachProposal {
 }
 
 /**
+ * The answer to *should Riki speak right now*, asked once and on purpose.
+ *
+ * A discriminated union rather than `CoachProposal | null`, because the two coaches both have a
+ * reason for saying no and it is the more interesting half: a `SuppressionReason` naming the gate
+ * that refused, or the LLM coach's own sentence. `onDeclined` already carries exactly this string
+ * on the push path, so nothing new is invented here — it is that value, returned rather than
+ * announced.
+ */
+export type CoachConsultation =
+  | { readonly spoke: true; readonly proposal: CoachProposal }
+  | { readonly spoke: false; readonly reason: string };
+
+/**
  * The seam the toggle turns on, and the only thing `index.ts` knows about either coach.
  *
- * It is `EventEngine`'s shape minus everything the composition root never used — the tape, the
- * counters, `evaluate` — because the whole point is that this file cannot express a preference
- * between the two implementations. `driver.ts` holds both adapters and is the one place that
- * imports `@riki/events` and `@riki/coach` in the same scope.
+ * It is `EventEngine`'s shape minus everything the composition root never used — the tape and the
+ * counters — because the whole point is that this file cannot express a preference between the two
+ * implementations. `driver.ts` holds both adapters and is the one place that imports `@riki/events`
+ * and `@riki/coach` in the same scope.
+ *
+ * `evaluate` used to be on that list, and ADR-0038 took it off: the inspector's rehearsal asks a
+ * coach a question at a moment no world-model version bump produced, which is the one thing a
+ * push-only port cannot express. It is `consult` here, and the two implementations' own words for
+ * it are already *test and replay affordance*.
  *
  * **The four setters mean the same thing under both coaches and do different things.** Under
  * `packages/events` they feed gates 2 through 5; under `packages/coach` two of them are honoured as
@@ -108,6 +126,27 @@ export interface CoachDriver {
   setPlayerSpeaking(speaking: boolean): void;
   setQuietMode(on: boolean): void;
   setMuted(untilMs: MonoMs | null): void;
+
+  /**
+   * Run one evaluation against the world as it stands, with no subscription (ADR-0038).
+   *
+   * Both implementations already had this and the port deliberately did not: `EventEngine.evaluate`
+   * and `LlmCoach.consult` are each documented as a *test and replay affordance*, and the header
+   * above listed `evaluate` among the things the composition root never used. The inspector's
+   * rehearsal is the caller that changed that — it needs to ask a coach a question at a moment
+   * nobody's world model bumped, which is precisely what neither push path can express.
+   *
+   * `async` because one of the two is. That is the whole difference between the coaches in one
+   * signature, and it is why the *live* paths stayed as they were: nothing on the trigger path may
+   * await, so this is not a method `agent/index.ts` may start calling.
+   *
+   * ⚠ **It mutates the coach that runs it.** A `true` arms the engine's latch and cooldowns, or
+   * notes an utterance in the LLM coach's record, exactly as the push path would — because it *is*
+   * the push path, called by hand. The rehearsal's answer to that is to run it on a coach built for
+   * the occasion and thrown away afterwards; anything else calling it would be moving the live
+   * coach's state from a debug window, which ADR-0038 refused.
+   */
+  consult(now: MonoMs): Promise<CoachConsultation>;
 
   dispose(): void;
 }

@@ -67,6 +67,13 @@ export function observeContext(deps: ObservingContextDeps): RikiContext {
         briefSections: rendered.brief.sections.map((section) => String(section.id)),
         briefOmitted: rendered.brief.omitted.map(String),
         briefEmpty: rendered.brief.empty,
+        // Both are claims about the *live* path rather than defaults. A drafted line reaches
+        // `agent/index.ts` on the `CoachProposal` and never through the assembler, so this
+        // decorator genuinely cannot see one — that gap is `debug-inspector.md` §9. And a turn
+        // observed here is by construction a real turn: the rehearsal wraps its own scratch
+        // assembler and overrides both (`rehearsal.ts`).
+        guidance: null,
+        mockState: null,
       });
 
       return rendered;

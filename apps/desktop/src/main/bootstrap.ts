@@ -142,6 +142,16 @@ export interface ShellPaths {
   /** The voice window's preload and document (ADR-0010, ADR-0034). */
   readonly voicePreload: string;
   readonly voiceEntry: string;
+  /**
+   * `fixtures/gsi/`, which the inspector rehearses against (ADR-0038).
+   *
+   * The one path here that points *out* of `appRoot` rather than into `dist/`, and the only one
+   * that is allowed not to exist: a packaged build has no repository beside it, and
+   * `nodeMockStateFiles` answers an absent directory with an empty listing rather than a fault. The
+   * inspector is dev-only (`config.debug.enabled` ships false), so reading the working tree's
+   * fixtures is the honest source rather than a second copy shipped into `resources/`.
+   */
+  readonly mockStates: string;
 }
 
 /**
@@ -173,5 +183,8 @@ export function resolvePaths(appRoot: string): ShellPaths {
     // workspace packages and a browser cannot resolve a bare specifier (ADR-0034).
     voicePreload: join(appRoot, 'dist', 'preload', 'voice.cjs'),
     voiceEntry: join(appRoot, 'dist', 'renderer', 'voice', 'index.html'),
+    // Up out of `apps/desktop` to the repo root in a dev run; nonexistent in a packaged one, which
+    // the library treats as "no mock states" rather than as an error.
+    mockStates: join(appRoot, '..', '..', 'fixtures', 'gsi'),
   };
 }

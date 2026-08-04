@@ -69,6 +69,8 @@ function turn(overrides: Partial<DebugTurnOpenedInput> = {}): DebugTurnOpenedInp
     briefSections: ['cooldowns'],
     briefOmitted: [],
     briefEmpty: false,
+    guidance: null,
+    mockState: null,
     ...overrides,
   };
 }

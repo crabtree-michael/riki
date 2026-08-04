@@ -48,7 +48,7 @@ export function isOverlayIntent(payload: unknown): payload is OverlayIntent {
 }
 
 /**
- * The same allow-list discipline for the inspector, which has four things to say.
+ * The same allow-list discipline for the inspector, which has five things to say.
  *
  * It is checked at both boundaries for the same reason the overlay's is, and it matters more here
  * than anywhere else in the app: the inspector window is *focusable*, loads a document with a
@@ -83,6 +83,14 @@ export function parseDebugIntent(payload: unknown): DebugIntent | null {
 
     case 'reset-controls':
       return { kind: 'reset-controls' };
+
+    case 'rehearse':
+      // Same split as `control`: a name and a bound are all a boundary with no library can check.
+      // Whether the id names a mock state that exists is main's question, and a `rehearse` naming
+      // one that does not becomes an `inspector` problem rather than a silence.
+      return typeof candidate.stateId === 'string' && candidate.stateId !== ''
+        ? { kind: 'rehearse', stateId: candidate.stateId.slice(0, DEBUG_LIMITS.mockIdChars) }
+        : null;
 
     default:
       return null;

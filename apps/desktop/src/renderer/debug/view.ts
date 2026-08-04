@@ -31,6 +31,7 @@ import type {
   DebugCount,
   DebugFrame,
   DebugGateState,
+  DebugMockState,
   DebugProblem,
   DebugTick,
   DebugTurn,
@@ -56,11 +57,24 @@ export interface ViewOptions {
    * normally remember has to be held outside it.
    */
   readonly openGroups: readonly string[];
+  /**
+   * Which mock game state a rehearsal would run against, or null to mean *the first one offered*.
+   *
+   * Null rather than an eager copy of `mocks[0].id`, because the library is a directory read four
+   * times a second: a default resolved here would be a guess about a list this file has not been
+   * handed yet, and one resolved once at mount would be wrong the moment somebody drops a fixture
+   * in. `renderRehearsal` resolves it against the list in the frame it is rendering.
+   */
+  readonly selectedMock: string | null;
+  /** Whether the mock-state dropdown is expanded. View state, for the reason `openGroups` is. */
+  readonly mockOpen: boolean;
 }
 
 export const DEFAULT_VIEW_OPTIONS: ViewOptions = {
   hideNotInMatch: true,
   openGroups: ['Coach', 'Thresholds'],
+  selectedMock: null,
+  mockOpen: false,
 };
 
 /**
@@ -437,6 +451,108 @@ export function renderControls(
 }
 
 // -----------------------------------------------------------------------------------------------
+// Rehearsal — the one panel that *acts* (ADR-0038)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * Which state a rehearsal would run against: the reader's choice, or the first one offered.
+ *
+ * Exported because `app.ts` needs the same answer this panel drew — a selection that resolved to a
+ * default here and to `null` there would be a button whose label and effect disagreed. It reads it
+ * off the button's `data-rehearse` instead, and this is the function that puts it there.
+ */
+export function selectedMockOf(
+  mocks: readonly DebugMockState[],
+  options: ViewOptions,
+): DebugMockState | null {
+  const chosen = mocks.find((mock) => mock.id === options.selectedMock);
+  // Falling back rather than holding a selection that is no longer on offer: the library is re-read
+  // every frame, so a fixture can be renamed or deleted while the window is open, and a dropdown
+  // still naming it would rehearse nothing and say only that it could not find it.
+  return chosen ?? mocks[0] ?? null;
+}
+
+/**
+ * Pick a game state, run one coach turn against it, read the answer in Coach turns.
+ *
+ * **Why this is a disclosure and not a `<select>`.** The document is rebuilt four times a second, so
+ * a native dropdown would be destroyed while its list was open — the same fact that makes every
+ * control on this screen a button (ADR-0037). A `<select>` also carries a popup this renderer cannot
+ * see or restore. So the list is buttons and its expansion is view state in `app.ts`, which is the
+ * one shape that survives a redraw and the one the Controls groups already use.
+ *
+ * The panel is deliberately first in the column. It is the only thing here that *does* something,
+ * and the turn it produces lands two columns over — so having to scroll past sixty settings to
+ * reach the button would be the whole feature's cost paid on every use.
+ */
+export function renderRehearsal(
+  mocks: readonly DebugMockState[],
+  options: ViewOptions,
+): HTMLElement {
+  const body = el('div');
+
+  if (mocks.length === 0) {
+    // Said as an instruction rather than an absence: an empty `fixtures/gsi/` and a packaged build
+    // with no fixtures at all are the same picture, and one of them is fixed by adding a file.
+    body.append(
+      empty('no mock game states — add a .jsonl to fixtures/gsi/ and it appears here, no restart'),
+    );
+    return panel('Rehearsal', null, body);
+  }
+
+  const selected = selectedMockOf(mocks, options);
+
+  const selectedLabel = selected === null ? 'none' : selected.label;
+  const toggle = el('button', 'ins-group', `${options.mockOpen ? '▾' : '▸'} ${selectedLabel}`);
+  toggle.setAttribute('type', 'button');
+  toggle.setAttribute('aria-expanded', String(options.mockOpen));
+  toggle.setAttribute('aria-label', `game state: ${selectedLabel}`);
+  toggle.dataset.mockToggle = 'toggle';
+  toggle.dataset.focus = 'mock:toggle';
+  if (selected !== null) toggle.append(pill(plural(selected.observations, 'observation'), 'off'));
+  body.append(keyed(toggle, 'mock:toggle'));
+
+  if (options.mockOpen) {
+    for (const mock of mocks) {
+      const chosen = mock.id === selected?.id;
+      const row = el('div', 'ins-mock-option');
+
+      const option = el('button', chosen ? 'ins-choice ins-choice--on' : 'ins-choice', mock.label);
+      option.setAttribute('type', 'button');
+      option.setAttribute('aria-pressed', String(chosen));
+      option.dataset.mock = mock.id;
+      option.dataset.focus = `mock:${mock.id}`;
+      row.append(option, el('span', 'ins-meta', plural(mock.observations, 'observation')));
+
+      // The recording's own header, which is where `fixtures/gsi/` says whether somebody captured
+      // the state or made it up — the one fact worth having beside a scenario name when you are
+      // deciding what a rehearsal against it proves. On the row, clipped to one line, for the
+      // reason a control's note is: a column this narrow turns every sentence into four lines.
+      if (mock.note !== null) row.setAttribute('title', mock.note);
+
+      body.append(keyed(row, `mock:${mock.id}`));
+    }
+  }
+
+  const run = el('button', 'ins-button ins-button--go', 'Rehearse a coach turn');
+  run.setAttribute('type', 'button');
+  run.dataset.focus = 'rehearse';
+  if (selected === null) run.setAttribute('disabled', '');
+  else run.dataset.rehearse = selected.id;
+
+  const runRow = el('div', 'ins-mock-run');
+  runRow.append(run);
+  body.append(keyed(runRow, 'mock:run'));
+
+  // What the button does and, more usefully, what it cannot do. A window that can make the app act
+  // has to say where the effect goes and where it stops.
+  const note =
+    'one turn, against a scratch world — nothing is spoken and the live match is untouched';
+
+  return panel('Rehearsal', note, body);
+}
+
+// -----------------------------------------------------------------------------------------------
 // Switches
 // -----------------------------------------------------------------------------------------------
 
@@ -731,6 +847,12 @@ function renderTurn(turn: DebugTurn): HTMLElement {
     ),
     pill(turn.outcome, turn.outcome === 'spoke' ? 'good' : turn.outcome === 'open' ? 'off' : 'on'),
   );
+  if (turn.mockState !== null) {
+    // The load-bearing pill on this screen. A rehearsed turn renders exactly like a real one and
+    // lands in the same buffer, so without this the panel would offer a fabricated moment and a
+    // played one as the same claim — which is the one thing this window must never do (ADR-0038).
+    head.append(pill(`mock: ${turn.mockState}`, 'on'));
+  }
   if (turn.salience !== null) {
     head.append(el('span', 'ins-meta', `salience ${formatScore(turn.salience)}`));
   }
@@ -760,6 +882,16 @@ function renderTurn(turn: DebugTurn): HTMLElement {
     );
   }
 
+  if (turn.guidance !== null) {
+    // The coach's output, which is a different claim from `riki said` below it: this is the line the
+    // LLM coach drafted, before any voice model saw it. On a rehearsal nothing speaks, so this is
+    // the whole of the answer — and it is the reason the Coach turns panel is where a rehearsal is
+    // read rather than somewhere new (ADR-0038).
+    wrap.append(
+      el('div', 'ins-text-label', 'coach drafted'),
+      el('pre', 'ins-text ins-text--guidance', turn.guidance),
+    );
+  }
   if (turn.agentSaid !== null) {
     wrap.append(
       el('div', 'ins-text-label', 'riki said'),

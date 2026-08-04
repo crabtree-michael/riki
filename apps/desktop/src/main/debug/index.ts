@@ -29,6 +29,10 @@
  *   first and always, so with the window open and untouched the app behaves exactly as it does with
  *   the flag off. The one thing that *can* change behaviour is a `control` intent, which only
  *   arrives when somebody clicks and can only reach a row in `controls.ts`' registry (ADR-0037).
+ *   The `rehearse` intent (ADR-0038) is an action rather than a setting and still does not weaken
+ *   this: it builds a world, a coach and a context of its own, runs one turn against them and
+ *   discards all three, so the live match's facts, latches, cooldowns and ledger are untouched and
+ *   no session is reachable from it. `rehearsal.ts` is where that is argued.
  * - **It costs nothing when off.** `config.debug.enabled` is false by default; with it false the
  *   shell builds no hub, installs no decorator, adds no tray row and creates no window, so the
  *   extra gate evaluations in `observing-policy.ts` never run.
@@ -48,6 +52,7 @@ import type { Timers } from '@riki/context';
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugHub, DebugSurface, DebugWindow, DebugWindowFactory } from './contracts.js';
 import type { DebugControlPort } from './controls.js';
+import type { DebugRehearsalPort } from './rehearsal.js';
 import { createDebugHub } from './hub.js';
 
 export * from './contracts.js';
@@ -71,6 +76,25 @@ export type {
 } from './controls.js';
 export { createElectronDebugWindowFactory } from './electron-window.js';
 export type { ElectronDebugWindowOptions } from './electron-window.js';
+export {
+  createMockStateLibrary,
+  emptyMockStateLibrary,
+  nodeMockStateFiles,
+  projectMockStates,
+} from './mock-states.js';
+export type {
+  MockState,
+  MockStateFiles,
+  MockStateLibrary,
+  MockStateLibraryDeps,
+} from './mock-states.js';
+export { createDebugRehearsal, resetRehearsalIds } from './rehearsal.js';
+export type {
+  DebugRehearsalDeps,
+  DebugRehearsalPort,
+  RehearsalOutcome,
+  RehearsalStack,
+} from './rehearsal.js';
 
 export interface DebugSurfaceDeps {
   readonly hub: DebugHub;
@@ -94,6 +118,14 @@ export interface DebugSurfaceDeps {
    * itself. It is also what keeps a shell built before this port existed compiling unchanged.
    */
   readonly controls?: DebugControlPort;
+  /**
+   * Absent means **the rehearse button is dark** — every `rehearse` intent is refused and recorded.
+   *
+   * Optional for the same reasons `controls` is, plus one of its own: a rehearsal needs a library of
+   * mock states on disk and a way to build a throwaway coaching root, and neither exists in a
+   * packaged build or in a test that only drives the hub.
+   */
+  readonly rehearsal?: DebugRehearsalPort;
 }
 
 /**
@@ -161,12 +193,48 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     sendFrame();
   }
 
+  /**
+   * A rehearsal, and then a frame as soon as it has produced one (ADR-0038).
+   *
+   * Not awaited by the intent handler: under `llm` this is a model call taking seconds, and an
+   * intent handler that blocked on it would stall the frame pump — so the window would freeze for
+   * the duration of the thing it is showing progress for. The port refuses a second run itself, so
+   * the fire-and-forget is bounded rather than a queue.
+   *
+   * A missing port is the same case as a missing control port and gets the same treatment: an
+   * `inspector` problem, because a button that quietly does nothing is the failure this window
+   * exists to make impossible.
+   */
+  function rehearse(stateId: string): void {
+    if (deps.rehearsal === undefined) {
+      hub.recordProblem('inspector', `rehearsal: this inspector has no mock states`, deps.now());
+      sendFrame();
+      return;
+    }
+    void deps.rehearsal.run(stateId).then(
+      () => {
+        sendFrame();
+      },
+      // `run` is total and records its own failures, so this is only reachable if the port itself
+      // is broken. Swallowing it would leave a button that did nothing and said nothing.
+      (error: unknown) => {
+        hub.recordProblem(
+          'inspector',
+          `rehearsal: ${error instanceof Error ? error.message : String(error)}`,
+          deps.now(),
+        );
+        sendFrame();
+      },
+    );
+  }
+
   const stopIntent = window.onIntent((intent) => {
     // The window remounting after a crash: answer immediately rather than making it wait out the
     // interval on an empty document.
     if (intent.kind === 'ready') sendFrame();
     if (intent.kind === 'fault') hub.recordProblem('inspector', intent.message, deps.now());
     if (intent.kind === 'control') applyControl(intent.id, intent.value);
+    if (intent.kind === 'rehearse') rehearse(intent.stateId);
     if (intent.kind === 'reset-controls') {
       deps.controls?.reset();
       sendFrame();
@@ -180,6 +248,7 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
   return {
     hub,
     controls: deps.controls ?? null,
+    rehearsal: deps.rehearsal ?? null,
 
     async open(): Promise<void> {
       if (disposed) return;

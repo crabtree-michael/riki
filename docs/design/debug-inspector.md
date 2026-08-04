@@ -120,6 +120,35 @@ appear, and at the bottom means *keep the oldest row still* as the buffer grows 
 Freeze is still worth having and is now about the values rather than the scrollbar: text selection
 does not survive a redraw, and a gate ladder read live is read while it is replaced.
 
+### 2.5 Asking a question, not just reading the answer
+
+ADR-0037 made the numbers movable and left the cost of a reading where it was: seeing what the coach
+does with laning phase still meant reaching laning phase. **ADR-0038's Rehearsal panel** replaces
+that with a button. Pick a mock game state, click, and one coach turn runs against it — the drafted
+line lands in Coach turns, the gate ladder in Triggers, and neither took a match to produce.
+
+What makes an *action* intent acceptable where ADR-0037 explicitly refused one is that a rehearsal
+reaches none of the live match. It builds a scratch world, a scratch context and a scratch coach,
+runs one consultation and disposes all three: the facts the app is coaching on never see a mock
+payload, the latch set and cooldown clocks in the Gate state panel do not move, and **no
+`CoachingSessionPort` is reachable from `rehearsal.ts` at all** — so it cannot make Riki speak. That
+last one is enforced by there being no path, not by a flag.
+
+A rehearsed turn is marked wherever it could be mistaken for a real one: `mockState` carries the
+state's id and draws a `mock:` pill, the outcome closes `rehearsed` or `declined` and never `spoke`,
+and the ids come from their own `rehearsal_N` counter so they cannot collide with the coach's. The
+window's whole job is to be believed, and offering a fabricated moment and a played one as the same
+claim is the one way it could stop being.
+
+Two things it is honest about rather than hiding. The states are `fixtures/gsi/*.jsonl` — the corpus
+`shell.test.ts` already replays — so **a mock state is a timeline, not a moment**: what the coach
+reads is what the whole file fuses to. And the recording is *slid* onto main's clock rather than
+replayed at its recorded times, because a fixture's `atMs` starts at zero and applying it literally
+would age every fact to `expired` and render as an empty match.
+
+The dropdown is a disclosure built from buttons, for the reason every control is a button: a native
+`<select>`'s popup would be destroyed by the next redraw, 250 ms later.
+
 ## 3. Shape
 
 ```
@@ -373,8 +402,13 @@ Then **Riki ▸ Open Inspector…** in the tray. `docs/runbooks/dev-setup.md` ha
    inspectable *and movable*; it does not tune them, and it does not judge the result. That is still
    coaching-trigger-architecture.md §16 step 3 — which now needs a person with a corpus and an
    opinion, rather than a person with a corpus, an opinion and a rebuild between every reading.
-7. **Settings only, not actions.** "Force a tick", "clear the latches", "say this now" are all
-   useful and none is a control. Each needs surface on `EventEngine` or `CoachingAgent` that ADR-0032
-   declined to add and ADR-0037 went on declining; adding one is a decision, not an extension.
+7. ~~**Settings only, not actions.**~~ **One action exists: ADR-0038's rehearsal** (§2.5). "Force a
+   tick" is now a button, taken as a decision rather than an extension, and taken on a coaching root
+   built for the call and thrown away — so the live latches, cooldowns and ledger are untouched. The
+   other two remain declined and remain different in kind: "clear the latches" mutates the live
+   coach, and "say this now" reaches the session port, which is the one thing the bridge has never
+   been able to do. **Still open within the rehearsal:** a mock state is a whole recording replayed
+   to its end, so there is no way to ask about a point part-way through one. That needs a scrubber
+   and a decision about what "the state at line 40" means when fusion is order-dependent.
 8. **No sweep.** `DebugSurface.controls` is exposed so a headless replay can move a threshold between
    runs, which is the shape a `pnpm dev:replay` sweep would use — nothing does yet.

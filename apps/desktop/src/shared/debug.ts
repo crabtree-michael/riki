@@ -62,6 +62,15 @@ export interface DebugFrame {
   readonly counters: DebugCounters;
   readonly problems: readonly DebugProblem[];
   /**
+   * The mock game states a rehearsal may be run against — see `DebugMockState` (ADR-0038).
+   *
+   * In the frame for the same reason `controls` is: the library is read off disk, so a directory
+   * that was empty when the window opened and has a new `.jsonl` in it now should populate the
+   * dropdown without a restart. Empty is the ordinary answer in a packaged build, where there is no
+   * `fixtures/` directory to read.
+   */
+  readonly mocks: readonly DebugMockState[];
+  /**
    * Every setting the window may move, with its current value — see `DebugControl`.
    *
    * In the frame rather than fetched once on mount, because a control's value can change without
@@ -329,8 +338,29 @@ export interface DebugTurn {
   readonly briefOmitted: readonly string[];
   /** An empty brief is a turn that does not happen (coaching-architecture.md §6.5). */
   readonly briefEmpty: boolean;
-  /** `open` until `closeTurn`, then `spoke` | `silent` | `cancelled`. */
+  /**
+   * `open` until `closeTurn`, then `spoke` | `silent` | `cancelled`.
+   *
+   * A rehearsed turn (ADR-0038) closes `rehearsed` or `declined` and never `spoke`: nothing was
+   * sent to a session, so claiming otherwise in the one window built to be believed would be the
+   * worst kind of lie this file can tell.
+   */
   readonly outcome: string;
+  /**
+   * The line the LLM coach drafted, before any voice model saw it. Null under the static coach.
+   *
+   * Distinct from `agentSaid`, which is a *transcript* — what was spoken. On a rehearsal there is
+   * no transcript because nothing speaks, and this is the whole of the coach's text output.
+   */
+  readonly guidance: string | null;
+  /**
+   * The mock game state this turn was rehearsed against, or null for a real turn (ADR-0038).
+   *
+   * Load-bearing rather than decorative: a rehearsal renders exactly like a live turn and lands in
+   * the same buffer, so without this the panel would offer a fabricated moment and a real one as
+   * the same claim.
+   */
+  readonly mockState: string | null;
   /** What Riki actually said, once the final transcript arrives. Null while a turn is open. */
   readonly agentSaid: string | null;
   /**
@@ -433,6 +463,32 @@ export interface DebugControl {
 }
 
 // -----------------------------------------------------------------------------------------------
+// Mock game states — what a rehearsal is run against (ADR-0038)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * One selectable game state, described well enough that the dropdown needs no table of its own.
+ *
+ * The library is `fixtures/gsi/*.jsonl` read off disk (`main/debug/mock-states.ts`), which is the
+ * corpus `shell.test.ts` and `pnpm dev:replay` already drive the whole app through — so a scenario
+ * added for a test is selectable here the same day, and one added here is a fixture. A second,
+ * inspector-only set of mock states would be a corpus nothing else exercised.
+ *
+ * **A recording, replayed to its end.** A `.jsonl` is a timeline rather than a moment, and the state
+ * a rehearsal sees is the world the whole file fuses to. Picking a point part-way through is
+ * `debug-inspector.md` §9's open question, not a thing this type hides.
+ */
+export interface DebugMockState {
+  /** Stable, and the only thing the `rehearse` intent carries. The file's base name. */
+  readonly id: string;
+  readonly label: string;
+  /** The recording's own header line — usually whether it was captured or synthesised. */
+  readonly note: string | null;
+  /** How many GSI payloads it replays. Zero means a file that parsed to nothing. */
+  readonly observations: number;
+}
+
+// -----------------------------------------------------------------------------------------------
 // The bridge
 // -----------------------------------------------------------------------------------------------
 
@@ -447,6 +503,9 @@ export const DEBUG_LIMITS = {
   /** A control id and an enum value. Both are ours; the cap is against a malformed sender. */
   controlIdChars: 64,
   controlValueChars: 64,
+  /** How many mock states a frame carries. A dropdown is not a file browser. */
+  mockStates: 64,
+  mockIdChars: 64,
 } as const;
 
 /** How often main pushes a frame while the window is open. 4 Hz reads as live and costs nothing. */
@@ -473,7 +532,17 @@ export type DebugIntent =
    */
   | { readonly kind: 'control'; readonly id: string; readonly value: DebugControlValue }
   /** Drop every override at once, so a tuning session has a way back to the resolved config. */
-  | { readonly kind: 'reset-controls' };
+  | { readonly kind: 'reset-controls' }
+  /**
+   * Run one coach turn now, against a named mock game state (ADR-0038).
+   *
+   * The **only** intent that makes something happen rather than moving a setting, and the bound on
+   * it is the same shape as `control`'s: `stateId` names a row in a library main assembles, so
+   * there is no path from here to an arbitrary file. What it runs is a *rehearsal* — a scratch
+   * world, a scratch coach and a scratch context, none of which the live match can see, and no
+   * session turn at any point. It cannot make Riki speak.
+   */
+  | { readonly kind: 'rehearse'; readonly stateId: string };
 
 /**
  * The inspector renderer's entire view of the outside world, as `window.rikiDebug`.
@@ -483,6 +552,12 @@ export type DebugIntent =
  * `packages/events/src/config.ts` visible and left "so what happens if I move this" as a rebuild.
  * The answer is a fourth member, `control`, and the property that replaces read-only-by-construction
  * is narrower and enforced in three places rather than assumed:
+ *
+ * ADR-0038 adds a fifth, `rehearse`, and it is the first that is an *action*. It does not widen the
+ * paragraph below, because a rehearsal reaches none of the objects the live match uses: it builds a
+ * world, a coach and a context of its own, runs one turn against them and throws all three away.
+ * The live world model, the live engine's latches and cooldowns, and the Realtime session are
+ * exactly as far away from this bridge as they were before.
  *
  * - **Nothing changes unless a person clicks.** With no `control` intent the app behaves exactly as
  *   it does with the window shut, which is what `shell.test.ts` asserts by replaying a fixture with

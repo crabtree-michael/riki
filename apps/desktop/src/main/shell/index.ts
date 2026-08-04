@@ -52,6 +52,12 @@
  * `TriggerPolicy` and `RikiContext` are decorated on their way into the engine and the agent, and
  * both decorators return their delegate's value unchanged. With the flag off nothing above changes
  * in any way, which is the property the whole component is built around.
+ *
+ * Since ADR-0038 it can also *rehearse*: `buildRehearsalStack` assembles a second, throwaway copy of
+ * the coaching root above — its own world, tape, assembler and coach — so the inspector can run one
+ * coach turn against a mock game state with no match running. Nothing in the diagram is shared with
+ * it except the code that builds it, which is the point: it measures the coach the app runs, and it
+ * cannot reach the world, the latches, the ledger or the session the app is using.
  */
 
 import type { CoachModel, CoachTelemetry, LlmCoachConfig } from '@riki/coach';
@@ -65,8 +71,8 @@ import {
 import type { EventTape, TriggerCounters, TriggerPolicy } from '@riki/events';
 import { createEventEngine, createEventTape, createTriggerPolicy } from '@riki/events';
 import type { MatchLifecycleEvent } from '@riki/gsi';
-import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
-import { createStalenessPolicy } from '@riki/world-model';
+import type { Clock as WorldClock, MonoMs, WorldModelStore } from '@riki/world-model';
+import { createStalenessPolicy, createWorldModelStore } from '@riki/world-model';
 
 import type { Millis, Unsubscribe } from '../../shared/overlay.js';
 import type {
@@ -87,13 +93,17 @@ import {
 import { createVoiceBridge } from '../adapters/voice.js';
 import type {
   DebugControls,
+  DebugRehearsalPort,
   DebugSessionInput,
   DebugSurface,
   DebugWindowFactory,
+  MockStateLibrary,
+  RehearsalStack,
 } from '../debug/index.js';
 import {
   createDebugControls,
   createDebugHub,
+  createDebugRehearsal,
   createDebugSurface,
   createObservingPolicy,
   observeContext,
@@ -208,6 +218,16 @@ export interface ShellDeps {
    * *collects* is testable with no window, and the window itself is Tier 5's business.
    */
   readonly debugWindows?: DebugWindowFactory;
+  /**
+   * The mock game states the inspector may rehearse against (ADR-0038). Only consulted when
+   * `config.debug.enabled`.
+   *
+   * Injected rather than read, because it is a directory on disk and this file does no I/O — the
+   * same rule that keeps `onCoachModeChanged` a callback. `main/index.ts` points it at
+   * `fixtures/gsi/`; absent means the dropdown is empty and the rehearse button is dark, which is
+   * what a packaged build and most tests want.
+   */
+  readonly mockStates?: MockStateLibrary;
 }
 
 /**
@@ -335,6 +355,28 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           },
         });
 
+  /**
+   * The mock-state rehearsal (ADR-0038), or null when there is nothing to rehearse against.
+   *
+   * Two closures reach forward into things this function has not declared yet, exactly as
+   * `debugControls` does and for the same reason: neither runs until somebody clicks. `stack` is the
+   * interesting one — it hands the rehearsal the *same* `buildDriver` the live match is built from,
+   * pointed at a world it owns, so a rehearsal measures the coach the app actually runs rather than
+   * a second assembly of one.
+   */
+  const debugRehearsal: DebugRehearsalPort | null =
+    debugHub === null || deps.mockStates === undefined
+      ? null
+      : createDebugRehearsal({
+          library: deps.mockStates,
+          hub: debugHub,
+          now: () => clock.now(),
+          // The live store takes these same policies by default (`buildStateSubsystem`); naming
+          // them keeps the two from diverging silently if either side ever passes options.
+          world: () => createWorldModelStore({ staleness }),
+          stack: buildRehearsalStack,
+        });
+
   const debug: DebugSurface | null =
     debugHub === null
       ? null
@@ -342,6 +384,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           hub: debugHub,
           ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
           ...(debugControls === null ? {} : { controls: debugControls }),
+          ...(debugRehearsal === null ? {} : { rehearsal: debugRehearsal }),
           timers,
           now: () => clock.now(),
         });
@@ -560,18 +603,37 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
    * wants the shared tape and the novelty gate's memory, and the LLM coach wants a narrator and a
    * model. Neither wants a timer — the LLM coach is push-only.
    */
-  function buildDriver(mode: CoachMode, context: RikiContext, tape: EventTape): CoachDriver {
+  function buildDriver(
+    mode: CoachMode,
+    context: RikiContext,
+    tape: EventTape,
+    /**
+     * Which world this coach reads, and whether its ticks are worth reporting.
+     *
+     * Defaults to the live pair, so every call that predates ADR-0038 is unchanged. The inspector's
+     * rehearsal passes a scratch store and `observe: false`: a tick in the Triggers panel claims
+     * *this is what the engine decided against the world at that moment*, and a rehearsal's is a
+     * decision about a state nobody is playing. Reporting one would put a fabricated ladder next to
+     * real ones with nothing to tell them apart.
+     */
+    over: { readonly world: WorldModelStore; readonly observe: boolean } = {
+      world: state.world,
+      observe: true,
+    },
+  ): CoachDriver {
+    const world = over.world;
+
     if (mode === 'llm' && deps.coachModel !== undefined) {
       const coachConfig: LlmCoachConfig = withCoachConfig(
         config.coach.model === null ? {} : { model: config.coach.model },
       );
       return llmCoachDriver(
         createLlmCoach({
-          world: state.world,
+          world,
           // The same renderer the voice model reads, with a wider budget — `narrator.ts` says why
           // that is sound and why it changes none of the conversation window's arithmetic.
           narrator: createSnapshotNarrator({
-            world: toContextReader(state.world, { staleness }),
+            world: toContextReader(world, { staleness }),
             tape: toEventTapeReader(tape),
           }),
           model: deps.coachModel(coachConfig),
@@ -597,7 +659,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     const policy: TriggerPolicy = createTriggerPolicy(debugControls?.gates);
 
     const engine = createEventEngine({
-      world: state.world,
+      world,
       clock: worldClock,
       memory: context.coaching,
       tape,
@@ -607,11 +669,11 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
         ? {}
         : { config: debugControls.config, detectors: debugControls.detectors }),
       policy:
-        debug === null
+        debug === null || !over.observe
           ? policy
           : createObservingPolicy({
               delegate: policy,
-              worldVersion: () => state.world.version,
+              worldVersion: () => world.version,
               report: (tick) => {
                 debug.hub.recordTick(tick);
               },
@@ -619,6 +681,51 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     });
 
     return staticCoachDriver(engine);
+  }
+
+  /**
+   * A coaching root for one rehearsal, over a world the inspector fed by hand (ADR-0038).
+   *
+   * Everything the live match gets, built the same way and thrown away afterwards: its own tape, its
+   * own assembler and therefore its own ledger and coaching memory, and whichever coach the mode in
+   * force asks for. That last part is the point — `buildDriver` is shared rather than reimplemented,
+   * so a rehearsal reads the same detectors, the same `TriggerConfig` (including whatever the
+   * Controls panel has it overridden to) and the same model as the match would.
+   *
+   * **The rehearsed coach is not put in quiet mode, and that is a decision rather than an
+   * oversight.** `unprompted` ships off (REPO_SKELETON.md §7.2), so applying it here would make
+   * every rehearsal decline `quiet_mode` on a default install and the feature would be dead on
+   * arrival. What quiet mode protects is unprompted *speech*, and a rehearsal has no path to a
+   * session: it produces text into a debug window because somebody clicked a button, which is the
+   * definition of asking. The consequence to know while reading a ladder: the Gate state panel is
+   * about the live engine, and gate 2 will not agree with it.
+   *
+   * `durable` is the real memory store, read-only on this path — `openTurn` never writes it, and
+   * `openSession` is not called, so no preamble is assembled and nothing reaches the network for it.
+   */
+  function buildRehearsalStack(world: WorldModelStore, matchId: MatchId): RehearsalStack {
+    const tape = createEventTape();
+    const context = createContextAssembler({
+      matchId,
+      world: toContextReader(world, { staleness }),
+      preamble: createPreambleAssembler({ reference: NULL_REFERENCE_DATA }),
+      tape: toEventTapeReader(tape),
+      durable: memoryStore,
+    });
+
+    // `coachMode` rather than `resolveMode(coachMode)`: the resolver reports the no-key degradation
+    // through telemetry, and doing that once per button press would turn one condition into a log
+    // flood. `buildDriver` falls back to the deterministic coach on exactly the same test.
+    const driver = buildDriver(coachMode, context, tape, { world, observe: false });
+
+    return {
+      context,
+      driver,
+      tape,
+      dispose: () => {
+        driver.dispose();
+      },
+    };
   }
 
   /**
@@ -896,6 +1003,10 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       // Empty is impossible here — `debugControls` is non-null whenever `debug` is — but the
       // fallback keeps the frame's shape a fact rather than an invariant somebody has to hold.
       controls: () => debugControls?.list() ?? [],
+
+      // Empty *is* possible here, and it is the ordinary answer in a packaged build and in every
+      // test that wires no library: the dropdown then says there is nothing to rehearse against.
+      mocks: () => debugRehearsal?.states() ?? [],
     });
 
     // App lifetime, not match lifetime — the same reason the voice bridge is attached here. A

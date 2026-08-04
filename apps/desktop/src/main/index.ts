@@ -49,7 +49,11 @@ import {
   resolvePaths,
   saveSettings,
 } from './bootstrap.js';
-import { createElectronDebugWindowFactory } from './debug/index.js';
+import {
+  createElectronDebugWindowFactory,
+  createMockStateLibrary,
+  nodeMockStateFiles,
+} from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
 import type { TimerId } from './session/types.js';
@@ -249,6 +253,12 @@ function buildShell(): RikiShell {
       preloadPath: paths.debugPreload,
       entryPath: paths.debugEntry,
     }),
+
+    // The inspector's rehearsal library (ADR-0038), also consulted only when the flag is on. Built
+    // here rather than in the shell because it is a directory read and `shell/index.ts` does no
+    // I/O — the same split as `createFileMemoryStore`. A missing directory is an empty dropdown,
+    // which is what a packaged build gets.
+    mockStates: createMockStateLibrary({ files: nodeMockStateFiles(paths.mockStates) }),
   });
 }
 

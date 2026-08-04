@@ -27,9 +27,16 @@
  * See docs/design/debug-inspector.md §3.
  */
 
-import type { DebugCommand, DebugControl, DebugFrame, DebugIntent } from '../../shared/debug.js';
+import type {
+  DebugCommand,
+  DebugControl,
+  DebugFrame,
+  DebugIntent,
+  DebugMockState,
+} from '../../shared/debug.js';
 import type { Unsubscribe } from '../../shared/overlay.js';
 import type { DebugControlPort } from './controls.js';
+import type { DebugRehearsalPort } from './rehearsal.js';
 
 /**
  * Where every observation lands, and the only thing that holds inspector state.
@@ -93,6 +100,13 @@ export interface DebugSources {
    * exactly those cases, which are the ones worth seeing.
    */
   readonly controls?: () => readonly DebugControl[];
+  /**
+   * The mock game states a rehearsal may name (ADR-0038), pulled for the same reason `controls` is.
+   *
+   * The library is a directory listing, so a fixture added while the window is open should appear
+   * in the dropdown without a restart — which a value captured at wiring time could not do.
+   */
+  readonly mocks?: () => readonly DebugMockState[];
 }
 
 export interface DebugSessionInput {
@@ -225,6 +239,17 @@ export interface DebugTurnOpenedInput {
   readonly briefSections: readonly string[];
   readonly briefOmitted: readonly string[];
   readonly briefEmpty: boolean;
+  /**
+   * The line the LLM coach drafted for this turn, or null.
+   *
+   * Present and nullable rather than optional, for the reason `DebugControl`'s fields are: `null`
+   * from the live path is a *claim* — the static coach drafts nothing, and the decorator that
+   * observes `openTurn` cannot see a proposal at all — and a field that were merely absent would
+   * make "no drafted line" and "this projection forgot" look the same.
+   */
+  readonly guidance: string | null;
+  /** The mock state a rehearsal ran against (ADR-0038); null for every real turn. */
+  readonly mockState: string | null;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -264,6 +289,14 @@ export interface DebugSurface {
    * a threshold across a fixture instead of editing `config.ts` between runs.
    */
   readonly controls: DebugControlPort | null;
+  /**
+   * The rehearsal port (ADR-0038), or null when this inspector has no mock states to run.
+   *
+   * Exposed for the same reason `controls` is: everything this component does has to be drivable
+   * with no window. `shell.test.ts` uses it to assert that a rehearsal produces a turn and leaves
+   * the live match's world, latches and ledger exactly where they were.
+   */
+  readonly rehearsal: DebugRehearsalPort | null;
   /** Idempotent: opening an already-open inspector focuses it rather than making a second one. */
   open(): Promise<void>;
   close(): void;

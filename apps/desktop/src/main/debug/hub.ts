@@ -187,6 +187,11 @@ export function createDebugHub(): DebugHub {
 
         problems: [...problems],
 
+        // A directory listing, read at frame time so a fixture dropped in while the window is open
+        // reaches the dropdown without a restart (`mock-states.ts`). Empty is the ordinary answer
+        // in a packaged build and in `shell.test.ts`.
+        mocks: (sources.mocks?.() ?? []).slice(0, DEBUG_LIMITS.mockStates),
+
         // Not reset with the match, deliberately: an override is a property of the tuning session,
         // and a threshold that silently snapped back to the config at the horn would be the most
         // confusing thing this window could do to somebody halfway through measuring something.
@@ -263,6 +268,10 @@ export function createDebugHub(): DebugHub {
         briefSections: input.briefSections,
         briefOmitted: input.briefOmitted,
         briefEmpty: input.briefEmpty,
+        // Clipped like the other two long fields: a drafted line is bounded by the coach's
+        // `maxSayChars`, but this buffer's bounds are not somebody else's config to trust.
+        guidance: input.guidance === null ? null : clip(input.guidance, DEBUG_LIMITS.textChars),
+        mockState: input.mockState,
         outcome: 'open',
         agentSaid: null as string | null,
         playerSaidChars: null as number | null,
