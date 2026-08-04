@@ -149,6 +149,20 @@ that reaches into another one is `TS6307` — which reads like a missing file ra
 it happily and the test passes long before `pnpm typecheck` disagrees, so this fails at the gate
 rather than while you are writing it.
 
+**2026-08-04 — a test over fused world state can pass against a deliberately broken fusion, because
+the game clock is carried in the payload and is not a function of *when* you applied it.** ADR-0038's
+rehearsal slides a `fixtures/gsi/*.jsonl` onto main's clock so the last line lands on `now`; applied
+at recorded times instead, every fact ages to `expired` and the snapshot renders as an empty match.
+The first test for this asserted `snapshot(now).clock !== null` and **passed with the sliding
+removed** — `map.clock_time` is 601 in the recording either way. `state.meta.lastUpdatedAt` is the
+field that moves, because it is the observation stamp rather than the recorded value.
+
+*Why:* the general rule is worth more than the instance. **When a test covers *when* something was
+observed, assert on a stamp the harness controls, never on a value the fixture carries** — and prove
+it by breaking the implementation on purpose and watching the test fail. Two minutes with `python3 -`
+and a string replace is the whole technique, and it is the only thing that distinguishes a test that
+guards behaviour from one that merely runs it.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).
