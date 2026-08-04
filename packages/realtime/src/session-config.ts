@@ -133,10 +133,16 @@ export function buildSessionUpdate(config: RealtimeSessionConfig): SessionUpdate
       // the question to a default we do not control. `tool_choice` is gone with it — there is
       // nothing to choose between.
       tools: [],
+      // The discriminator is required and there is no `auto` on the wire: GA takes
+      // `{type: 'retention_ratio', retention_ratio}`, and refuses the object without a `type` with
+      // `Missing required parameter: 'session.truncation.type'` — which fails the whole session
+      // open, not just the field. `disabled` is the bare string and is refused as an object.
+      // Probed against the live API on 2026-08-04; `session-config.test.ts` records all four
+      // answers.
       truncation:
         config.truncation.mode === 'disabled'
           ? 'disabled'
-          : { retention_ratio: config.truncation.retentionRatio },
+          : { type: 'retention_ratio', retention_ratio: config.truncation.retentionRatio },
     },
   };
 }

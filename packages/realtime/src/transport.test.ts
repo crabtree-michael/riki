@@ -34,11 +34,13 @@ const SECRET: ClientSecret = {
   sessionId: 's1' as SessionId,
 };
 
-function peer() {
+function peer(autoOpen = true) {
   const order: string[] = [];
   let channelMessage: ((payload: string) => void) | null = null;
   const channelSends: string[] = [];
   let channelName = '';
+  /** Fired by the test to mean the DTLS/SCTP handshake finished — see `openChannel` below. */
+  let channelOpen: (() => void) | null = null;
 
   const channel: DataChannelLike = {
     send: (payload) => channelSends.push(payload),
@@ -48,7 +50,16 @@ function peer() {
         channelMessage = null;
       };
     },
-    onOpen: (): Unsubscribe => () => undefined,
+    onOpen: (listener): Unsubscribe => {
+      channelOpen = listener;
+      // A real channel opens on its own once the handshake lands, so the default stub does too —
+      // otherwise every test here would have to know about a step it is not about. The one test
+      // that *is* about it passes `autoOpen: false` and fires it by hand.
+      if (autoOpen) setTimeout(listener, 0);
+      return () => {
+        channelOpen = null;
+      };
+    },
     close: () => order.push('channel.close'),
   };
 
@@ -82,11 +93,12 @@ function peer() {
     channelSends,
     channelName: () => channelName,
     deliver: (payload: string) => channelMessage?.(payload),
+    openChannel: () => channelOpen?.(),
   };
 }
 
-function harness(response = { ok: true, status: 200, body: 'v=0 answer' }) {
-  const p = peer();
+function harness(response = { ok: true, status: 200, body: 'v=0 answer' }, autoOpen = true) {
+  const p = peer(autoOpen);
   const requests: { url: string; headers: Record<string, string>; body: string }[] = [];
   const transport = createWebRtcTransport({
     createPeerConnection: () => p.connection,
@@ -118,6 +130,35 @@ describe('WebRTC negotiation', () => {
     const { transport, order } = harness();
     await transport.connect(SECRET, MEDIA);
     expect(order.indexOf('createDataChannel')).toBeLessThan(order.indexOf('createOffer'));
+  });
+
+  /**
+   * Measured on 2026-08-04, on a real session, and the whole reason `session-lost` fired within a
+   * millisecond of every match opening: the SDP answer completes *signalling*, and the data channel
+   * opens later, when the DTLS/SCTP handshake finishes. Reporting `open` at `setRemoteDescription`
+   * meant `createRealtimeSession` immediately sent its config on a channel still in `connecting`,
+   * which throws `RTCDataChannel.readyState is not 'open'` — so the session degraded before it had
+   * ever carried an event and Riki could not speak for the rest of the match.
+   *
+   * The WebSocket transport has always awaited its `onOpen`. This is the same wait, one transport
+   * over.
+   */
+  it('does not report open until the data channel has opened', async () => {
+    const { transport, openChannel } = harness(undefined, false);
+    const states: string[] = [];
+    transport.onStateChange((state) => states.push(state));
+
+    const connecting = transport.connect(SECRET, MEDIA);
+    // Flush the macrotask queue, not three microtasks: the offer/answer round trip is several
+    // awaits deep and a short tick count passes this test without ever reaching the point it is
+    // about. Signalling is done here; the channel is not open.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).not.toContain('open');
+
+    openChannel();
+    await connecting;
+    expect(states).toContain('open');
   });
 
   it('names the channel oai-events, which is fixed by the API', async () => {

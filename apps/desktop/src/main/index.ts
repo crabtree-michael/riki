@@ -132,7 +132,7 @@ function buildShell(): RikiShell {
 
   const clock = createElectronClock();
   const apiKey = config.openai.apiKey;
-  const voiceTrace = createVoiceTrace();
+  const voiceTrace = createVoiceTrace(() => clock.now());
 
   /**
    * The one line that decides whether Riki speaks.
@@ -272,13 +272,18 @@ function buildShell(): RikiShell {
  * its telemetry at construction, the hub belongs to the shell, and the shell needs the session. A
  * mutable sink is the small half of that knot — everything it forwards is a string, and with no hub
  * attached it is exactly the four no-ops it replaced.
+ *
+ * **The clock is main's, injected, and never `Date.now()`.** A frame's ages are computed against
+ * `DebugFrame.at`, which comes from the same monotonic clock; a step stamped with wall-clock epoch
+ * milliseconds subtracts to a large negative number and renders as `0ms ago` on every row. Measured
+ * on 2026-08-04, in a screenshot, after shipping it — the rows were in the right order and every
+ * age was a lie.
  */
-function createVoiceTrace(): {
+function createVoiceTrace(now: () => number): {
   readonly sink: VoiceSessionTelemetry;
   attach(hub: DebugHub | null): void;
 } {
   let hub: DebugHub | null = null;
-  let now = (): number => 0;
 
   const record = (stage: string, message: string): void => {
     hub?.recordTrace(stage, message, now());
@@ -309,7 +314,6 @@ function createVoiceTrace(): {
     },
     attach(next: DebugHub | null): void {
       hub = next;
-      now = () => Date.now();
     },
   };
 }

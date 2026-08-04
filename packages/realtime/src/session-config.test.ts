@@ -90,6 +90,7 @@ describe('the beta → GA trap', () => {
           "tools": [],
           "truncation": {
             "retention_ratio": 0.8,
+            "type": "retention_ratio",
           },
           "type": "realtime",
         },
@@ -135,10 +136,19 @@ describe('turn detection — ADR-0017', () => {
 });
 
 describe('truncation and tools', () => {
-  it('carries the retention ratio in auto mode', () => {
-    expect(session().truncation).toEqual({ retention_ratio: 0.8 });
+  /**
+   * The discriminator is required, and its absence is not a lenient default — the server answers
+   * `Missing required parameter: 'session.truncation.type'` and the whole session fails to open.
+   * Probed against the live API on 2026-08-04: `{retention_ratio}` is refused,
+   * `{type: 'retention_ratio', retention_ratio}` is accepted, and `{type: 'auto'}` is refused for
+   * want of a ratio — there is no `auto` on the wire, only the ratio that implements it.
+   */
+  it('carries the retention ratio in auto mode, with the type the GA schema requires', () => {
+    expect(session().truncation).toEqual({ type: 'retention_ratio', retention_ratio: 0.8 });
   });
 
+  // The bare string, and it is not an inconsistency worth 'fixing': probed on the same day,
+  // `'disabled'` is accepted and `{type: 'disabled'}` is refused for want of a ratio.
   it('supports the dev-only disabled mode, which errors instead of dropping context', () => {
     const payload = session({ ...BASE, truncation: { mode: 'disabled', retentionRatio: 0.8 } });
     expect(payload.truncation).toBe('disabled');

@@ -209,6 +209,19 @@ export function createWebRtcTransport(deps: WebRtcTransportDeps): RealtimeTransp
       }
 
       await connection.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+
+      // The answer completes *signalling*; the data channel opens later, when the DTLS/SCTP
+      // handshake finishes. Reporting `open` here meant the session sent its config on a channel
+      // still in `connecting` — `RTCDataChannel.readyState is not 'open'` — which degraded the
+      // session within a millisecond of every match opening and left Riki unable to speak for the
+      // rest of it. The WebSocket transport below has always awaited its `onOpen`; this is the same
+      // wait, one transport over.
+      await new Promise<void>((resolve) => {
+        const stop = events.onOpen(() => {
+          stop();
+          resolve();
+        });
+      });
       setState('open');
     },
 
