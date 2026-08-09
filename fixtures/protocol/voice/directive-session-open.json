@@ -28,5 +28,6 @@
     "preRollMs": 200
   },
   "transport": "webrtc",
-  "budgetUsd": 2.5
+  "budgetUsd": 2.5,
+  "tools": true
 }

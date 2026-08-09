@@ -1,6 +1,6 @@
 ---
 name: agent-context
-description: What the LLM sees — `packages/context` (the rolling snapshot renderer, the rendering primitives, the hero reference data) and `apps/desktop/src/main/agent/` (the turn agent and the world-view adapter). Use when changing the snapshot format or its token budget, adding a section, or changing what the model is handed for a turn.
+description: What the LLM sees — `packages/context` (the rolling snapshot renderer, the rendering primitives, the hero reference data) and `apps/desktop/src/main/agent/` (the turn agent, the world-view adapter, and the tool dispatch table the model reaches the world through). Use when changing the snapshot format or its token budget, adding a section, changing what a tool answers, or changing what the model is handed for a turn.
 ---
 
 # Feeding the agent
@@ -12,14 +12,16 @@ whole of this area since [ADR-0042](../../../docs/adr/0042-riki-answers-question
 `WorldSnapshot` in, ~250–400 tokens out, pure and synchronous. `apps/desktop/src/main/agent/` is
 where it meets a world model and a session.
 
-> **Two whole pull surfaces have been deleted here, and the second is coming back.** ADR-0023
-> removed `packages/context/src/tools/` — a parse/admit/queue/execute/render pipeline with a
-> manifest in the cached prefix — on the grounds that the trigger engine already knew what a turn
+> **Two whole pull surfaces have been deleted here, and the second is back as of 2026-08-09.**
+> ADR-0023 removed `packages/context/src/tools/` — a parse/admit/queue/execute/render pipeline with
+> a manifest in the cached prefix — on the grounds that the trigger engine already knew what a turn
 > was about. ADR-0042 then removed the trigger engine, which takes that argument with it:
 > [`conversational-architecture.md`](../../../docs/design/conversational-architecture.md) §4 gives
-> the model five narrow tools instead, and they are waves 2–3 of the migration. **When you build
-> them, read ADR-0023 first** — it is the record of how the first one failed, and its
-> failure-code taxonomy and consent gate are the parts not to rebuild.
+> the model five narrow tools instead. They are live: `main/agent/tools.ts` is the dispatch table,
+> and it is the *second* thing the model is handed for a turn. **When you change either, remember
+> the other exists** — a fact that is cheap in the snapshot and also fetchable by a tool is being
+> paid for twice, on every turn, in the cached prefix. If you read ADR-0023 for the history, its
+> failure-code taxonomy and consent gate are the parts that were deliberately not rebuilt.
 
 ## What is gone, so you do not go looking
 

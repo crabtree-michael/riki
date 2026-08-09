@@ -74,3 +74,5 @@ export { createSnapshotSource, SNAPSHOT_TOKENS } from './snapshot.js';
 export type { SnapshotSourceDeps } from './snapshot.js';
 export { toContextReader, toContextSnapshot, observedFrom } from './world-view.js';
 export type { WorldViewOptions } from './world-view.js';
+export { createWorldToolDispatcher } from './tools.js';
+export type { WorldToolDeps } from './tools.js';

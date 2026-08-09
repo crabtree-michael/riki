@@ -26,6 +26,18 @@
  * rejecting them would leave the overlay claiming Riki is talking forever. That is the one
  * confusion `silent-session.ts` was written to avoid, and it is just as easy to reintroduce here.
  *
+ * ## The tool call is the one message that comes back the other way — T12
+ *
+ * Everything else here is main telling the renderer something. `voice.tool.call` is the renderer
+ * asking main a question, because the model's five tools read a `WorldState` and only this process
+ * may hold one (ADR-0002, ADR-0015). Before T12 there was no such message, so nothing injected a
+ * `ToolDispatcher`, so `packages/realtime` sent `tools: []` and a live session had no tools at all
+ * — everything ADR-0042, T3, T4, T6 and T9 built was invisible in a real match. That was found by
+ * a player, not by a test, which is what the round trip in `session.test.ts` is for.
+ *
+ * `answerToolCall` below is the far end. Its one rule is `packages/realtime`'s rule: a call is
+ * answered whatever happens, because the answer lands in a sentence that is already being spoken.
+ *
  * ## Renewal — ADR-0045
  *
  * The Realtime API closes a session at 60 minutes. A Dota match plus draft plus post-game passes
@@ -64,11 +76,12 @@
 import type { RikiConfig } from '@riki/config';
 import type { Timers, TurnId } from '@riki/context';
 import type { VoiceDirective, VoiceUpdate } from '@riki/protocol';
-import { voice } from '@riki/protocol';
+import { TOOLS, voice } from '@riki/protocol';
 import type {
   ApiKey,
   CaptureMode,
   ClientSecretBroker,
+  ToolDispatcher,
   TurnEndReason,
   VoiceEvent,
   VoiceFault,
@@ -117,6 +130,20 @@ export interface VoiceSessionTelemetry {
     reason: RenewalReason,
     detail: string,
   ): void;
+  /**
+   * A tool call that produced no fact, and why.
+   *
+   * The name is whatever the model said, so it may not be one of the five. `reason` is
+   * `packages/realtime`'s `ToolCallRejection` — `unknown-tool`, `malformed-json`,
+   * `invalid-arguments`, `no-tools`, `no-call-id` — or `bridge-timeout`, which is the renderer
+   * answering on our behalf because this process did not.
+   *
+   * Separate from `fault` for the same reason `renewal` is: it is not something to show the
+   * player. ADR-0049 chose a vaguer sentence over an error nobody can act on, and the whole cost
+   * of that choice is that the layer goes wrong quietly. This is the signal that makes it loud
+   * enough for whoever is reading the inspector, and there is no other.
+   */
+  toolRejected(name: string, reason: string): void;
 }
 
 export interface VoiceSessionDeps {
@@ -144,6 +171,22 @@ export interface VoiceSessionDeps {
   readonly timers?: Timers;
   /** Overridable so a test does not wait 50 minutes. Defaults to `DEFAULT_RENEW_AFTER_MS`. */
   readonly renewal?: RenewalOptions;
+  /**
+   * What answers the model's tool calls (ADR-0042, T12).
+   *
+   * The five tools read a `WorldState`, and this process is the only one that may hold one
+   * (ADR-0002, ADR-0015) — so the session in the voice window reaches them through a request on
+   * the preload bridge and this is the far end of it. `main/agent/tools.ts` builds the real one
+   * over the live world model; the composition root wraps it in `observeToolCalls` so the
+   * inspector's trace panel fills (ADR-0047).
+   *
+   * **Optional, and its absence is a whole mode rather than a missing feature.** With no
+   * dispatcher, `voice.session.open` carries `tools: false`, the renderer advertises nothing, and
+   * Riki answers from the injected snapshot exactly as it did before ADR-0042 — which is the
+   * behaviour every test that predates this ticket expects, and the behaviour ADR-0049 chose over
+   * advertising five tools that always answer `unknown`.
+   */
+  readonly tools?: ToolDispatcher;
 }
 
 export interface RenewalOptions {
@@ -328,6 +371,22 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
         armScheduledRenewal();
         return;
 
+      case 'voice.tool.call':
+        // Not awaited, and this is the only floating promise on this path. `answerToolCall` never
+        // rejects, and holding `onUpdate` open would stall every level frame and turn event queued
+        // behind it — on the one message that is allowed to take milliseconds.
+        void answerToolCall(update);
+        return;
+
+      case 'voice.tool.rejected':
+        // The model got the tool surface wrong, or our own bridge did not answer in time. It
+        // reaches the inspector as a call that produced no fact, and it never reaches the chip:
+        // ADR-0049 chose a vaguer sentence over an error the player can do nothing about. This is
+        // the only visibility these failures have — `observeToolCalls` cannot see them, because
+        // nothing was dispatched.
+        telemetry?.toolRejected(update.name, update.reason);
+        return;
+
       case 'voice.window.applied':
         // `packages/context`'s `applyWindowPlan` is the consumer, and the composition root has not
         // wired the retention loop to a producer yet — nothing in main builds a `WindowPlan`
@@ -335,6 +394,60 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
         // rather than a protocol change.
         return;
     }
+  }
+
+  /**
+   * Answer one `voice.tool.call`, and answer it whatever happens.
+   *
+   * The mirror of `packages/realtime`'s `answerToolCall`, and it obeys the same rule for the same
+   * reason: this runs inside a response the player is **already hearing**, so a failure is a
+   * `{ unknown: … }` in the shape the model reads for a fact nobody observed (ADR-0043), never a
+   * dropped message. A dropped message would leave the renderer's deadline to answer two seconds
+   * later, with the sentence held open in between.
+   *
+   * Three ways it can fail and they all land in the same place:
+   *
+   * - **No dispatcher.** Unreachable in principle — `voice.session.open` carried `tools: false`, so
+   *   the renderer advertised nothing and the model had nothing to call. Answered anyway, because
+   *   "unreachable" here rests on a boolean that crossed a process boundary.
+   * - **Arguments that no longer parse.** Re-validated against `TOOLS[name]` even though the
+   *   renderer already did it, because a bridge is exactly where a shape drifts unnoticed. That is
+   *   a genuine bridge fault and is reported as one.
+   * - **A tool that threw.** `observeToolCalls` re-throws by design so that the inspector changes
+   *   nothing; this is the layer that knows a turn is mid-sentence, and it is where the throw stops.
+   */
+  async function answerToolCall(
+    update: Extract<VoiceUpdate, { type: 'voice.tool.call' }>,
+  ): Promise<void> {
+    const answer = async (): Promise<Record<string, unknown>> => {
+      const dispatcher = deps.tools;
+      if (dispatcher === undefined) {
+        return { unknown: `Riki has no game state wired up, so \`${update.name}\` cannot answer` };
+      }
+
+      const parsed = TOOLS[update.name].arguments.safeParse(update.args);
+      if (!parsed.success) {
+        const detail = parsed.error.issues.map((issue) => issue.message).join('; ');
+        telemetry?.bridgeProblem(
+          `tool call \`${update.name}\` had unreadable arguments: ${detail}`,
+        );
+        return { unknown: `\`${update.name}\` was asked for something it does not understand` };
+      }
+
+      try {
+        // No cast, and that is worth a line: `parseToolCall` in `packages/realtime` needs one
+        // because it narrows to a single tool, and this does not — `name` stays the whole
+        // `ToolName` union, `parsed.data` is the matching union of argument types, and the pairing
+        // is checked downstream anyway. `encodeToolOutput` parses whatever comes back against
+        // `TOOLS[name].result` in the renderer before the model reads a word of it (ADR-0049).
+        return await dispatcher.call(update.name, parsed.data);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { unknown: `\`${update.name}\` could not answer: ${message}` };
+      }
+    };
+
+    send(voice.toolResult(update.callId, await answer()));
   }
 
   /**
@@ -428,6 +541,12 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
         },
         transport: deps.config.realtime.transport,
         budgetUsd: deps.config.realtime.budgetUsd,
+        // ADR-0049's coupling, carried across the bridge. The renderer owns the session and
+        // therefore the manifest, but the thing that answers a call is on this side — so a session
+        // opened by a `createVoiceSession` with no dispatcher advertises nothing and behaves
+        // exactly as it did before ADR-0042, which is what makes that a supported configuration
+        // rather than a silently degraded one.
+        tools: deps.tools !== undefined,
       }),
     );
     return null;

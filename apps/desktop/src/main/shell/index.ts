@@ -62,14 +62,21 @@
 
 import type { MatchId, Timers, TurnId } from '@riki/context';
 import type { MatchLifecycleEvent } from '@riki/gsi';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { ToolDispatcher } from '@riki/realtime';
 import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
-import { createFileRecordSinks, createStalenessPolicy } from '@riki/world-model';
+import { createFileRecordSinks, createStalenessPolicy, matchFileName } from '@riki/world-model';
 
 import type { Millis, Unsubscribe } from '../../shared/overlay.js';
 import type { SnapshotSource, TurnAgent, VoiceSessionPort } from '../agent/index.js';
-import { createSnapshotSource, createTurnAgent, toContextReader } from '../agent/index.js';
+import {
+  createSnapshotSource,
+  createTurnAgent,
+  createWorldToolDispatcher,
+  toContextReader,
+} from '../agent/index.js';
 import { createVoiceBridge } from '../adapters/voice.js';
 import type {
   DebugActionPort,
@@ -82,6 +89,7 @@ import {
   createDebugHub,
   createDebugSurface,
   observeSnapshots,
+  observeToolCalls,
   projectWorld,
   runMatchScenario,
   withDebugTelemetry,
@@ -188,6 +196,15 @@ export interface RikiShell {
   readonly session: MatchScopedSession;
   /** App-lifetime. See "Two lifetimes" above for why this is no longer per match. */
   readonly agent: TurnAgent;
+  /**
+   * What answers the model's five tools, decorated for the inspector when it is on.
+   *
+   * Exposed because of a construction order that is not worth inverting: `createVoiceSession` needs
+   * its dependencies before the shell exists, and this needs the world model, which the shell
+   * builds. `main/index.ts` hands the session a late-bound port and points it here — the same knot
+   * `createVoiceTrace` solves next door, and the same shape of answer.
+   */
+  readonly tools: ToolDispatcher;
   /** The match a session has been opened for, or null between games. */
   readonly matchId: MatchId | null;
   /** Null unless `config.debug.enabled`. The inspector, and the hub behind it. */
@@ -521,6 +538,68 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
   const agent = createTurnAgent({ snapshot: snapshots, session, clock: worldClock, telemetry });
 
+  // ---------------------------------------------------------------------------------------------
+  // The tools — the other half of what the model is given, and the half that was never connected
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * What answers `my_state`, `enemy`, `objectives`, `economy` and `world_at` (ADR-0042, T12).
+   *
+   * The snapshot above and this are the two things the model has, and until T12 it had only the
+   * first: the session runs in the voice window, the world model runs here, and there was no
+   * message between them — so `packages/realtime` was handed no dispatcher, sent `tools: []`, and a
+   * live match had no tool layer at all. It was found by a player asking about their own item
+   * slots, not by a test, because every layer on either side of the gap was individually correct.
+   *
+   * It is built here rather than beside the session in `main/index.ts` for the same reason the
+   * snapshot source is: this is the only object that holds the world model, the staleness policy,
+   * the recorder and the inspector's hub at once. `main/index.ts` attaches it afterwards.
+   *
+   * `world_at` reads the *current* match's recording, reopened per call — `TimelineTarget` measures
+   * `seconds_ago` from the last line the file holds, so a timeline kept across calls answers about
+   * the match's opening minutes forever while sounding current. Null between matches, which
+   * `world_at` reports as "no match is being recorded" rather than as an error.
+   */
+  const worldTools = createWorldToolDispatcher({
+    world: state.world,
+    clock: worldClock,
+    staleness,
+    recording: async () => {
+      const matchId = state.recorder?.matchId ?? null;
+      if (matchId === null) return null;
+      try {
+        return await readFile(join(config.dataDir, 'matches', matchFileName(matchId)), 'utf8');
+      } catch {
+        // A recording that has not been flushed to disk yet, or a directory the app cannot read.
+        // Both are "there is no past to look at", which is a sentence the model can say — and much
+        // better than a rejected promise inside a response that is already being spoken.
+        return null;
+      }
+    },
+  });
+
+  /**
+   * Decoration again, and the reason the T9 trace panel has anything in it.
+   *
+   * `observeToolCalls` records the call *before* dispatching and re-throws whatever the delegate
+   * throws, so the app behaves identically with the inspector off (ADR-0032) and a dispatcher that
+   * hangs shows up as a row with no result rather than as nothing at all (ADR-0047).
+   */
+  const tools: ToolDispatcher =
+    debug === null
+      ? worldTools
+      : observeToolCalls({
+          delegate: worldTools,
+          now: () => clock.now(),
+          onCall: (call) => {
+            trace('tool', `${call.name}(${call.args})`);
+            return debug.hub.recordToolCall(call);
+          },
+          onResult: (seq, result) => {
+            debug.hub.recordToolResult(seq, result);
+          },
+        });
+
   /**
    * Push-to-talk, both edges — and **this is the wire that was missing**.
    *
@@ -736,6 +815,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     trayController,
     session,
     agent,
+    tools,
 
     get matchId(): MatchId | null {
       return matchId;

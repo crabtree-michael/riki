@@ -76,6 +76,23 @@ unit tests.
 
 ## Learnings
 
+**2026-08-09 — the *voice* preload is direction-agnostic, so adding a renderer→main request needed
+no preload change at all.** T12 put the first correlated request/response pair on the voice bridge
+(`voice.tool.call` / `voice.tool.result`, ADR-0051), and the plan for it named
+`apps/desktop/src/preload/voice*.ts` as a file it would own. It changed nothing there:
+`voice-bridge.ts` is two functions that move **opaque values** — `onDirective(raw: unknown)` and
+`send(update: unknown)` — with `@riki/protocol` doing the parse on the renderer side, so a new
+message type is two schema entries and a constructor and the preload never learns about it.
+
+**The overlay's preload is not like that**, and the difference is deliberate rather than
+inconsistent: `overlay-bridge.ts` has three functions and a validating parse on the way in, because
+its renderer is a view with no protocol package in it. So when a ticket says "bridge it in the
+preload", check which bridge — for the voice one the honest answer is usually that there is nothing
+to bridge, and the work is entirely in `packages/protocol` plus the two ends.
+
+*Why:* half an hour went on reading the preload looking for the seam. The rule of thumb: if the
+preload's signature says `unknown`, it is a pipe and your message already fits.
+
 **2026-08-09 — a CSS rule you cannot see is not a mark, and 90 seconds of Electron settles it.**
 ADR-0047's no-tool-call flag was a red 2px `border-left` on `.ins-turn`, which is exactly right in
 the source and **invisible on screen**: a turn fills its panel, so the border lands on the column

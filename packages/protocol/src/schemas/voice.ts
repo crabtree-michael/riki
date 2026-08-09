@@ -42,11 +42,31 @@
  * window being shown. An id allocated in the renderer could only come back asynchronously. So
  * `VoiceTurnBegin` carries the id and the renderer obeys it.
  *
- * ## What is not here
+ * ## The one request on this bridge
  *
- * `voice.tool.call` / `voice.tool.result` are in §12's table and are deliberately absent: ADR-0023
- * deleted the pull model they belonged to, the session is configured with `tools: []`, and a stray
- * tool call is counted and ignored rather than answered. Consent went with them.
+ * Every other message here is one-way. `voice.tool.call` / `voice.tool.result` are a correlated
+ * pair, joined by `callId`, and they exist because of where the two halves of a tool call live:
+ * the Realtime session runs in this renderer (ADR-0010) and a `WorldState` may only be read in
+ * main (ADR-0002, ADR-0015). ADR-0042 gave the model five tools; without this pair nothing could
+ * answer one, so `apps/desktop` injected no dispatcher and every live session went out with
+ * `tools: []` — which is what T12 was raised to fix, after a match's worth of ungrounded answers.
+ *
+ * Three properties, each of which has a failure behind it:
+ *
+ * - **`VoiceSessionOpen.tools` says whether main will answer.** ADR-0049 ties the manifest to the
+ *   presence of a dispatcher: advertising five tools that always answer `unknown` is strictly
+ *   worse than advertising none. The dispatcher is on main's side of the bridge, so the renderer
+ *   cannot see it and has to be told.
+ * - **A call carries a `ToolName` and an object, not a hand-written argument schema.** The shapes
+ *   are `schemas/tools.ts`'s and are validated by `packages/realtime` on the way out of the model
+ *   and by main on the way in, both against `TOOLS[name]`. A second declaration of them here would
+ *   drift the first time a tool changed shape — which is the failure that file exists to prevent.
+ * - **An unanswered call is not a stuck turn.** A tool call is the only `await` inside a response
+ *   that is already being spoken, so the renderer times the request out and answers itself with
+ *   `{ unknown: … }` (ADR-0043, ADR-0049). Nothing on this bridge may make a sentence stop.
+ *
+ * Consent, which shared §12's row, is still absent: ADR-0023 deleted the pull model it belonged to
+ * and ADR-0042 did not bring it back.
  *
  * ## No Rust half
  *
@@ -59,6 +79,7 @@
 
 import { z } from 'zod';
 import { PROTOCOL_VERSION } from '../version.js';
+import { ToolName } from './tools.js';
 
 const version = z.int().min(1).describe('Protocol version this message was written against.');
 
@@ -119,6 +140,24 @@ export const VoiceFault = z
 export const LocalCommandKind = z
   .enum(['stop', 'mute', 'quiet-mode', 'cancel'])
   .meta({ id: 'LocalCommandKind' });
+
+/**
+ * A tool's arguments, or a tool's result, as they cross the bridge.
+ *
+ * Deliberately just "a JSON object". The real shapes are `schemas/tools.ts`'s and both ends
+ * already validate against them — `packages/realtime`'s `parseToolCall` before a call leaves the
+ * renderer and `encodeToolOutput` when its result comes back, `TOOLS[name].arguments.safeParse` in
+ * main before anything is dispatched. Restating them here would be a third declaration of the tool
+ * set, and the first one to drift would be this one, silently: a bridge that rejected a valid call
+ * looks exactly like a model that chose not to call anything.
+ *
+ * What this *does* pin is that a payload is an object. `ToolFact` is a union whose `unknown`
+ * branch is an object, every argument schema is a `strictObject`, and a bare string or array
+ * arriving here would be a bug in whoever built the message rather than something to forward.
+ */
+const ToolPayload = z
+  .record(z.string(), z.unknown())
+  .meta({ id: 'ToolPayload', description: 'A tool call’s arguments, or its result.' });
 
 // ---------------------------------------------------------------------------------------------
 // Credentials
@@ -277,6 +316,16 @@ export const VoiceSessionOpen = z
     transport: z.enum(['webrtc', 'websocket']),
     /** The soft ceiling the cost meter warns at, in USD. */
     budgetUsd: z.number().positive(),
+    /**
+     * Whether main will answer a `voice.tool.call`, and therefore whether the session advertises
+     * the tool manifest at all (ADR-0049).
+     *
+     * The renderer builds the dispatcher — it is the side that owns the session — but the thing
+     * that answers is on the far side of this bridge, so the decision is not the renderer's to
+     * make. False is the pre-ADR-0042 session: `tools: []` goes out and a call could only be one
+     * the model invented.
+     */
+    tools: z.boolean(),
   })
   .meta({ id: 'VoiceSessionOpen' });
 
@@ -377,6 +426,30 @@ export const VoiceLevelEnable = z
   })
   .meta({ id: 'VoiceLevelEnable' });
 
+/**
+ * The answer to one `voice.tool.call`, joined by `callId`.
+ *
+ * `result` is whatever `TOOLS[name].result` accepts, which for all five includes `{ unknown: … }`
+ * — so main answers a tool that threw, a tool it could not build and a call whose arguments no
+ * longer parse in exactly the shape the model already reads for a fact nobody observed (ADR-0043).
+ * There is no error branch on this message and there should never be one: a second vocabulary for
+ * "I could not get that" would have to be prompted for and tested to produce the same spoken
+ * sentence (ADR-0049).
+ *
+ * A result for a call the renderer has already given up on is dropped, and that is not an error
+ * either — main cannot know the renderer's timeout has fired, and the model has already been told
+ * something true.
+ */
+export const VoiceToolResult = z
+  .object({
+    v: version,
+    type: z.literal('voice.tool.result'),
+    /** The `callId` of the `voice.tool.call` this answers. Allocated by the renderer. */
+    callId: z.string().min(1),
+    result: ToolPayload,
+  })
+  .meta({ id: 'VoiceToolResult' });
+
 export const VoiceDirective = z
   .discriminatedUnion('type', [
     VoiceSessionOpen,
@@ -388,6 +461,7 @@ export const VoiceDirective = z
     VoiceCommand,
     VoiceWindowApply,
     VoiceLevelEnable,
+    VoiceToolResult,
   ])
   .meta({ id: 'VoiceDirective', description: 'Electron main → the hidden voice renderer.' });
 
@@ -482,12 +556,62 @@ export const VoiceWindowApplied = z
   })
   .meta({ id: 'VoiceWindowApplied' });
 
+/**
+ * The model asked the world a question, and only main can read the world.
+ *
+ * The one message on this bridge that expects a reply. `callId` is the renderer's own sequence
+ * number and has nothing to do with the Realtime API's `call_id` — the model's id addresses a
+ * `function_call_output` on the far side of the session and never crosses to main, which has no
+ * business knowing a conversation item exists.
+ *
+ * `name` is `schemas/tools.ts`'s `ToolName`, so adding a tool widens this message with it and a
+ * name outside the five cannot be sent at all. By the time a call is built the arguments have
+ * already been parsed against `TOOLS[name].arguments` by `packages/realtime`; main parses them
+ * again, because a bridge is exactly where a shape drifts without anyone noticing.
+ */
+export const VoiceToolCall = z
+  .object({
+    v: version,
+    type: z.literal('voice.tool.call'),
+    callId: z.string().min(1),
+    name: ToolName,
+    args: ToolPayload,
+  })
+  .meta({ id: 'VoiceToolCall' });
+
+/**
+ * A tool call that never reached a dispatcher, and why not.
+ *
+ * The failures on the *renderer's* side of the pair above: a name outside the five, arguments the
+ * schema refuses, a call with no id to answer to. `packages/realtime` refuses all of them before
+ * anything is dispatched, which is right — and which is exactly why they are the one thing main's
+ * dispatch decorator structurally cannot see (ADR-0047).
+ *
+ * A separate message rather than a `VoiceEvent`, because a `VoiceEvent` reaches the overlay and
+ * this must not: ADR-0049 chose a vaguer sentence over an error the player can do nothing with.
+ * It goes to the inspector, where somebody reading a run of vague answers can find the cause.
+ *
+ * `name` is a bare string and not a `ToolName` on purpose — a call for a tool that does not exist
+ * is still a call, and the name the model invented is the most useful field on this message.
+ */
+export const VoiceToolRejected = z
+  .object({
+    v: version,
+    type: z.literal('voice.tool.rejected'),
+    name: z.string(),
+    /** `packages/realtime`'s `ToolCallRejection`, as prose. Not an enum: it is read, not switched. */
+    reason: z.string().min(1),
+  })
+  .meta({ id: 'VoiceToolRejected' });
+
 export const VoiceUpdate = z
   .discriminatedUnion('type', [
     VoiceReady,
     VoiceEventMessage,
     VoiceSessionState,
     VoiceWindowApplied,
+    VoiceToolCall,
+    VoiceToolRejected,
   ])
   .meta({ id: 'VoiceUpdate', description: 'The hidden voice renderer → Electron main.' });
 

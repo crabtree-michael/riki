@@ -199,6 +199,41 @@ in the test is still worth keeping alongside — it is the only thing that catch
 the right *type* and violates a `.min(0)` or a regex. *Why:* for a boundary validated at run time,
 "the test passes" and "the model would have accepted this" are different claims.
 
+**2026-08-09 — POSTing a GSI fixture back to back at a live listener empties the world model, and
+the app is right to do it.** A probe that replays `fixtures/gsi/laning-phase.jsonl` at full speed
+gets `world.version = 0`, `my_state → {unknown: 'no match is in progress'}`, and eleven
+`world model reset: clock_discontinuity` problems. Nothing is broken: the fixture's `map.clock_time`
+advances 176 seconds across 22 frames, the wall clock advances milliseconds, and detecting exactly
+that mismatch is what `drift.ts` is for. Pace the POSTs to the fixture's own `atMs` deltas —
+
+```js
+if (lastAt !== null) await new Promise((r) => setTimeout(r, line.atMs - lastAt));
+```
+
+— and the same replay gives 23 versions and every tool a real answer. It costs the fixture's real
+duration (~3 minutes here), which is why `shell.test.ts` uses a **fake** clock and
+`clock.advance(gapAfter(index))` instead; only an out-of-process probe has to pay it.
+
+*Why:* the symptom is "the tools return unknown", which reads as a broken dispatcher rather than as
+a fixture played too fast — and the resets are only visible if you print the inspector's Problems
+list, which a probe has no reason to do until it has already lost an hour.
+
+**2026-08-09 — the test that would have caught T12 was the one nobody had a place to put.** Five
+tickets' worth of tool code (T2, T3, T4, T6, T9) shipped green, and in a real match none of it ran:
+the session is in a renderer, the world model is in main, and no message joined them. Every layer
+was individually tested; the seam was not, because the seam is not in any one project's directory.
+
+`apps/desktop/test/` is that place, and the pattern is worth copying whenever a boundary has two
+real halves: import both, join them with the actual messages, and replace only the transport —
+here `JSON.parse(JSON.stringify(x))`, which is exactly what Electron's IPC guarantees and nothing
+more, so anything unserialisable fails in Vitest rather than in a window. It needed one line of
+setup: `tsconfig.test.json` had to reference `tsconfig.renderer.json` as well as
+`tsconfig.main.json`, or the import is `TS6307`.
+
+*Why:* the rule "write the test at the lowest tier that can catch the bug" is right, and its failure
+mode is that a bug living *between* two tiers gets tested at neither. If a ticket's own summary
+names two processes, the test belongs in `apps/desktop/test/`.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

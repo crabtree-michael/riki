@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "voice.tool.result",
+  "callId": "tool_1",
+  "result": {
+    "enemies": [
+      {
+        "hero": "pudge",
+        "level": { "value": 7, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+        "alive": { "value": true, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+        "respawn_in_seconds": { "unknown": "he is alive" },
+        "last_seen": {
+          "value": { "x": -2100, "y": 1450, "area": "top river" },
+          "age_seconds": 31.2,
+          "confidence": 0.72,
+          "source": "cv"
+        },
+        "net_worth": { "unknown": "never observed this match" },
+        "items_seen": { "unknown": "never observed this match" }
+      }
+    ]
+  }
+}

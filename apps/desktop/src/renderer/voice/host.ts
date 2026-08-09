@@ -26,6 +26,18 @@
  *    that root's renderer half.
  * 4. **Not sending level frames nobody is looking at.** Overlay §5.5: 30 Hz while the chip can
  *    show bars, and *nothing* otherwise. `voice.level.enable` is the switch.
+ * 5. **Giving the session something that can answer a tool call.** The five tools read a
+ *    `WorldState`, which only main may hold, so the dispatcher injected here is a request across
+ *    the bridge (`tools.ts`). Whether one is built at all is main's answer, on
+ *    `VoiceSessionOpen.tools` — ADR-0049 ties the manifest to the dispatcher, and the dispatcher
+ *    is on the other side.
+ *
+ * ## The one message that must not be queued
+ *
+ * `voice.tool.result` bypasses `queue`, unlike every other directive. It is the reply to a request
+ * this file made from inside an `await` that an earlier handler may still be in, so serialising it
+ * behind that handler is a deadlock with no error on either side. `settleToolCall` is the whole of
+ * it, and `start()` is where the interception lives.
  *
  * ## One telemetry signal dies at this bridge, and it is worth naming
  *
@@ -65,12 +77,20 @@ import type { VoiceDirective } from '@riki/protocol';
 import { decodeVoiceDirective, voiceUpdates } from '@riki/protocol';
 
 import type { VoiceBridgePort, VoiceMediaPorts } from './contracts.js';
+import type { BridgeToolDispatcher } from './tools.js';
+import { createBridgeToolDispatcher } from './tools.js';
 
 export interface VoiceHostDeps {
   readonly bridge: VoiceBridgePort;
   readonly media: VoiceMediaPorts;
   readonly devices: DeviceRegistry;
-  readonly clock: { now(): MonoMs; schedule?(delayMs: number, fire: () => void): () => void };
+  /**
+   * `schedule` is required, unlike the shape `packages/audio` accepts. It is what bounds a tool
+   * call across the bridge (`tools.ts`), and a tool call is the only `await` inside a response
+   * that is already being spoken — with no timer, a main process that never answers holds that
+   * response open indefinitely.
+   */
+  readonly clock: { now(): MonoMs; schedule(delayMs: number, fire: () => void): () => void };
   /** `window.fetch`, for the SDP exchange. Injected so the negotiation is testable. */
   readonly fetch: Parameters<typeof createWebRtcTransport>[0]['fetch'];
 }
@@ -96,6 +116,14 @@ interface LiveSession {
   readonly playback: PlaybackTracker;
   readonly stream: MicStream;
   readonly unsubscribes: readonly (() => void)[];
+  /**
+   * Null when main said it has no dispatcher (`VoiceSessionOpen.tools`).
+   *
+   * ADR-0049 ties the manifest to the presence of a dispatcher, and that coupling is what stops a
+   * session advertising five tools that always answer `unknown`. Here it also decides where a
+   * `voice.tool.result` goes: with no dispatcher there is nothing that could have asked for one.
+   */
+  readonly tools: BridgeToolDispatcher | null;
 }
 
 function faultFrom(error: unknown): VoiceFault {
@@ -163,13 +191,38 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
       // The AEC canary. Counted and dropped — see the header.
       selfInterruptions += 1;
     },
-    toolCallRejected: () => undefined,
+    /**
+     * A call that never reached a tool, and why not.
+     *
+     * Forwarded rather than counted, which is the opposite of its neighbour above and is the whole
+     * of ADR-0049's stated cost: a broken tool layer is *quiet*. Every call degrades politely, the
+     * answers get vaguer, and nothing sounds wrong — so if this number died in this renderer, "the
+     * model is calling a tool that does not exist, forty times a match" would be indistinguishable
+     * from "the model chose not to call anything", which is a thing models do.
+     *
+     * It is **not** a `fault`. A fault reaches the chip, and a refused tool call is not something
+     * to show a player mid-match; it is something to show whoever is reading the inspector. That
+     * is what `voice.tool.rejected` exists for, and it is the only thing on this bridge that goes
+     * to the Problems panel without going to the overlay.
+     *
+     * These are also exactly the failures `observeToolCalls` in main **structurally cannot see**
+     * (ADR-0047): `parseToolCall` refuses a bad name or bad arguments before anything is
+     * dispatched, so there is no dispatch to decorate.
+     */
+    toolCallRejected: (name, reason) => {
+      send(voiceUpdates.toolRejected(name, reason));
+    },
   };
 
   async function closeSession(reason: string): Promise<void> {
     const current = live;
     live = null;
     if (current === null) return;
+
+    // Before anything is torn down. A call still in flight is a promise inside a response that is
+    // being spoken, and `session.close` below is what stops the audio — leaving it to the
+    // dispatcher's own deadline would mean up to two seconds of a turn nobody is listening to.
+    current.tools?.abandon(`the voice session closed (${reason}) before this could be answered`);
 
     for (const stop of current.unsubscribes) stop();
     // The session first: it is what holds the peer connection, and closing the graph underneath a
@@ -261,6 +314,31 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
       },
     };
 
+    /**
+     * The tool layer, or nothing — and ADR-0049 is why it is one or the other and never half.
+     *
+     * `createRealtimeSession` advertises the manifest **if and only if** a dispatcher is injected,
+     * because a session that offers five tools nothing can answer invites five degraded replies a
+     * turn. The thing that answers is in main, so the decision is main's and arrives on the
+     * directive; all this side does is honour it.
+     *
+     * Built per session rather than per window: `callId`s restart with the session, and an answer
+     * to a call made against a session that has since been replaced has nowhere to go.
+     */
+    const tools: BridgeToolDispatcher | null = directive.tools
+      ? createBridgeToolDispatcher({
+          send,
+          schedule: (delayMs, fire) => deps.clock.schedule(delayMs, fire),
+          onTimeout: (name) => {
+            // Deliberately the same channel as a call `packages/realtime` refused: from the
+            // inspector's point of view "the model asked for something it could not have" and
+            // "main never answered" are the same finding — a tool call that produced no fact —
+            // and separating them would be two panels showing halves of one story.
+            send(voiceUpdates.toolRejected(name, 'bridge-timeout'));
+          },
+        })
+      : null;
+
     const secret: RealtimeClientSecret = {
       value: directive.secret.value,
       // Main sent a *duration* — the two processes share no monotonic epoch (schemas/voice.ts).
@@ -289,6 +367,10 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
             deps.media.play(track);
           },
         },
+        // Absent, not null: `SessionDeps.tools` is optional and its *absence* is what sends
+        // `tools: []`. Passing `undefined` explicitly would work today and would break the day
+        // somebody adds `exactOptionalPropertyTypes`-shaped reasoning to it.
+        ...(tools === null ? {} : { tools }),
       },
       { preambleText: directive.session.instructions },
       directive.session,
@@ -312,7 +394,7 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
       }),
     ];
 
-    live = { session, graph, playback, stream, unsubscribes };
+    live = { session, graph, playback, stream, unsubscribes, tools };
     deps.bridge.send(voiceUpdates.sessionState('ready'));
   }
 
@@ -375,7 +457,30 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
       case 'voice.level.enable':
         levelsEnabled = directive.enabled;
         return;
+
+      case 'voice.tool.result':
+        // Unreachable, and the reason is the whole point of `settleToolCall` — see `start()`. It
+        // is here so that adding a directive still fails this switch rather than falling through.
+        return;
     }
+  }
+
+  /**
+   * Answer one outstanding tool call — **off the queue, and that is load-bearing.**
+   *
+   * Every other directive is serialised through `queue` so that a `voice.turn.begin` arriving
+   * mid-open cannot run against a half-built session. A tool result is the one message that must
+   * not be: it is the reply to a request this renderer made, and the request was made from inside
+   * an `await` that some earlier directive's handler may still be sitting in. Queueing it behind
+   * that handler is a deadlock in which the response never finishes and the answer never arrives —
+   * with no error on either side, which is this area's characteristic failure.
+   *
+   * A result nothing is waiting for is ordinary rather than wrong: our own deadline may have
+   * already answered, or the session may have been replaced under it. Dropped in silence, because
+   * the model has been told something true either way.
+   */
+  function settleToolCall(directive: Extract<VoiceDirective, { type: 'voice.tool.result' }>): void {
+    live?.tools?.settle(directive.callId, directive.result);
   }
 
   return {
@@ -396,6 +501,12 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
                 : `Unreadable directive: ${decoded.detail}`,
             ),
           );
+          return;
+        }
+
+        if (decoded.message.type === 'voice.tool.result') {
+          // Never queued. See `settleToolCall` — the queue is what a tool result would deadlock on.
+          settleToolCall(decoded.message);
           return;
         }
 

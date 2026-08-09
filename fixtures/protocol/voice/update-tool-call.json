@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "voice.tool.call",
+  "callId": "tool_1",
+  "name": "enemy",
+  "args": { "hero": "pudge" }
+}

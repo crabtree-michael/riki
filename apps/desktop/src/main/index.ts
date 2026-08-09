@@ -38,6 +38,7 @@ import type { Clock as WorldClock } from '@riki/world-model';
 import type { Millis } from '../shared/overlay.js';
 import { loadConfig, voiceEnabled } from '@riki/config';
 import { createFakeVisionSidecar, defaultVisionScript } from '@riki/protocol/testing';
+import type { ToolDispatcher } from '@riki/realtime';
 
 import { loadOrCreateGsiToken, loadOrCreateInstallId, resolvePaths } from './bootstrap.js';
 import { createElectronDebugWindowFactory } from './debug/index.js';
@@ -119,6 +120,7 @@ function buildShell(): RikiShell {
 
   const clock = createElectronClock();
   const voiceTrace = createVoiceTrace(() => clock.now());
+  const voiceTools = createToolPort();
 
   /**
    * The one line that decides whether Riki speaks.
@@ -153,6 +155,20 @@ function buildShell(): RikiShell {
         // returned an unusable session id cost a day to find: main sent the directive, the renderer
         // rejected it as unreadable, and nothing anywhere said so.
         telemetry: voiceTrace.sink,
+        /**
+         * What answers the model's five tools (ADR-0042, T12).
+         *
+         * Passing it here is what makes `voice.session.open` carry `tools: true`, which is what
+         * makes the renderer advertise the manifest at all (ADR-0049). Before this line existed,
+         * every live session went out with `tools: []` and Riki knew only the ~300 tokens of
+         * snapshot — which is the bug a player reported on 2026-08-09.
+         *
+         * Late-bound, for the same construction order `voiceTrace` works around: the real
+         * dispatcher reads the world model, the world model belongs to the shell, and the shell
+         * needs the session. Attached six lines below, before `start()` and therefore long before
+         * a match can open a session.
+         */
+        tools: voiceTools.port,
       })
     : undefined;
 
@@ -226,7 +242,42 @@ function buildShell(): RikiShell {
   // After construction, because the hub is the shell's and the session is built before it. Null
   // with the flag off, which puts the sink back to dropping everything.
   voiceTrace.attach(shell.debug?.hub ?? null);
+  // Same knot, same answer: the dispatcher reads the world model and the shell owns it.
+  voiceTools.attach(shell.tools);
   return shell;
+}
+
+/**
+ * The tool dispatcher, pointed at the shell's once there is one.
+ *
+ * The mirror of `createVoiceTrace` below, and it exists for the same reason: `createVoiceSession`
+ * takes its dependencies at construction, the world model belongs to the shell, and the shell needs
+ * the session. A late-bound port is the small half of that knot.
+ *
+ * **The unattached answer is an `unknown`, not a throw.** The window between construction and
+ * `attach` is a few statements long and no session can exist inside it, so this should be
+ * unreachable — but "should be unreachable" is not a thing to assert inside a response that is
+ * already being spoken (ADR-0049). If the order ever changes, Riki says it cannot see the game
+ * rather than losing the sentence, and the reason names this file.
+ */
+function createToolPort(): { readonly port: ToolDispatcher; attach(tools: ToolDispatcher): void } {
+  let attached: ToolDispatcher | null = null;
+
+  return {
+    port: {
+      call: async (name, args) => {
+        if (attached === null) {
+          return Promise.resolve({
+            unknown: `Riki's world model was not attached when \`${name}\` was called — see buildShell in main/index.ts`,
+          } as never);
+        }
+        return attached.call(name, args);
+      },
+    },
+    attach(tools: ToolDispatcher): void {
+      attached = tools;
+    },
+  };
 }
 
 /**
@@ -287,6 +338,27 @@ function createVoiceTrace(now: () => number): {
       bridgeProblem: (detail) => {
         record('fault', `voice bridge: ${detail}`);
         hub?.recordProblem('renderer', `voice bridge: ${detail}`, now());
+      },
+      /**
+       * A tool call that produced no fact (ADR-0049).
+       *
+       * Recorded on the hub as a call *and* its refusal, because that is the only way it reaches
+       * the T9 panel: these are exactly the failures `observeToolCalls` cannot see — the name was
+       * not one of the five, or the arguments did not parse, so nothing was ever dispatched for the
+       * decorator to wrap.
+       *
+       * It is a Problem as well as a Trace line, and that is the difference between this and
+       * `renewal` above. A renewal is progress; a refused call means the model just answered a
+       * question with less than it could have, and nothing about the sentence it spoke will have
+       * sounded wrong.
+       */
+      toolRejected: (name, reason) => {
+        record('tool', `refused ${name}: ${reason}`);
+        const seq = hub?.recordToolCall({ name, args: '—', at: now() });
+        if (seq !== undefined) {
+          hub?.recordToolResult(seq, { status: 'refused', result: reason, at: now() });
+        }
+        hub?.recordProblem('renderer', `tool call ${name} refused: ${reason}`, now());
       },
     },
     attach(next: DebugHub | null): void {

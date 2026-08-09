@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { PROTOCOL_VERSION } from './version.js';
+import { TOOLS, ToolName } from './schemas/tools.js';
 import { VoiceDirective, VoiceEvent, VoiceUpdate } from './schemas/voice.js';
 import { decodeVoiceDirective, decodeVoiceUpdate, voice, voiceUpdates } from './voice-codec.js';
 
@@ -84,6 +85,33 @@ describe('the voice fixture corpus', () => {
     expect([...covered].sort()).toEqual(
       VoiceEvent.options.map((option) => option.shape.kind.value).sort(),
     );
+  });
+});
+
+describe('the tool call pair', () => {
+  /**
+   * The bridge types a payload as "an object" on purpose (`ToolPayload`) — the real shapes are
+   * `schemas/tools.ts`'s and restating them here would be a third declaration of the tool set. The
+   * cost of that choice is that the corpus could carry a payload no tool would ever produce, and
+   * a fixture that lies is worse than no fixture. So the two halves are checked against `TOOLS`
+   * here, where the check is an assertion rather than a shape the bridge enforces.
+   */
+  it('carries arguments and a result that the tools themselves would accept', () => {
+    const call = load('update-tool-call.json') as { name: ToolName; args: unknown };
+    expect(TOOLS[call.name].arguments.safeParse(call.args).success).toBe(true);
+
+    const answer = load('directive-tool-result.json') as { result: unknown };
+    expect(TOOLS[call.name].result.safeParse(answer.result).success).toBe(true);
+  });
+
+  it('lets main answer any call with an unknown, which is the whole degraded path', () => {
+    // ADR-0049: a tool that threw, a dispatcher that could not be built and arguments that no
+    // longer parse all come back as `{ unknown }`. That is only true while every result schema
+    // accepts one, so it is asserted for all five rather than for the one the corpus covers.
+    for (const name of ToolName.options) {
+      expect(TOOLS[name].result.safeParse({ unknown: 'nobody looked' }).success).toBe(true);
+      expect(voice.toolResult('tool_1', { unknown: 'nobody looked' }).v).toBe(PROTOCOL_VERSION);
+    }
   });
 });
 

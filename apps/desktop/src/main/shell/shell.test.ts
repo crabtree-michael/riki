@@ -31,6 +31,7 @@ import type { ConfigLayer } from '@riki/config';
 import type { Timers } from '@riki/context';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
+import { MyStateResult, WorldAtResult, isUnknown } from '@riki/protocol';
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
 
 import type { Millis } from '../../shared/overlay.js';
@@ -448,6 +449,54 @@ describe('a question, end to end', () => {
   });
 });
 
+describe('the tools, end to end — T12', () => {
+  /**
+   * `shell.tools` is what `main/index.ts` hands the voice session, so this is the object a live
+   * match's model actually reaches through. Everything under it here is real: a recorded match
+   * fused into the world model, the composition root's own staleness policy, its own recorder and
+   * its own data directory.
+   *
+   * The seam above it — the `voice.tool.call` round trip — is `apps/desktop/test/tool-bridge.test.ts`.
+   * This is the half below, and between them there is no stand-in left anywhere on the path.
+   */
+  it('answers my_state from the match the shell just fused', async () => {
+    const { shell } = use();
+    await replay();
+
+    const answer = await shell.tools.call('my_state', {});
+
+    // Valid against the tool's own schema, and **not** an `unknown`. Every failure on this path —
+    // no match in the world model, no dispatcher, a projection that threw — produces an `unknown`,
+    // so the second assertion is the one that says the recorded POSTs actually got here.
+    expect(MyStateResult.safeParse(answer).success).toBe(true);
+    expect(isUnknown(answer)).toBe(false);
+    expect(isUnknown(answer) ? null : answer.hero).toBeDefined();
+  });
+
+  it('answers world_at from the recording it is writing at the same time', async () => {
+    // The one tool that reads a file, and the only test that exercises the path the composition
+    // root actually built: `state.recorder.matchId` → `matchFileName` → `<dataDir>/matches/`. A
+    // unit test stubs that function and would agree with any directory at all.
+    const { shell } = use();
+    await replay();
+    expect(shell.state.recorder?.matchId).not.toBeNull();
+
+    const answer = await shell.tools.call('world_at', { seconds_ago: 1 });
+
+    expect(WorldAtResult.safeParse(answer).success).toBe(true);
+    // Whether the recording covers the instant asked for depends on the fixture's timing, so the
+    // assertion is the one that matters either way: it read a recording rather than reporting that
+    // there was none. That string is `createWorldToolDispatcher`'s "no match is being recorded".
+    expect(isUnknown(answer) ? answer.unknown : '').not.toContain('no match is being recorded');
+  });
+
+  it('says there is no past to look at between matches', async () => {
+    const { shell } = use();
+    const answer = await shell.tools.call('world_at', { seconds_ago: 1 });
+    expect(isUnknown(answer) ? answer.unknown : '').toContain('no match is being recorded');
+  });
+});
+
 describe('the interaction path', () => {
   it('arms the chip on a tap from idle, and does not wait on a microphone to do it', async () => {
     const { shell, clock, window, keys } = use();
@@ -614,6 +663,30 @@ describe('the inspector (main/debug)', () => {
       expect(stages).toContain('session');
       expect(stages).toContain('turn');
       expect(stages).toContain('snapshot');
+    });
+
+    it('fills the tool trace panel, which was structurally empty before T12', async () => {
+      // T9 built the panel and `observeToolCalls` to feed it, and until this ticket **neither had
+      // a production caller** — no dispatcher was ever constructed, so no call was ever made, so
+      // every turn's `tools` was `[]` and a reader could not tell that from a model that chose not
+      // to call anything. This is the acceptance criterion the ticket names.
+      const { shell, clock } = use();
+      await replay();
+      await ask(use());
+
+      const answer = await shell.tools.call('enemy', {});
+
+      const turn = shell.debug?.hub.frame(clock.now()).turns[0];
+      expect(turn?.tools).toHaveLength(1);
+      expect(turn?.tools[0]?.name).toBe('enemy');
+      // The result row, joined to the call by `seq`. `unknown` is a status of its own precisely so
+      // that "the tool had nothing" and "the tool answered" are not the same row (ADR-0043).
+      expect(turn?.tools[0]?.status).toBe(isUnknown(answer) ? 'unknown' : 'ok');
+      expect(turn?.tools[0]?.result).not.toBeNull();
+      // Non-null is the evidence the call *completed*. It is null while pending, which is what a
+      // dispatcher that hangs looks like — the row appears at dispatch time, so a hang shows as a
+      // row with no result rather than as nothing at all (ADR-0047).
+      expect(turn?.tools[0]?.durationMs).not.toBeNull();
     });
 
     it('offers the tray row it now has somewhere to send', () => {

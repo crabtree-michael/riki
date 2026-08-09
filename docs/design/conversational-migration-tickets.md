@@ -288,6 +288,21 @@ its result; and a bridge that never answers produces an `unknown` and a `toolCal
 rather than a turn that stops. T11 is the fixture-driven version of this and should be able to
 assert it without a key.
 
+**Landed 2026-08-09 — [ADR-0051](../adr/0051-a-tool-call-is-a-request-and-the-renderer-holds-its-deadline.md).**
+Three messages rather than the two scoped above: `voice.tool.call` / `voice.tool.result` as
+predicted, plus `voice.tool.rejected`, because the `toolCallRejected` signal the third bullet asks
+for had nowhere to go — it was a counter dying in a renderer with no console. `VoiceSessionOpen`
+also gained a `tools` boolean, which is how ADR-0049's manifest-follows-the-dispatcher coupling
+survives a process boundary. The preload needed **no change at all**: `voice-bridge.ts` moves opaque
+values in both directions already, so the scope line above is wrong about it.
+
+Two things this did **not** do. There is still no way to drive a real OpenAI session in this repo,
+so "a live session advertises five tools" is asserted against `FakeRealtimeTransport` in
+`apps/desktop/test/tool-bridge.test.ts` — both halves of the bridge real, the vendor faked — and
+confirmed in a booted Electron process only as far as `shell.tools` and the T9 panel. And the
+renderer's tool deadline is not adaptive: 2 s flat, which is a deadline for a wedged process rather
+than a latency budget (see the ADR's consequences).
+
 ---
 
 ## Sequencing at a glance

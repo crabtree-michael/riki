@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "voice.tool.rejected",
+  "name": "map_state",
+  "reason": "unknown-tool"
+}

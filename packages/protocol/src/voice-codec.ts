@@ -127,6 +127,13 @@ export const voice = {
   levelEnable(enabled: boolean): VoiceDirective {
     return { v: PROTOCOL_VERSION, type: 'voice.level.enable', enabled };
   },
+  /** The half of a tool call that main owns. `result` is a `ToolResultFor<name>`, unwidened. */
+  toolResult(
+    callId: string,
+    result: Extract<VoiceDirective, { type: 'voice.tool.result' }>['result'],
+  ): VoiceDirective {
+    return { v: PROTOCOL_VERSION, type: 'voice.tool.result', callId, result };
+  },
 } as const;
 
 /** The renderer's half of the same. */
@@ -151,5 +158,16 @@ export const voiceUpdates = {
     applied: Extract<VoiceUpdate, { type: 'voice.window.applied' }>['applied'],
   ): VoiceUpdate {
     return { v: PROTOCOL_VERSION, type: 'voice.window.applied', applied };
+  },
+  toolCall(
+    callId: string,
+    name: Extract<VoiceUpdate, { type: 'voice.tool.call' }>['name'],
+    args: Extract<VoiceUpdate, { type: 'voice.tool.call' }>['args'],
+  ): VoiceUpdate {
+    return { v: PROTOCOL_VERSION, type: 'voice.tool.call', callId, name, args };
+  },
+  /** A call `packages/realtime` refused before it could be dispatched. See the schema. */
+  toolRejected(name: string, reason: string): VoiceUpdate {
+    return { v: PROTOCOL_VERSION, type: 'voice.tool.rejected', name, reason };
   },
 } as const;

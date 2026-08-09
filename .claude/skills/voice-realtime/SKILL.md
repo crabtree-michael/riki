@@ -302,6 +302,31 @@ deliberately so the ticket could not half-land. The general form is worth carryi
 capability is gated on an optional dependency, the test suite tends to cover only the branch where
 it was supplied.
 
+**2026-08-09 (T12, later the same day) — the fix for the entry above, and the one thing about it
+that is not obvious.** `voice.tool.call` / `voice.tool.result` now cross the bridge, `host.ts`
+builds a `createBridgeToolDispatcher` and passes it as `tools`, and ADR-0051 is the reasoning. The
+part worth carrying:
+
+**A tool result must be answered *off* `host.ts`'s directive queue.** Every other directive is
+serialised through `queue` so a `voice.turn.begin` arriving mid-open cannot run against a half-built
+session. A tool result cannot be, and the reason is that it is the *reply to a request this renderer
+made from inside an `await` that an earlier handler may still be sitting in*. `TurnController.endTurn`
+is the concrete case: it blocks on `speech_stopped` bounded by the commit grace, both of which come
+from outside. Queue the result behind it and you get a response that never continues, from a call
+main answered in 0.1 ms, with no error on either side. `settleToolCall` is the interception and it
+lives in `start()`, before the `queue.then`.
+
+To *test* that, block the queue the way production blocks it: send `voice.turn.end` with a clock
+whose `schedule` never fires, so `awaitSpeechStopped` never resolves. Do not reach for
+`voice.window.apply` — its handler resolves immediately, so the queue is not actually blocked and
+the test passes against a deliberately broken implementation. Verified by deleting the interception
+and watching each version: the `window.apply` one stayed green, the `turn.end` one went red.
+
+*Why:* the deadlock is invisible in every unit test on either side, and the file that had to hold it
+had no test at all — `host.ts`'s header referred to a `host.test.ts` that did not exist until T12.
+If you touch the directive switch, `host.test.ts` is the file, and it needs only a fake peer
+connection (copy `transport.test.ts`'s) plus `createFakeAudioDevice`.
+
 ## See also
 
 `docs/design/voice-input-architecture.md` — the architecture for this area: capture, the session,

@@ -10,7 +10,15 @@
   // unless that project is referenced here.
   "extends": "./tsconfig.base.json",
   "include": ["test/**/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }, { "path": "./tsconfig.main.json" }],
+  // `tsconfig.renderer.json` is here for `tool-bridge.test.ts`, which is the one test that has to
+  // hold both halves of the preload boundary at once — the renderer's tool dispatcher and main's,
+  // with the real messages between them (T12). No renderer *type* crosses: what it imports is a
+  // factory that names no DOM API, which is why it compiles under a project with `types: ["node"]`.
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.renderer.json" }
+  ],
   "compilerOptions": {
     "rootDir": ".",
     "types": ["node"]

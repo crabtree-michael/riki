@@ -16,7 +16,7 @@ import { ManualTimers } from '@riki/context/testing';
 import type { VoiceDirective, VoiceUpdate } from '@riki/protocol';
 import { voiceUpdates } from '@riki/protocol';
 import { ApiKey, createRealtimeSession } from '@riki/realtime';
-import type { RealtimeSession, VoiceEvent } from '@riki/realtime';
+import type { RealtimeSession, ToolDispatcher, VoiceEvent } from '@riki/realtime';
 import { createFakeRealtimeTransport } from '@riki/realtime/testing';
 import type { FakeRealtimeTransport } from '@riki/realtime/testing';
 import type { MonoMs } from '@riki/world-model';
@@ -111,6 +111,7 @@ function recordingTelemetry() {
     state: (next) => lines.push(`state ${next}`),
     bridgeProblem: (detail) => lines.push(`bridge ${detail}`),
     renewal: (phase, reason, detail) => lines.push(`renewal ${phase} (${reason}): ${detail}`),
+    toolRejected: (name, reason) => lines.push(`tool refused ${name}: ${reason}`),
   };
   return { lines, sink };
 }
@@ -123,6 +124,7 @@ function build(
     renewal?: RenewalOptions;
     telemetry?: VoiceSessionTelemetry;
     onDirective?: (directive: VoiceDirective) => void;
+    tools?: ToolDispatcher;
   } = {},
 ) {
   const windows = fakeWindows(over.onDirective);
@@ -136,6 +138,7 @@ function build(
     ...(over.timers === undefined ? {} : { timers: over.timers }),
     ...(over.renewal === undefined ? {} : { renewal: over.renewal }),
     ...(over.telemetry === undefined ? {} : { telemetry: over.telemetry }),
+    ...(over.tools === undefined ? {} : { tools: over.tools }),
   });
   session.onEvent((event) => events.push(event));
   return { session, windows, events, fetchImpl };
