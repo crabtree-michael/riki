@@ -166,6 +166,27 @@ and all are now about nothing. They are in git history — `8b1a902~4` for the c
 2026-08-09 for the rest. *Why:* a learning about code that no longer exists is worse than no
 learning; the next agent reads it as current and goes looking for the file.
 
+**2026-08-09 — the snapshot is not a stopgap in practice, it is everything the model knows.**
+`snapshot.ts`'s header calls itself a blob "kept working while the tools are built (T2–T4)", which
+invites reading a gap in it as temporary. T4 has landed and it changed nothing in production: a live
+session still sends `tools: []`, because nothing injects a `ToolDispatcher` and nothing can until
+T12 puts the call across the preload boundary (ADR-0049, and the `voice-realtime` skill). So for now
+— and for however long T12 takes — **a field missing from these ~300 tokens is a field the model
+cannot obtain by any route.** Two were, and both looked like a rendering detail:
+
+- `self-abilities.ts` printed `id + cooldown` and dropped `level`, so the skill build was invisible
+  — and an unskilled ability rendered `backstab UP`, because Valve reports `can_cast: true` at
+  level 0. A false statement, not just an omission.
+- `world-view.ts` projects `self.items` filtered to `location === 'inventory'`, so the teleport and
+  neutral slots reached nothing. "Do I have a TP" was unanswerable.
+
+*Why:* the trap is that `WorldState` had all three the whole time — fusion maps every slot GSI
+sends. Reading `read-gsi.ts` and concluding "we capture it" proves nothing about what the model is
+shown. The cheap check is to render a real fixture and *read the text*: replay
+`fixtures/gsi/laning-phase.jsonl` through `createWorldModelStore` → `toContextReader` →
+`createSnapshotSource` in a throwaway test and print it. Four minutes, and it is the only view of
+the snapshot that is the model's view.
+
 ## See also
 
 [`conversational-architecture.md`](../../../docs/design/conversational-architecture.md) — the

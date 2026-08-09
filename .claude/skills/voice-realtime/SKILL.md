@@ -279,6 +279,29 @@ without a "we asked for this" flag every renewal raises the fault that triggers 
 guards are in `createRealtimeSession`; `FakeRealtimeTransport.expireSession(order)` reproduces the
 pair either way round.
 
+**2026-08-09 — a live session advertises no tools, and the reason is one absent field.** A player
+reported the coach could not see their skill tree or items with GSI healthy. Nothing was wrong with
+GSI, with the mapping into `WorldState`, or with T3's tools — and nothing is wrong with T4 either.
+The model simply has no tool to call, because `apps/desktop/src/renderer/voice/host.ts` calls
+`createRealtimeSession` with no `tools` field. `session.ts` is `deps.tools === undefined ? [] :
+buildToolManifest()`, so `undefined` is `tools: []`. Ticket T12; ADR-0049's closing section is where
+it is documented, and the bullet above is the design half of it.
+
+Check this **before** investigating anything downstream:
+
+```sh
+grep -rn 'createRealtimeSession' --include='*.ts' apps | grep -v '\.test\.'   # then look for `tools:`
+```
+
+*Why:* the trap is that everything upstream looks healthy and passes tests. `tools.test.ts` is
+thorough and green; `session.test.ts` drives a full call round trip and passes; the manifest builder
+has a caller. All of it is exercised with a dispatcher injected, which production does not do — the
+one path nothing covers is the default argument. Do not read "T4 landed" as "tools are on in a real
+match"; the two are separated by a protocol message that does not exist yet, and ADR-0049 chose that
+deliberately so the ticket could not half-land. The general form is worth carrying: when a
+capability is gated on an optional dependency, the test suite tends to cover only the branch where
+it was supplied.
+
 ## See also
 
 `docs/design/voice-input-architecture.md` — the architecture for this area: capture, the session,

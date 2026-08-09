@@ -149,6 +149,19 @@ const PROJECTIONS: Readonly<Record<string, Projector>> = {
     of(fact<readonly ItemState[]>(w, 'self.items'), (items) =>
       items.filter((i) => i.location === 'stash'),
     ),
+  // The two slots that are not the inventory and are not interchangeable with it. Both come from
+  // the same `items` component and both were invisible to the model until 2026-08-09, because
+  // `self.items` above filters to `inventory` — so "do I have a TP" and "what neutral am I on" were
+  // unanswerable from any path, snapshot or tool. An empty list is a fact worth rendering for both:
+  // no TP is the classic avoidable death, and no neutral item is free power left on the floor.
+  'self.teleport': (w) =>
+    of(fact<readonly ItemState[]>(w, 'self.items'), (items) =>
+      items.filter((i) => i.location === 'teleport'),
+    ),
+  'self.neutral': (w) =>
+    of(fact<readonly ItemState[]>(w, 'self.items'), (items) =>
+      items.filter((i) => i.location === 'neutral'),
+    ),
   'self.freeSlots': (w) =>
     of(fact<readonly ItemState[]>(w, 'self.items'), (items) =>
       Math.max(0, INVENTORY_SLOTS - items.filter((i) => i.location === 'inventory').length),
@@ -302,6 +315,8 @@ function sourcePathFor(key: string): string {
       return 'self.gold';
     case 'self.items':
     case 'self.stash':
+    case 'self.teleport':
+    case 'self.neutral':
     case 'self.freeSlots':
       return 'self.items';
     case 'map.towers':

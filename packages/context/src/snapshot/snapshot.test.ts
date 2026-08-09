@@ -39,10 +39,13 @@ function world(overrides: Record<string, ReturnType<typeof observed>> = {}): Fak
       'self.denies': observed(12),
       'self.gpm': observed(512),
       'self.abilities': observed([
-        { id: 'blink_strike', cooldown: 0 },
-        { id: 'tricks_of_trade', cooldown: 4 },
+        { id: 'blink_strike', cooldown: 0, level: 2 },
+        { id: 'tricks_of_trade', cooldown: 4, level: 1 },
+        { id: 'backstab', cooldown: 0, level: 0 },
       ]),
       'self.items': observed([{ id: 'diffusal', charges: 1 }, { id: 'phase' }]),
+      'self.teleport': observed([{ id: 'tpscroll', charges: 1 }]),
+      'self.neutral': observed([{ id: 'trusty_shovel' }]),
       'self.freeSlots': observed(3),
       'enemies.sf.level': observed(12),
       'enemies.sf.alive': observed(true),
@@ -79,8 +82,50 @@ describe('the format', () => {
     const rendered = renderer.render(world().snapshot(NOW), ctx());
     expect(rendered.text).toContain('T 14:32 | day | you: riki, lvl 11, 84% hp');
     expect(rendered.text).toContain('gold 1840 (rel 320) | nw 7.2k | 4/1/3 | lh 96/12 | gpm 512');
-    expect(rendered.text).toContain('abils: blink_strike UP, tricks_of_trade 4s');
+    expect(rendered.text).toContain(
+      'abils: blink_strike L2 UP, tricks_of_trade L1 4s, backstab L0',
+    );
     expect(rendered.text).toContain('enemies: sf lvl 12 alive · tide lvl 11 DEAD 22s');
+  });
+
+  /**
+   * The skill build, which the line did not carry until 2026-08-09.
+   *
+   * Two assertions rather than one, because the level-0 case is the one that was actively wrong:
+   * GSI reports `can_cast: true` for an unskilled slot, so the old renderer printed `backstab UP`
+   * about an ability the player has not taken. Asserting only that a level appears would let that
+   * back in as `backstab L0 UP`.
+   */
+  it('renders each ability at its level, and says nothing about an unskilled one being ready', () => {
+    const rendered = renderer.render(world().snapshot(NOW), ctx());
+    expect(rendered.text).toContain('blink_strike L2 UP');
+    expect(rendered.text).toMatch(/backstab L0(,|$|\n)/);
+  });
+
+  /**
+   * The TP and neutral slots. `self.items` carries only the inventory, so before 2026-08-09 the
+   * model had no path to either — "do I have a TP" was unanswerable from the snapshot.
+   */
+  it('renders the teleport and neutral slots alongside the inventory', () => {
+    const rendered = renderer.render(world().snapshot(NOW), ctx());
+    expect(rendered.text).toContain('tp tpscroll(1)');
+    expect(rendered.text).toContain('neutral trusty_shovel');
+  });
+
+  it('renders an empty teleport slot as `tp --`, because no TP is the point of the field', () => {
+    const rendered = renderer.render(world({ 'self.teleport': observed([]) }).snapshot(NOW), ctx());
+    expect(rendered.text).toContain('tp --');
+  });
+
+  it('renders an ability whose fact carries no level, rather than `Lundefined`', () => {
+    // A hand-built fixture or an older recording. The mirror interface in `self-abilities.ts` makes
+    // `level` optional for exactly this, and the fallback is the pre-2026-08-09 format.
+    const rendered = renderer.render(
+      world({ 'self.abilities': observed([{ id: 'blink_strike', cooldown: 0 }]) }).snapshot(NOW),
+      ctx(),
+    );
+    expect(rendered.text).toContain('abils: blink_strike UP');
+    expect(rendered.text).not.toContain('undefined');
   });
 
   it('never produces an empty string, even with nothing in the world model', () => {

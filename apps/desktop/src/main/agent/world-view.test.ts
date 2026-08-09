@@ -111,6 +111,38 @@ describe('projections keep the envelope', () => {
     expect(view.get<number>(at('self.freeSlots'))?.value).toBe(4);
   });
 
+  /**
+   * The TP and neutral slots, which `self.items` filters out and which had no other path to the
+   * model until 2026-08-09. Asserted as their own lists rather than by length alone, because the
+   * bug they replace was a `location` filter and getting it wrong the other way — leaking the TP
+   * into the inventory — is just as wrong and just as invisible.
+   */
+  it('gives the teleport and neutral slots their own paths, and keeps them out of the inventory', () => {
+    const world = buildWorld().put(SELF_ITEMS, [
+      item('item_blink', 'inventory'),
+      item('item_tpscroll', 'teleport'),
+      item('item_trusty_shovel', 'neutral'),
+    ]);
+    const view = viewOf(world);
+
+    expect(view.get<readonly ItemState[]>(at('self.items'))?.value).toHaveLength(1);
+    expect(view.get<readonly ItemState[]>(at('self.teleport'))?.value).toEqual([
+      expect.objectContaining({ id: 'item_tpscroll' }),
+    ]);
+    expect(view.get<readonly ItemState[]>(at('self.neutral'))?.value).toEqual([
+      expect.objectContaining({ id: 'item_trusty_shovel' }),
+    ]);
+    // Five, not four: the TP and the neutral do not occupy inventory slots.
+    expect(view.get<number>(at('self.freeSlots'))?.value).toBe(5);
+  });
+
+  it('answers an empty teleport slot with an empty list, not with nothing', () => {
+    // The difference the section renderer turns into `tp --` versus omitting the field entirely,
+    // and `tp --` is the whole reason the path exists.
+    const world = buildWorld().put(SELF_ITEMS, [item('item_blink', 'inventory')]);
+    expect(viewOf(world).get<readonly ItemState[]>(at('self.teleport'))?.value).toEqual([]);
+  });
+
   it('inherits the source field’s ageing policy, not the fallback', () => {
     // `self.*` is fresh under 1.5 s. If `self.hpPct` were classified against its own name it would
     // fall through to the default table and get a different threshold.

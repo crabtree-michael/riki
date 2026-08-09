@@ -233,6 +233,61 @@ that did not exist on 2026-08-09.
 
 **Done when.** One recorded match runs green in CI with no network, no key and no game.
 
+### T12. Carry a tool call across the preload boundary
+
+**Why.** **This is why live play has no tools, and it is a live bug report.** A player in a real
+match with GSI healthy reported that Riki could not see their skill tree or items and could answer
+very little about the game. Investigated 2026-08-09: nothing is wrong with GSI, with the mapping into
+`WorldState`, or with T3's tools — a real fixture replays end to end and `my_state()` returns a full
+loadout and ability list. T4 landed the whole round trip and it is correct. The session simply never
+advertises a tool, because `session.ts` sends the manifest only when a `ToolDispatcher` is injected
+and **nothing injects one**: `apps/desktop/src/renderer/voice/host.ts` calls `createRealtimeSession`
+with no `tools` field, so `deps.tools` is `undefined`, so `tools: []` goes out.
+
+ADR-0049 names this and calls it deliberate — "until that message lands, `apps/desktop` injects
+nothing … and Riki answers from the injected snapshot as it does today". It is deliberate, and it is
+also the entire user-visible payoff of T2, T3, T4, T6 and T9, none of which does anything in a real
+match until this exists. Until then the coach knows the ~300 tokens in
+`apps/desktop/src/main/agent/snapshot.ts` and nothing else, and the T9 trace panel is structurally
+empty because `observeToolCalls` and `DebugHub.recordToolCall` have no production caller either.
+
+**Depends on.** T3, T4, T6.
+
+**Scope — owns.** `packages/protocol/src/schemas/voice.ts`, `apps/desktop/src/preload/voice*.ts`,
+the dispatcher's construction in `apps/desktop/src/main/`, and the `tools` argument in
+`apps/desktop/src/renderer/voice/host.ts`.
+
+**⚠ Coordination event: this changes `packages/protocol`.** Read the `protocol` skill first. The two
+messages are already named in that file — `voice.tool.call` / `voice.tool.result` in §12's table —
+in a comment explaining that they are *deliberately absent* because "the session is configured with
+`tools: []`". ADR-0042 and ADR-0049 reversed that premise; the comment is stale and part of this
+ticket is deleting it rather than working around it.
+
+**Do.** Add the request/response pair, bridge it in the preload, and build the real dispatcher in
+main over `state.world.snapshot(now).state`, wrapped in `observeToolCalls` from `main/debug/` so the
+trace panel fills. Pass it as `tools` at the `createRealtimeSession` call site.
+
+Three things to get right, each of which has a documented reason to exist:
+
+- **It is a *request*, not a directive.** Every other `voice.*` message is one-way; this one needs a
+  correlated reply, and ADR-0045's note about `CredentialPort` is the same boundary problem solved
+  the other way round. Whatever shape it takes, main is the only process that may read a
+  `WorldState`.
+- **It must not be able to hang a spoken turn.** A tool call is the only `await` inside a response
+  that is already being spoken (ADR-0049). Give the bridge a timeout, and make the timeout answer
+  `{ unknown: … }` like every other failure rather than throwing — the degraded path already exists
+  and this is one more way into it.
+- **`toolCallRejected` telemetry and ADR-0047's no-call mark are how this stays visible.** ADR-0049
+  is explicit that a broken tool layer is quiet: the answers get vaguer and nothing sounds wrong. A
+  bridge that silently times out on every call is indistinguishable from today, which is the state
+  this ticket exists to leave.
+
+**Done when.** A live session advertises five tools; a scripted question drives a call from the
+renderer to main and back with a real answer from the world model; the T9 panel shows the call and
+its result; and a bridge that never answers produces an `unknown` and a `toolCallRejected` count
+rather than a turn that stops. T11 is the fixture-driven version of this and should be able to
+assert it without a key.
+
 ---
 
 ## Sequencing at a glance
@@ -243,7 +298,11 @@ that did not exist on 2026-08-09.
 | 1 | T1 | — |
 | 2 | T2, T5, T7, T9 | yes |
 | 3 | T3, T6, T4 | yes (T6 needs T5) |
-| 4 | T8, T10, T11 | yes |
+| 4 | T8, T10, T11, T12 | yes |
+
+T12 was added on 2026-08-09, after wave 3 merged, because a live bug report showed that everything
+waves 2 and 3 built is invisible in a real match without it. It is the one ticket here whose absence
+is not degradation but total: with no dispatcher injected, the tool layer is off.
 
 The two solo waves are solo for one reason each: T0 resolves a numbering collision that a parallel
 merge would make worse, and T1 owns `shell/index.ts`, which nearly everything else also touches.
