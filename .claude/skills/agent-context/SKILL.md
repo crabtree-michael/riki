@@ -94,6 +94,24 @@ renders a name or a line of chat must go through it rather than re-deriving the 
 
 ## Learnings
 
+**2026-08-09 — the prompt told the player Riki was "not a coach", and a test held it there.**
+ADR-0042 removed unprompted speech; `shell/prompt.ts` rendered that as *"You are not a coach"*, so a
+player who asked to be coached was refused by the cached prefix — the first text the model reads and
+the last one it will argue with. Two things to carry forward when you touch this module:
+
+- **ADR-0042's no-unprompted-speech property is held by the transport, not by the prompt.** Every
+  turn has a push-to-talk press behind it and the model cannot open one. Prompt language about
+  *whether* to speak buys nothing and is what caused this; T8's *"drop everything about whether to
+  speak"* is the rule. Riki is a coach that answers when asked (ADR-0050).
+- **A prompt assertion can pin a misreading rather than a decision.** `prompt.test.ts` asserted the
+  bad string under a comment calling it *"ADR-0042's product statement"*, which is where the
+  authority appeared to come from and why it survived. When an assertion on prompt text cites an
+  ADR, open the ADR — ADR-0042 never said it.
+
+*Why:* the identity sentence is not covered by the golden snapshot fixtures and no unit test can
+tell a confident persona from a wrong one. The check that means anything is reading the assembled
+string: `buildSessionPrompt([...])` printed in full, which is four seconds.
+
 **2026-08-09 — the push-to-talk chain was never joined, and every layer passed its own tests.**
 `beginPlayerTurn`/`endPlayerTurn` existed, `main/voice/session.ts` sent the directives, the voice
 renderer handled them — and **nothing in the composition root ever called the first two**. Pressing

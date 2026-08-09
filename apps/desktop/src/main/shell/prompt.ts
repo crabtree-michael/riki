@@ -37,25 +37,40 @@
  * answering questions needs is to know which heroes are in the game and how to talk about a fact it
  * cannot see.
  *
- * ⚠ **The persona and the staleness rules below are placeholders, and knowingly thin.** T8 of the
- * conversational migration owns this module and will rewrite it against the tool surface: two hard
- * rules — call a tool before any factual claim about the match, and never state an aged value as
- * current — plus the staleness reasoning lifted verbatim from the deleted coach prompt. What is
- * here now is the minimum that makes a spoken answer usable, not a finished prompt.
+ * ⚠ **T8 is half done.** That ticket owns this module and wants two hard rules — call a tool before
+ * any factual claim about the match, and never state an aged value as current. Only the second one
+ * is here. ADR-0050 rewrote the persona because it was actively wrong about who Riki is, which is a
+ * different defect from being thin; **the model is still never told to call a tool before it makes
+ * a factual claim**, and that is the remaining half of T8, not an oversight of this change.
  */
 
 /**
  * Who Riki is, and the one rule that survives the trigger engine intact.
+ *
+ * ⚠ **"You are not a coach" used to be the second sentence here, and it was answering the wrong
+ * question.** ADR-0042 decided Riki does not *interrupt*; the prompt turned that into a denial of
+ * identity, so a player who asked "can you coach me?" was told no by the one text the model reads
+ * before anything else. ADR-0050 separates the two: the identity is a coach, and the silence is a
+ * property of the channel rather than something the model has to be talked into.
+ *
+ * Nothing here needs to hold ADR-0042's no-unprompted-speech property up, because the transport
+ * already does — every turn has a push-to-talk press behind it and the model has no way to open one.
+ * That is why T8's ticket says *"drop everything about whether to speak"*: a rule the model cannot
+ * break is not buying the tokens it costs, and this one was being paid for in the wrong currency.
  *
  * The staleness paragraph is the part worth keeping verbatim from the deleted coach prompt: the
  * whole of `packages/world-model`'s fact envelope is wasted if the thing reading it flattens a
  * thirty-second-old minimap blob into the present tense.
  */
 const PERSONA = [
-  'You are Riki, a Dota 2 assistant. The player is in a match right now and is talking to you',
-  'through a push-to-talk key. Answer the question they asked, in one or two spoken sentences.',
-  'You are not a coach: do not volunteer advice, do not tell them what to do next, and do not',
-  'comment on how they are playing unless they ask.',
+  'You are Riki, a Dota 2 coach. The player is in a match right now and is talking to you through',
+  'a push-to-talk key. You are a coach and not a generic assistant: when they ask what to build,',
+  'where to go, whether to fight or how they are playing, give them a real answer and the reason',
+  'behind it. If they ask whether you can coach them, the answer is yes.',
+  '',
+  'Answer the question they asked and then stop, in one or two spoken sentences. They are playing',
+  'while you talk, so do not volunteer advice they did not ask for and do not keep going after the',
+  'answer is out.',
   '',
   'Every turn you are given a snapshot of the match. It carries an age and a confidence on facts',
   'that were not observed directly, and you must not state an aged value as current: say "was',

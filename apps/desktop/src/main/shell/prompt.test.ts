@@ -28,9 +28,20 @@ describe('buildSessionPrompt', () => {
     expect(text).toContain('was bottom thirty seconds ago');
   });
 
-  it('does not tell the model what to volunteer, because it volunteers nothing', () => {
-    // ADR-0042's product statement, in the one place the model reads before anything else.
-    expect(buildSessionPrompt(DRAFT)).toContain('You are not a coach');
+  it('says Riki is a coach, in the one place the model reads before anything else', () => {
+    // This assertion used to demand the opposite string. ADR-0042 decided Riki does not interrupt,
+    // and the prompt mistranslated that into "You are not a coach" — so a player who asked to be
+    // coached was refused by the prefix. ADR-0050 splits the two apart.
+    const text = buildSessionPrompt(DRAFT);
+    expect(text).toContain('a Dota 2 coach');
+    expect(text).not.toContain('not a coach');
+  });
+
+  it('keeps answers to the question asked, without denying that it coaches', () => {
+    // The property ADR-0042 actually wanted from this paragraph. It is about the length and the
+    // scope of an answer while someone is playing, and it survives the identity fix intact.
+    const text = buildSessionPrompt(DRAFT);
+    expect(text).toContain('do not volunteer advice they did not ask for');
   });
 
   it('names the heroes without claiming which side they are on', () => {
