@@ -18,6 +18,8 @@ agent (§9).
 
 Recorded GSI sessions, JSONL, one line per POST with a timestamp. Committed plainly — a full match is a few MB and the diffs are reviewable. Recorded by tools/gsi-record, replayed by FakeGsiSource and tools/gsi-replay.
 
+**A match Riki played is a fixture in this format.** The recorder writes `<dataDir>/matches/<matchId>.jsonl`, and every line — including its header and its 30-second `WorldState` keyframes — is a valid `GsiFixtureLine`, so a recording can be dropped in here and replayed with no conversion (ADR-0044). The keyframe lines carry `body: {}`, which is what makes a fixture reader step over them; do not "tidy" that field away. A recording cut short by a crash needs its partial last line dropped first — `parseGsiFixture` calls `JSON.parse` per line with no guard, where `parseRecordLines` tolerates the tail.
+
 ## `console-log/`
 
 Captured Dota console.log excerpts, including a rotation boundary. Scrub anything you would not want committed: these contain chat.

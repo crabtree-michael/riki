@@ -72,6 +72,21 @@ export function withDebugTelemetry(deps: DebugTelemetryDeps): ShellTelemetry {
       problem('degradation', `${from} → ${to}: ${summary}`);
     },
 
+    recordingOpened(matchId): void {
+      delegate.recordingOpened(matchId);
+    },
+
+    recordingClosed(matchId, lines, keyframes): void {
+      delegate.recordingClosed(matchId, lines, keyframes);
+    },
+
+    recordingFailed(matchId, reason): void {
+      delegate.recordingFailed(matchId, reason);
+      // The match keeps playing and the model keeps fusing, so nothing else in this window will
+      // look wrong — but everything `world_at` could have answered about this match is now gone.
+      problem('recording', `the recording for ${matchId} stopped: ${reason}`);
+    },
+
     transition(from, to, at): void {
       delegate.transition(from, to, at);
     },

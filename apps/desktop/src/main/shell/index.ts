@@ -62,8 +62,10 @@
 
 import type { MatchId, Timers, TurnId } from '@riki/context';
 import type { MatchLifecycleEvent } from '@riki/gsi';
+import { join } from 'node:path';
+
 import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
-import { createStalenessPolicy } from '@riki/world-model';
+import { createFileRecordSinks, createStalenessPolicy } from '@riki/world-model';
 
 import type { Millis, Unsubscribe } from '../../shared/overlay.js';
 import type { SnapshotSource, TurnAgent, VoiceSessionPort } from '../agent/index.js';
@@ -377,6 +379,10 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     sources: registrations,
     telemetry,
     visionSources,
+    // The match dataset (conversational-architecture.md §6). Local-only and never transmitted; the
+    // directory is created on the first `match_started` and not before. Retention and the Steam-ID
+    // hash are T10's, and they land on this path.
+    recording: { openSink: createFileRecordSinks(join(config.dataDir, 'matches')) },
   });
 
   // ---------------------------------------------------------------------------------------------

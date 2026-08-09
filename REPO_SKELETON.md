@@ -114,7 +114,8 @@ riki/
 │   ├── gsi/                         GSI HTTP listener, auth, parsing, liveness/heartbeat
 │   ├── log-tail/                    console.log tailer: chat, kill feed, rotation handling
 │   ├── world-model/                 the model, fusion, provenance, staleness, confidence,
-│   │                                derived state, ring history (dota2 §4)
+│   │                                derived state, ring history (dota2 §4), and the match
+│   │                                recorder — the one place here that writes a file (ADR-0044)
 │   ├── context/                     session preamble, rolling snapshot, coaching brief,
 │   │                                memory layer (dota2 §6, coaching §4–§5)
 │   ├── events/                      event engine, salience scoring, trigger policy,
@@ -211,6 +212,7 @@ to a file that only `tsc --build` creates. **If you add a package, copy this sha
 | Merging sources, staleness, confidence | `packages/world-model` | dota2 §4 |
 | The ~300-token snapshot the LLM sees | `packages/context` | dota2 §6.2 |
 | The tools the model reaches the world through | `packages/world-model/src/tools` | conversational §4 |
+| Recording a match to disk, and reading it back | `packages/world-model/src/record` | conversational §6 |
 | Wiring world model → context → realtime | `apps/desktop/src/main/agent` | conversational §3 |
 | Realtime session, barge-in, truncation | `packages/realtime` | realtime §2, §4, §5 |
 | Mic level, earcons, ducking, resampling | `packages/audio` | ui-design §7, realtime §3 |

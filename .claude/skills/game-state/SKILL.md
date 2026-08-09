@@ -45,6 +45,31 @@ you opened is not the file that is being written to ten minutes later.
   agent speaks once a minute.
 - Keep a ring history. Derived state (gold-to-item, buyback affordability, Roshan window) is
   computed from the model, not stored alongside it.
+- **One file in the package does I/O**, `record/file-sink.ts`, and that is deliberate (ADR-0044).
+  Everything else, including the recorder, is pure over an injected `RecordSink`. If you find
+  yourself adding a second `node:fs` import here, the seam is in the wrong place.
+
+## The match recording (`packages/world-model/src/record/`)
+
+A match is appended to `<dataDir>/matches/<matchId>.jsonl` as it plays — every observation with its
+timestamps, plus a serialised `WorldState` keyframe every 30 s. It is the agent's memory
+(conversational-architecture.md §6) and it is what `world_at` seeks into.
+
+**The recording is a `fixtures/gsi/*.jsonl` fixture.** Every line carries `atMs` and `body`,
+including the header and the keyframes, which carry `body: {}`. That single field is the whole
+compatibility rule — see the learning below for what happens without it, because the failure is
+silent.
+
+Three rules that are easy to break by accident:
+
+- **Do not buffer.** The recorder writes through to `writeSync` so a killed process costs the
+  half-written last line and nothing else. `parseRecordLines` reports a truncated tail and
+  distinguishes it from corruption in the middle; `parseGsiFixture` does neither and will throw on
+  a crash-truncated file, so drop the partial line before replaying one.
+- **A keyframe is `flattenFacts`, not the object graph.** Adding a field to `WorldState` needs no
+  change to the encoder. Writing a bespoke encoder means the next field is silently not recorded.
+- **Chat text never reaches the file.** The event is recorded with `text` and `speaker` removed and
+  `redacted: true` on the line (dota2 §7). `player.steamid` is *not* hashed yet — T10 owns that.
 
 ## Fairness
 
@@ -186,6 +211,28 @@ discontinuities. *Why it is worth knowing anyway:* **if you add or edit a `fixtu
 `atMs` and `map.clock_time` have to advance together** — the paused rows are the only exemption,
 because the tracker skips the check while `paused` is true. And a replay harness must advance its
 clock by the recorded gap, never by a constant; a constant is what hid this.
+
+**2026-08-09 — `createGsiPayloadParser` accepts every object, so "the parse succeeded" is not an
+assertion.** Writing the match recorder, the load-bearing decision was that a keyframe line carries
+`body: {}`. Omitting `body` looks harmless: `parseGsiFixture` falls back to `parsed.body ?? parsed`,
+so the *whole keyframe* becomes the POST body, and `parse()` files everything it does not recognise
+under `unknown` and returns `{ ok: true }` (parse.ts is explicit that "almost nothing is rejected",
+because Valve adds components without announcing them). A replayed recording therefore delivers a
+`gsi.payload` observation whose `unknown` holds the entire serialised world, silently.
+
+The first two tests written for this passed with `body` deliberately removed — one asserted
+`result.ok`, the other counted `map.clock_time` values and the bogus payloads had none. What catches
+it is asserting on `Object.keys(result.value.unknown)`: no record-envelope key (`atMs`, `kind`,
+`state`, `seq`, …) may appear there. *Why:* against a parser that fails open, every "did it parse"
+test is a test that passes. Assert on what the parse *produced*, and prove it by breaking the
+implementation and watching the test go red — both of these only became real tests that way.
+
+**2026-08-09 — `WorldModelStore` exposes no `WorldState`; `snapshot(now).state` is the way out.**
+`WorldModelReader` is `snapshot` / `onVersion` / `history`, and `WorldSnapshot.state` is the full
+model. Taking a snapshot per observation is cheap enough to do on the 8 Hz path — `derived.resolve`
+builds a *view* and computes nothing until a rule id is asked for — so the recorder reads the store
+that way rather than the store growing an accessor. *Why:* the obvious move is to add a getter to
+`store.ts`, and the second writer into that file is how a single-writer invariant stops being one.
 
 ## See also
 

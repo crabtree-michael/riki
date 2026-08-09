@@ -18,8 +18,16 @@
 
 import type { Timers } from '@riki/context';
 import type { MatchLifecycleEvent } from '@riki/gsi';
-import type { Clock, MonoMs, WorldModelStore, WorldModelStoreOptions } from '@riki/world-model';
-import { createWorldModelStore } from '@riki/world-model';
+import type {
+  Clock,
+  MatchRecorder,
+  MonoMs,
+  RecordSinkFactory,
+  RecorderTelemetry,
+  WorldModelStore,
+  WorldModelStoreOptions,
+} from '@riki/world-model';
+import { createMatchRecorder, createWorldModelStore } from '@riki/world-model';
 
 import type {
   ObservationBus,
@@ -61,12 +69,26 @@ export interface SourceRegistration {
   readonly lifecycle?: (listener: (events: readonly MatchLifecycleEvent[]) => void) => () => void;
 }
 
-export interface StateTelemetry extends SupervisorTelemetry {
+export interface StateTelemetry extends SupervisorTelemetry, RecorderTelemetry {
   /** A reset, with the reason from §6.4's table. Never silent — that is the whole rule. */
   worldReset(reason: string): void;
   matchStarted(matchId: string): void;
   matchEnded(matchId: string): void;
   degraded(from: string, to: string, summary: string): void;
+}
+
+/**
+ * Where a match recording goes, or absent for a subsystem that records nothing.
+ *
+ * A sink *factory* rather than a recorder: the recorder needs the world model to build a keyframe
+ * from, and the world model is built in here. Handing in the one thing this file cannot supply —
+ * somewhere for the bytes to go — keeps `createFileRecordSinks` and its `node:fs` import at the
+ * composition root, and lets a test record a match into an array.
+ */
+export interface RecordingOptions {
+  readonly openSink: RecordSinkFactory;
+  /** Defaults to `DEFAULT_KEYFRAME_INTERVAL_MS` (30 s, conversational-architecture.md §6). */
+  readonly keyframeIntervalMs?: number;
 }
 
 export interface StateSubsystemDeps {
@@ -77,6 +99,7 @@ export interface StateSubsystemDeps {
   readonly store?: WorldModelStoreOptions;
   /** Source ids that carry CV, for the degradation controller. */
   readonly visionSources?: readonly string[];
+  readonly recording?: RecordingOptions;
 }
 
 export interface StateSubsystemWithExtras extends StateSubsystem {
@@ -85,6 +108,8 @@ export interface StateSubsystemWithExtras extends StateSubsystem {
   /** The current match, or null between games. The shell needs it for `ContextAssembler`. */
   readonly matchId: string | null;
   readonly degradation: DegradationController;
+  /** Null when `deps.recording` was absent. Exposed so a test can read what was written. */
+  readonly recorder: MatchRecorder | null;
 }
 
 export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWithExtras {
@@ -95,6 +120,25 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
   const degradation = createDegradationController(
     deps.visionSources === undefined ? {} : { visionSources: deps.visionSources },
   );
+
+  /**
+   * The match dataset (conversational-architecture.md §6).
+   *
+   * It reads the store rather than the bus so that a keyframe and the observation that preceded it
+   * describe the same instant — the recorder is called *after* `apply`, so the clock stamped on a
+   * line is the clock the model held once that observation had landed.
+   */
+  const recorder: MatchRecorder | null =
+    deps.recording === undefined
+      ? null
+      : createMatchRecorder({
+          openSink: deps.recording.openSink,
+          world,
+          ...(deps.recording.keyframeIntervalMs === undefined
+            ? {}
+            : { keyframeIntervalMs: deps.recording.keyframeIntervalMs }),
+          ...(telemetry === undefined ? {} : { telemetry }),
+        });
 
   const supervisor = createSourceSupervisor({
     publish: (o) => {
@@ -116,7 +160,12 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
   /** §6.1 step 5: the bus delivers, and this is the only thing that writes to the store. */
   unsubscribes.push(
     bus.subscribe((o) => {
-      world.apply(o, clock.now());
+      const now = clock.now();
+      world.apply(o, now);
+      // After the write, deliberately: the recording is the model's memory, so a line's game clock
+      // has to be the one the model holds *including* this observation. A recorder failure is the
+      // recorder's own business — `record` never throws at this callback.
+      recorder?.record(o, now);
     }),
   );
 
@@ -130,11 +179,15 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
           matchId = event.matchId;
           world.reset('new_match', now);
           telemetry?.worldReset('new_match');
+          // After the reset, so the opening keyframe is the empty state this match starts from
+          // rather than the last one's facts.
+          recorder?.open(event.matchId, now);
           telemetry?.matchStarted(event.matchId);
           break;
 
         case 'match_ended':
           matchId = null;
+          recorder?.close(now, 'match_ended');
           telemetry?.matchEnded(event.matchId);
           break;
 
@@ -152,6 +205,10 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
           // yet, so this over-corrects deliberately rather than under-correcting silently.
           world.reset('clock_discontinuity', now);
           telemetry?.worldReset('clock_discontinuity');
+          // A keyframe rather than nothing: replaying observations forward across a reset would
+          // reconstruct facts the live model has just thrown away, which is the one thing a
+          // recording read back must not do.
+          recorder?.keyframe(now, 'clock_discontinuity');
           break;
 
         case 'phase_changed':
@@ -172,6 +229,7 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
     world,
     bus,
     degradation,
+    recorder,
 
     get matchId(): string | null {
       return matchId;
@@ -200,6 +258,9 @@ export function buildStateSubsystem(deps: StateSubsystemDeps): StateSubsystemWit
       unsubscribes.length = 0;
       lifecycleListeners.clear();
       await supervisor.stop();
+      // Before the reset: a closing keyframe of the emptied model would record a match that ended
+      // with nothing observed. A quit mid-match is the ordinary case, not an exceptional one.
+      recorder?.close(clock.now(), 'shutdown');
       world.reset('shutdown', clock.now());
     },
   };

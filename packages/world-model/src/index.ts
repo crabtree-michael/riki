@@ -6,6 +6,11 @@
  * Fusion precedence, staleness decay, confidence, provenance, derived state, and ring history
  * live here. Pure functions over data: no I/O, no Electron, testable in milliseconds.
  *
+ * **One exception, and it is exactly one file.** `record/file-sink.ts` appends a match recording to
+ * disk. The recorder itself is pure over an injected `RecordSink`; the descriptor lives there and
+ * nowhere else, because the app, the timeline reader and `tools/` all have to write and read the
+ * same bytes and a second implementation would be a second format (ADR-0044).
+ *
  * It must not know it is feeding an LLM — state and conversation rates are decoupled by
  * design, and a lint boundary stops it importing @riki/realtime (§6.2).
  *
@@ -33,3 +38,4 @@ export * from './derived/registry.js';
 export * from './derived/rules/index.js';
 export * from './history/ring.js';
 export * from './history/delta.js';
+export * from './record/index.js';
