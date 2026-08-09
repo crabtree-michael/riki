@@ -23,9 +23,9 @@
  * derived from the frame (a `seq`, a `turnId`, a fact path), never from render order, because
  * render order is exactly what a new frame changes.
  *
- * ⚠ **Mid-migration.** The Triggers, Gate state, Counters, Controls and Rehearsal panels are gone
- * with the trigger engine they rendered (ADR-0042). Their replacement is a per-turn tool trace,
- * which is T9 of the conversational migration.
+ * The Triggers, Gate state, Counters, Controls and Rehearsal panels went with the trigger engine
+ * they rendered (ADR-0042). What replaced them is inside the Turns panel: every tool call the model
+ * made to answer, and a mark on the turns that made none (ADR-0047).
  */
 
 import type {
@@ -33,6 +33,7 @@ import type {
   DebugCount,
   DebugFrame,
   DebugProblem,
+  DebugToolCall,
   DebugTraceStep,
   DebugTurn,
   DebugWorld,
@@ -110,11 +111,6 @@ export function formatAge(ms: number): string {
   if (ms < 1_000) return `${String(Math.round(ms))}ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
   return `${String(Math.round(ms / 60_000))}m`;
-}
-
-/** Three decimals: salience thresholds are tuned in the third one, so two would hide the answer. */
-export function formatScore(value: number): string {
-  return value.toFixed(3);
 }
 
 function counts(list: readonly DebugCount[]): string {
@@ -262,11 +258,41 @@ export function renderTurns(frame: DebugFrame): HTMLElement {
   } else {
     for (const turn of [...frame.turns].reverse()) body.append(renderTurn(turn));
   }
-  return panel('Turns', null, body);
+
+  // Counted in the title as well as marked on the row, because the interesting reading is a rate:
+  // one ungrounded answer is a question that did not need the world, and four in a row is a prompt
+  // that has stopped working.
+  const silent = frame.turns.filter(answeredWithoutTools).length;
+  return panel(
+    'Turns',
+    silent === 0
+      ? null
+      : `${String(silent)} of ${plural(frame.turns.length, 'turn')} called no tool`,
+    body,
+  );
+}
+
+/**
+ * A turn that spoke without asking the world anything.
+ *
+ * The failure conversational-architecture.md §10 names is narrower than this — *a **factual**
+ * question answered with no tool call* — and this window cannot narrow it, because it never sees
+ * the question. `playerSaidChars` is a length and the transcript is deliberately not carried
+ * (`shared/debug.ts`), so "how many characters did they say" is the whole of what is knowable
+ * about what was asked.
+ *
+ * So it over-flags, on purpose: "what time is it" and "say that again" are both marked, and both
+ * are cheap for a reader to dismiss. The other direction is not cheap — an answer that sounds
+ * grounded and was not is exactly the thing nobody catches by listening, and it is the reason this
+ * mark exists at all. ADR-0047.
+ */
+export function answeredWithoutTools(turn: DebugTurn): boolean {
+  return turn.outcome === 'spoke' && turn.tools.length === 0;
 }
 
 function renderTurn(turn: DebugTurn): HTMLElement {
-  const wrap = el('div', 'ins-turn');
+  const ungrounded = answeredWithoutTools(turn);
+  const wrap = el('div', `ins-turn${ungrounded ? ' ins-turn--no-tools' : ''}`);
 
   const head = el('div', 'ins-turn-head');
   head.append(
@@ -277,7 +303,11 @@ function renderTurn(turn: DebugTurn): HTMLElement {
     // to be believed lie about who asked.
     pill(turn.cause, turn.cause === 'player' ? 'good' : 'on'),
     pill(turn.outcome, turn.outcome === 'spoke' ? 'good' : turn.outcome === 'open' ? 'off' : 'on'),
+  );
+  if (ungrounded) head.append(pill('no tool call', 'bad'));
+  head.append(
     el('span', 'ins-meta', `${String(turn.snapshotTokens)} tokens`),
+    el('span', 'ins-meta', formatLegs(turn)),
   );
   wrap.append(head);
 
@@ -289,6 +319,8 @@ function renderTurn(turn: DebugTurn): HTMLElement {
     ),
     el('pre', 'ins-text', turn.snapshotText),
   );
+
+  wrap.append(el('div', 'ins-text-label', 'tool calls'), renderToolCalls(turn));
 
   if (turn.agentSaid !== null) {
     wrap.append(
@@ -309,6 +341,92 @@ function renderTurn(turn: DebugTurn): HTMLElement {
   }
 
   return keyed(wrap, `turn:${turn.turnId}`);
+}
+
+/**
+ * Every call the model made inside this turn, oldest first.
+ *
+ * Oldest first and not newest first, unlike the panels around it: a turn's calls are read as a
+ * sequence — *it asked for its own state, then for the enemy it was worried about* — and the order
+ * it asked in is most of what that says.
+ *
+ * The empty case is a message rather than an absence for the same reason the row is marked: a turn
+ * with no calls looks identical to a turn whose calls have not been recorded, and the difference is
+ * the entire finding.
+ */
+function renderToolCalls(turn: DebugTurn): HTMLElement {
+  const body = el('div', 'ins-tools');
+
+  if (turn.tools.length === 0) {
+    body.append(
+      el(
+        'div',
+        'ins-empty',
+        turn.outcome === 'open'
+          ? 'none yet — the turn is still open'
+          : 'none — this answer was not grounded in the world model',
+      ),
+    );
+    return body;
+  }
+
+  for (const call of turn.tools) body.append(renderToolCall(call));
+
+  if (turn.toolsDropped > 0) {
+    body.append(el('div', 'ins-empty', `${plural(turn.toolsDropped, 'earlier call')} dropped`));
+  }
+  return body;
+}
+
+function renderToolCall(call: DebugToolCall): HTMLElement {
+  const row = el('div', 'ins-tool');
+
+  row.append(
+    el('span', 'ins-tool-name', call.name),
+    el('span', `ins-tool-status ins-tool--${call.status}`, call.status),
+    // A pending call keeps its dash rather than borrowing a zero. It is the shape a hung dispatcher
+    // takes on this screen, and a hung dispatcher is why the call is recorded before it is made.
+    el('span', 'ins-meta', call.durationMs === null ? '—' : formatDuration(call.durationMs)),
+    el('span', 'ins-tool-args', call.args),
+  );
+
+  // `result` is null only while pending, and a pending call has already said so in its status.
+  if (call.result !== null) row.append(el('pre', 'ins-tool-result', call.result));
+
+  return keyed(row, `tool:${String(call.seq)}`);
+}
+
+/**
+ * The turn's legs, as one line: how long until it asked, how long the asking took, how long until
+ * it had finished answering.
+ *
+ * Each leg is omitted when its endpoint has not happened, rather than being shown as a zero — a
+ * turn still speaking and a turn that answered instantly are different things, and only one of them
+ * is worth investigating.
+ *
+ * What is deliberately not here is a leg for the model's own thinking. The gap between the key
+ * release and the first call contains a network round trip, the model reading a snapshot and its
+ * decision to call at all, and nothing in this process can separate them — so it is labelled for
+ * what it is, "to first call", and left un-decomposed.
+ */
+function formatLegs(turn: DebugTurn): string {
+  const legs: string[] = [];
+
+  const first = turn.tools[0];
+  if (first !== undefined)
+    legs.push(`first call +${formatDuration(Math.max(0, first.at - turn.at))}`);
+
+  const timed = turn.tools.filter((call) => call.durationMs !== null);
+  if (timed.length > 0) {
+    const total = timed.reduce((sum, call) => sum + (call.durationMs ?? 0), 0);
+    legs.push(`${plural(timed.length, 'call')} ${formatDuration(total)}`);
+  }
+
+  if (turn.closedAt !== null) {
+    legs.push(`answered +${formatDuration(Math.max(0, turn.closedAt - turn.at))}`);
+  }
+
+  return legs.join(' · ');
 }
 
 // -----------------------------------------------------------------------------------------------

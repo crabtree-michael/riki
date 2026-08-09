@@ -12,16 +12,17 @@
  * nothing at all until an `action` intent arrives, and what it can reach is a registry rather than a
  * surface. `actions.ts` is where that boundary is drawn and argued.
  *
- * One decorator survives ADR-0042, and the composition root installs it because it is a thing the
- * root already injects:
+ * Two decorators, and the composition root installs both because both are things the root already
+ * injects:
  *
  * | Seam | What it sees | Why a decorator and not a new event |
  * |---|---|---|
  * | `SnapshotSource` | the rendered snapshot | it is returned to the agent, composed into one system message, and forgotten — nothing keeps the live text |
+ * | `ToolDispatcher` | every tool call and its answer | the same: a `function_call_output` is composed, sent to the session and dropped, and the call is the half of a turn nothing else records (ADR-0047) |
  *
- * The other one observed `TriggerPolicy`, and it went with the policy. `packages/context` is
- * unchanged by this component, which is the point: the shell already takes the snapshot source by
- * injection, so the inspector is composition rather than instrumentation.
+ * A third observed `TriggerPolicy`, and it went with the policy. Neither `packages/context` nor
+ * `packages/realtime` is changed by this component, which is the point: the shell already takes
+ * both of these by injection, so the inspector is composition rather than instrumentation.
  *
  * See docs/design/debug-inspector.md §3.
  */
@@ -42,12 +43,28 @@ export interface DebugHub {
   frame(now: number): DebugFrame;
 
   recordTurnOpened(turn: DebugTurnOpenedInput): void;
-  recordTurnClosed(turnId: string, outcome: string): void;
+  /** `at` is what times the question-to-answer leg; the hub has no clock of its own. */
+  recordTurnClosed(turnId: string, outcome: string, at: number): void;
   /** Riki's own final transcript, joined to its turn. */
   recordAgentTranscript(turnId: string, text: string): void;
   /** The player's, as a length only. See `shared/debug.ts`'s header. */
   recordPlayerTranscript(turnId: string, chars: number): void;
   recordProblem(origin: string, message: string, at: number): void;
+
+  /**
+   * A tool call, attributed to the turn that was open when it was made.
+   *
+   * **The hub decides which turn, and no caller passes an id.** `ToolDispatcher.call` is
+   * `(name, args)` and carries no turn — widening it so the inspector could read one would make
+   * `packages/realtime` aware of a debug window, which is exactly the instrumentation ADR-0032
+   * exists to avoid. The Realtime session answers one response at a time, so "the newest turn" is
+   * unambiguous; ADR-0047 argues the case and names what it gets wrong.
+   *
+   * Returns the call's `seq`, which is the only handle `recordToolResult` accepts.
+   */
+  recordToolCall(call: DebugToolCallInput): number;
+  /** Joined by `seq`. A result for a call whose turn has already fallen out of the buffer is dropped. */
+  recordToolResult(seq: number, result: DebugToolResultInput): void;
 
   /**
    * One step of the turn chain, in order (ADR-0039).
@@ -150,6 +167,35 @@ export interface DebugTurnOpenedInput {
   readonly snapshotText: string;
   readonly snapshotTokens: number;
   readonly snapshotOmitted: readonly string[];
+}
+
+export interface DebugToolCallInput {
+  /** Whatever the model asked for. Not `ToolName`: a call for a tool that does not exist is a call. */
+  readonly name: string;
+  /** Already JSON, already clipped by the caller's own bound if it has one. See `renderValue`. */
+  readonly args: string;
+  readonly at: number;
+}
+
+/**
+ * How a call ended.
+ *
+ * A real union here and a plain `string` in `shared/debug.ts`, which is the same split every other
+ * status in this component uses: main switches on it, the renderer only ever prints it, and a copy
+ * of the union on the far side of the IPC boundary would be a second declaration to keep in step.
+ */
+export interface DebugToolResultInput {
+  /**
+   * `ok` — a tool answered.
+   * `unknown` — a tool answered that nothing was observed, which is an answer and not a fault
+   * (ADR-0043).
+   * `refused` — no tool ran: the name was not one of the five, or the arguments failed the schema.
+   * `failed` — a tool threw.
+   */
+  readonly status: 'ok' | 'unknown' | 'refused' | 'failed';
+  /** The result as JSON, or the reason there is not one. */
+  readonly result: string;
+  readonly at: number;
 }
 
 // -----------------------------------------------------------------------------------------------

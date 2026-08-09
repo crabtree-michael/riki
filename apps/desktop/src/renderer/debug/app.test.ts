@@ -9,10 +9,11 @@
  * distinguishable from a scenario's, that a null reads as a null, that the reader is not dragged
  * back to the top four times a second, and that nothing on the screen came from `innerHTML`.
  *
- * ⚠ **Mid-migration.** This file used to be twice this length, and most of what went with ADR-0042
- * was the gate ladder: thirteen verdicts per candidate, the `not_in_match` filter, the Controls
- * panel's steppers and locks, and the Rehearsal dropdown. None of it had a subject any more. What is
- * left is the shape the tool trace (T9) will be built on top of.
+ * This file used to be twice this length, and most of what went with ADR-0042 was the gate ladder:
+ * thirteen verdicts per candidate, the `not_in_match` filter, the Controls panel's steppers and
+ * locks, and the Rehearsal dropdown. None of it had a subject any more. The tool trace (ADR-0047)
+ * is what took its place, and `describe('tool calls')` below is where its two claims are checked:
+ * that a replayed turn renders every call it made, and that a turn which made none looks different.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +22,7 @@ import type {
   DebugCommand,
   DebugFrame,
   DebugIntent,
+  DebugToolCall,
   DebugTurn,
   RikiDebugBridge,
 } from '../../shared/debug.js';
@@ -73,7 +75,13 @@ function frame(overrides: Partial<DebugFrame> = {}): DebugFrame {
   };
 }
 
-/** One turn, defaulted to a player question — the shape most tests want. */
+/**
+ * One turn, defaulted to a player question that called one tool.
+ *
+ * Grounded by default rather than bare, so that the no-tool-call mark is something a test asks for
+ * explicitly. The alternative — every fixture flagged, and the flag asserted by opting *out* — is
+ * how a mark that fires on everything passes its own tests.
+ */
 function turn(overrides: Partial<DebugTurn> = {}): DebugTurn {
   return {
     turnId: 'voice_1',
@@ -84,8 +92,25 @@ function turn(overrides: Partial<DebugTurn> = {}): DebugTurn {
     snapshotTokens: 42,
     snapshotOmitted: [],
     outcome: 'spoke',
+    closedAt: 11_000,
+    tools: [call()],
+    toolsDropped: 0,
     agentSaid: null,
     playerSaidChars: null,
+    ...overrides,
+  };
+}
+
+/** One tool call, defaulted to one that answered. */
+function call(overrides: Partial<DebugToolCall> = {}): DebugToolCall {
+  return {
+    seq: 1,
+    at: 9_400,
+    name: 'my_state',
+    args: '{}',
+    status: 'ok',
+    result: '{"level":{"value":9,"age_seconds":0.2,"confidence":1,"source":"gsi"}}',
+    durationMs: 12,
     ...overrides,
   };
 }
@@ -396,6 +421,150 @@ describe('turns', () => {
     const view = mountInspector(root, fakeBridge());
     view.apply(frame({ turns: [turn({ playerSaidChars: 18 })] }));
     expect(root.textContent).toContain('player said 18 characters (not shown)');
+  });
+});
+
+describe('tool calls (ADR-0047)', () => {
+  const turnRow = (): HTMLElement | null => root.querySelector<HTMLElement>('.ins-turn');
+
+  it('renders a replayed turn’s whole call trace, in the order it was made', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        turns: [
+          turn({
+            tools: [
+              call({ seq: 1, name: 'my_state', args: '{}', durationMs: 12 }),
+              call({
+                seq: 2,
+                at: 9_500,
+                name: 'enemy',
+                args: '{"hero":"puck"}',
+                result: '{"heroes":[{"hero":"puck"}]}',
+                durationMs: 26,
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const text = root.textContent;
+    // Arguments and results both, because "it called `enemy`" and "it called `enemy` about puck and
+    // got nothing back" are different readings of the same turn.
+    expect(text).toContain('my_state');
+    expect(text).toContain('{"hero":"puck"}');
+    expect(text).toContain('{"heroes":[{"hero":"puck"}]}');
+    // Oldest first: a turn's calls are read as a sequence, and the order it asked in is most of
+    // what the sequence says.
+    expect(text.indexOf('my_state')).toBeLessThan(text.indexOf('enemy'));
+  });
+
+  it('times each leg: to the first call, through the calls, to the answer', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        turns: [
+          turn({
+            at: 9_000,
+            closedAt: 11_000,
+            tools: [
+              call({ at: 9_400, durationMs: 12 }),
+              call({ seq: 2, at: 9_600, durationMs: 26 }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const text = root.textContent;
+    expect(text).toContain('first call +400 ms');
+    expect(text).toContain('2 calls 38 ms');
+    // The leg the §10 risk is actually about: a round trip inside a spoken answer is audible in a
+    // way it is not in text.
+    expect(text).toContain('answered +2.0 s');
+  });
+
+  it('marks a turn that spoke without calling anything', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({ turns: [turn({ tools: [], agentSaid: 'You are ahead by two thousand.' })] }),
+    );
+
+    // The failure conversational-architecture.md §10 names: an answer that sounds grounded and was
+    // not is the one thing nobody catches by listening.
+    expect(turnRow()?.className).toContain('ins-turn--no-tools');
+    expect(root.textContent).toContain('no tool call');
+    expect(root.textContent).toContain('not grounded in the world model');
+  });
+
+  it('leaves a turn that called a tool unmarked', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ turns: [turn()] }));
+
+    // The negative control. Without it the test above proves only that the class name exists.
+    expect(turnRow()?.className).not.toContain('ins-turn--no-tools');
+    expect(root.textContent).not.toContain('no tool call');
+  });
+
+  it('does not mark a turn that is still open', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ turns: [turn({ outcome: 'open', closedAt: null, tools: [] })] }));
+
+    // A turn that has not answered yet has not answered *without* asking either, and flagging it
+    // would put a red edge on every turn for the second it takes to run.
+    expect(turnRow()?.className).not.toContain('ins-turn--no-tools');
+    expect(root.textContent).toContain('the turn is still open');
+  });
+
+  it('counts the flagged turns in the panel title, because the rate is the reading', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        turns: [
+          turn({ turnId: 'voice_1' }),
+          turn({ turnId: 'voice_2', tools: [] }),
+          turn({ turnId: 'voice_3', tools: [] }),
+        ],
+      }),
+    );
+
+    // One ungrounded answer is a question that did not need the world; three of them is a prompt
+    // that has stopped working.
+    expect(root.textContent).toContain('2 of 3 turns called no tool');
+  });
+
+  it('shows a pending call as pending rather than as an instant one', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(
+      frame({
+        turns: [
+          turn({
+            outcome: 'open',
+            closedAt: null,
+            tools: [call({ status: 'pending', result: null, durationMs: null })],
+          }),
+        ],
+      }),
+    );
+
+    const text = root.textContent;
+    expect(text).toContain('pending');
+    // A dash and not `0 ms`: this is the shape a hung dispatcher takes on this screen.
+    expect(text).toContain('—');
+  });
+
+  it('says how many calls the cap dropped, rather than presenting the rest as all of them', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ turns: [turn({ toolsDropped: 3 })] }));
+    expect(root.textContent).toContain('3 earlier calls dropped');
+  });
+
+  it('gives every call a key that survives the redraw', () => {
+    const view = mountInspector(root, fakeBridge());
+    view.apply(frame({ turns: [turn({ tools: [call({ seq: 7 })] })] }));
+
+    expect(root.querySelector('.ins-tool')?.getAttribute('data-ins-key')).toBe('Turns/tool:7');
   });
 });
 

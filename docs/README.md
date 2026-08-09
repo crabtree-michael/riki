@@ -68,9 +68,10 @@ Docs are split by kind, because "design doc" was covering four different things:
   ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md),
   [ADR-0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md)).
   **⚠ Partly superseded**: the gate, trigger, counter, control and rehearsal panels went with the
-  engine they observed (ADR-0042), and their replacement is a per-turn tool trace — T9 of the
-  migration. Read §3 and §4.2 before adding a hook or a setter to a package: the reason it needed
-  neither is the whole design.
+  engine they observed (ADR-0042). Their replacement is the per-turn tool trace of
+  [ADR-0047](adr/0047-a-turn-is-its-tool-calls.md) — every call the model made to answer, and a mark
+  on the turns that made none. Read §2.1 and §3 before adding a hook to a package: the reason this
+  window has never needed one is the whole design.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
@@ -150,6 +151,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0044](adr/0044-a-match-recording-is-a-fixture.md) | A match recording is a fixture, and the world model writes it | Accepted — every line is a valid `GsiFixtureLine`; keyframes carry `body: {}`; unbuffered `writeSync`, and one named file in `packages/world-model` does I/O |
 | [0045](adr/0045-a-session-is-renewed-from-main-and-the-conversation-does-not-carry.md) | A session is renewed from main, and the conversation does not carry across | Accepted — detection in `packages/realtime` (expiry code, dead transport, one fault per loss), renewal in main by re-sending `voice.session.open` with byte-identical instructions. Discharges the renewal path ADR-0042 records as owed |
 | [0046](adr/0046-a-no-argument-enemy-call-answers-for-everyone.md) | A no-argument `enemy()` answers for everyone | Accepted — five summaries rather than a clarifying question, because a refusal is a pause in a spoken sentence; measured at 3.0 kB worst case and 37 B in the early match. Settles conversational-architecture §11 q1 |
+| [0047](adr/0047-a-turn-is-its-tool-calls.md) | A turn is its tool calls, and a turn without any is marked | Accepted — the inspector's replacement for the gate ladder: calls attributed by the hub rather than by a widened port, `unknown` as its own status, and a no-call mark that over-flags because the window never sees the question |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

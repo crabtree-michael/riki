@@ -8,26 +8,24 @@
 > longer exists, so all five are gone rather than empty — a panel rendering "0 of 13 gates" against
 > no engine is worse than an absent one. ADR-0037 and ADR-0038 are superseded with them.
 >
-> **What is current:** §3 and §4 — the decoration rule, the push/pull split, the frame's bounds and
-> the "costs nothing when off" property — which are why the World, Turns, Sources, Trace and
-> Problems panels needed no hook in any package. ADR-0039's scenarios are now the window's only
-> write surface.
+> **What is current:** §2 and §2.1 (rewritten for the tool trace), §2.3, §3 and §4 — the decoration
+> rule, the push/pull split, the frame's bounds and the "costs nothing when off" property — which
+> are why every surviving panel needed no hook in any package. ADR-0039's scenarios are now the
+> window's only write surface.
 >
-> **What replaces the deleted half** is a per-turn tool trace: the question, the tool calls with
-> their arguments and results, the answer, and the latency of each leg — with a turn that answered a
-> factual question and called *no* tool visibly flagged. That is T9 of
-> [conversational-migration-tickets.md](conversational-migration-tickets.md), and §1's problem
-> statement below is the right one to re-read first: the failure it describes is still exactly the
-> failure a tool trace has to make visible.
+> **What is history:** §2.2 (both coaches) and §2.5 (the rehearsal panel) describe machinery that no
+> longer exists, and are kept only because §2.5's argument about marking a fabricated turn is the
+> argument [ADR-0047](../adr/0047-a-turn-is-its-tool-calls.md) reuses. §1's problem statement is
+> about the trigger ladder and is worth reading as the shape of the *new* problem rather than the
+> old one: the failure it describes — a system whose working and broken states look identical — is
+> exactly the failure the tool trace exists to make visible.
 
 **Status:** Built. `apps/desktop/src/main/debug/`, `src/preload/debug.ts`,
 `src/renderer/debug/`, off by default behind `config.debug.enabled`.
-**Scope:** A dev-only window showing the judge's and the coach's real-time internal state, and
-letting a developer move the settings behind it while a match runs (ADR-0037).
-**Out of scope:** Telemetry sinks and log redaction (`packages/telemetry`, still a skeleton);
-*doing* the tuning this window exists to make possible (coaching-trigger-architecture.md §16
-step 3); the player-facing settings surface (`src/renderer/settings/`) — the Controls panel is a
-developer tool that persists nothing, not a preferences window.
+**Scope:** A dev-only window showing what Riki believes, what it was given for a turn, which tools
+it called to answer, and what it said.
+**Out of scope:** Telemetry sinks and log redaction (`packages/telemetry`, still a skeleton); the
+player-facing settings surface (`src/renderer/settings/`).
 
 ---
 
@@ -57,38 +55,60 @@ reported, and all of them reach `nullTelemetry()`.
 
 ## 2. What it shows
 
-Three columns, one document, redrawn whole at 4 Hz — without moving the reader (§2.3).
+Two columns, one document, redrawn whole at 4 Hz — without moving the reader (§2.3).
 
 | Panel | Answers |
 |---|---|
-| **Gate state** | The engine's mutable state: quiet mode, mute, agent/player speaking, intensity against its threshold, the global cooldown, the latch set, and every running per-kind cooldown |
+| **Scenarios** | The runnable scenarios, and how the last run of each ended (ADR-0039) |
 | **World model** | Every observed `meta.*`, `self.*` and `map.*` leaf with its full envelope — value, source, confidence, staleness, age, and age *basis* |
 | **Enemies / Derived** | Per-hero position or last-seen with staleness; every derived rule's answer, with `null` shown as *declined* rather than as zero |
-| **Triggers** | Per tick: every ranked candidate with its salience, magnitude, confidence and deadline, and **all thirteen gates' verdicts on each** |
-| **Coach turns** | Per turn: the snapshot and the brief exactly as rendered, which sections survived, which were omitted, the outcome, and what Riki said |
-| **Counters and sources** | `TriggerCounters` per kind and per reason, bus depth, drops, `seq` gaps, and each source's liveness |
+| **Turns** | Per turn: the snapshot exactly as rendered, which sections were omitted, **every tool call with its arguments, result, status and duration**, the latency of each leg, the outcome, and what Riki said — §2.1 |
+| **Trace** | The turn chain in order, and where it stopped (ADR-0039) |
+| **Sources** | Bus depth, drops, `seq` gaps, and each source's liveness |
 | **Problems** | Everything `ShellTelemetry` reports as a fault, which currently reaches nowhere else |
-| **Controls** | Every setting the window may *move*, live — §4 |
 
-### 2.1 The gate grid is the point
+### 2.1 The tool trace is the point
 
-`TriggerPolicy.decide` ranks candidates and returns the first gate that refuses the winner. Three
-things it computed are thrown away, and each of them is a question somebody actually has:
+ADR-0042 replaced a pre-assembled brief with five tools, which moves the interesting half of a turn
+out of the snapshot and into calls the session makes mid-answer. Those calls are composed, sent and
+forgotten; **nothing in the process records that one happened**, and there is no counter, no log
+line and no fixture that can say afterwards whether the model asked the world anything before it
+spoke.
 
-- **The losing candidates.** §5.5 is explicit that there is no fall-through, and the reasoning is
-  sound — most gates are about *Riki* rather than about the candidate. But the runner-up's verdicts
-  are still the answer to "why did nobody hear about the other thing".
-- **The gates that passed.** A candidate that cleared twelve gates and died on `below_threshold` is
-  a tuning problem. One that died on gate 1 is not a coaching problem at all. From a counter they
-  are the same event.
-- **The gates that would also have refused.** §5.2 rule 3 attributes a refusal to the *first* gate,
-  deliberately. That is right for the counter and wrong for the person tuning it: relaxing the
-  attributed gate does nothing if a second one is still there, and nothing else can tell you.
+That matters because of the risk [conversational-architecture.md §10](conversational-architecture.md)
+names:
 
-So the inspector evaluates the whole ladder against every ranked candidate and shows the grid, with
-the deciding refusal styled apart from the shadowed ones.
+> **The model may answer without calling a tool.** It has a plausible-sounding match in its context
+> from earlier turns and no hard incentive to refresh.
 
-### 2.2 Both coaches
+This is the gate ladder's failure mode wearing new clothes, and it needs the same treatment for the
+same reason: it is **silent**. A turn answered from a fact observed four hundred milliseconds ago
+and a turn answered from pretraining produce the same audio, the same transcript and the same
+outcome, and differ only in whether they were right.
+
+So a turn shows its calls, and a turn that spoke without making one is marked — a tinted head row
+and a red pill, findable while scrolling past without reading a word. Four things about how, all
+argued in [ADR-0047](../adr/0047-a-turn-is-its-tool-calls.md):
+
+- **The mark is wider than the failure, on purpose.** §10's failure is a *factual* question answered
+  with no call, and this window cannot detect that one because it never sees the question (§6). So
+  every spoken turn with no calls is marked, "say that again" included. A false positive costs a
+  reader two seconds; a false negative is an ungrounded answer nobody catches by listening.
+- **`unknown` is a status of its own**, beside `ok`, `refused` and `failed`. A tool answering
+  honestly that nothing was observed (ADR-0043) is not a fault, but it is the answer to *why was
+  that answer so vague*, which no other status expresses.
+- **A call is recorded before it is dispatched**, so a dispatcher that hangs shows as a `pending`
+  row rather than as nothing at all. A wedge that renders as an absence is how 2026-08-09's gate 4
+  stayed invisible for a whole match.
+- **The legs are the ones that can be measured**: to the first call, through the calls, to the
+  answer. There is no leg for the model's own deliberation, because the gap before the first call
+  contains a round trip, a read and a decision, and nothing here can separate them.
+
+### 2.2 Both coaches — history
+
+> Both coaches are deleted (ADR-0042). Kept because the seam argument in the last paragraph is the
+> one §3 still runs on: cover a new producer by decorating something the composition root already
+> injects, and change nothing in the package that produces it.
 
 ADR-0031 added a second coach: `packages/coach` asks a model *should Riki speak right now* instead
 of running detectors through a gate ladder. The inspector covers both, and covering the second one
@@ -118,17 +138,17 @@ threw the reader's position away with it: scrolling up to study a gate ladder la
 the next frame returned you to the top. That made the window unreadable during the only time it is
 worth reading — while a match is running. ADR-0036 is the fix and it is two rules.
 
-**The three scrolling columns and the two header buttons are never rebuilt**, only refilled.
+**The two scrolling columns and the header's button are never rebuilt**, only refilled.
 `scrollTop` belongs to the element, so a column recreated each frame has no position to preserve;
 and a `<button>` recreated each frame takes keyboard focus to `<body>` with it. Everything inside a
 column is still rebuilt whole — the property that keeps a stale node from surviving a redraw is
-untouched. The Controls panel's own buttons live *inside* a column and are therefore
-rebuilt, so `app.ts` restores keyboard focus by the `data-focus` key each of them carries — the
-focus counterpart of what `scroll.ts` does for position, and the reason tabbing to a stepper or
-holding `+` down works at all (§4.2). That restore passes `preventScroll: true`, because otherwise
-the two halves fight: `focus()` scrolls its element into view inside the column `scroll.ts` has just
-restored, and a focused control is in the topmost panel. Moving a setting and then scrolling down to
-watch it work was the reported bug, and it looked exactly like the one above.
+untouched. The scenario buttons live *inside* a column and are therefore rebuilt, so `app.ts`
+restores keyboard focus by the `data-focus` key each of them carries — the focus counterpart of what
+`scroll.ts` does for position, and the reason tabbing to a scenario works at all. That restore
+passes `preventScroll: true`, because otherwise the two halves fight: `focus()` scrolls its element
+into view inside the column `scroll.ts` has just restored, and a focused button is in the topmost
+panel. Touching a control and then scrolling down to watch what it did was the reported bug, and it
+looked exactly like the one above.
 
 **Position is content, not a number.** The panels that grow render newest-first, so a new tick is
 prepended and every pixel offset below it is wrong the moment it lands. `renderer/debug/scroll.ts`
@@ -140,7 +160,13 @@ appear, and at the bottom means *keep the oldest row still* as the buffer grows 
 Freeze is still worth having and is now about the values rather than the scrollbar: text selection
 does not survive a redraw, and a gate ladder read live is read while it is replaced.
 
-### 2.5 Asking a question, not just reading the answer
+### 2.5 Asking a question, not just reading the answer — history
+
+> The Rehearsal panel is deleted with the coaches it rehearsed (ADR-0042); ADR-0039's scenarios are
+> what remains of the idea. Kept for the paragraph beginning *"A rehearsed turn is marked"*, whose
+> rule the tool trace inherits: **mark a turn wherever it could be mistaken for something it is
+> not.** That is why a `system` cause still draws its own pill, and why a turn with no tool calls is
+> marked rather than left to be inferred from an empty list (ADR-0047).
 
 ADR-0037 made the numbers movable and left the cost of a reading where it was: seeing what the coach
 does with laning phase still meant reaching laning phase. **ADR-0038's Rehearsal panel** replaces
@@ -172,51 +198,52 @@ The dropdown is a disclosure built from buttons, for the reason every control is
 ## 3. Shape
 
 ```
-   TriggerPolicy ────decorated────►┐
-   RikiContext   ────decorated────►│
-   ShellTelemetry────decorated────►├──► DebugHub ──frame(now)──► DebugWindow ──IPC──► renderer/debug
-   CoachingSessionPort ──subscribed►│         ▲
-   world / health / counters ───────┘         └─ pulled at frame time, not pushed
+   SnapshotSource ───decorated────►┐
+   ToolDispatcher ───decorated────►│
+   ShellTelemetry ───decorated────►├──► DebugHub ──frame(now)──► DebugWindow ──IPC──► renderer/debug
+   VoiceSessionPort ─subscribed───►│         ▲
+   world / health / actions ───────┘         └─ pulled at frame time, not pushed
 ```
 
-Every seam is a thing the composition root already injects, so `packages/events` and
-`packages/context` are **unchanged by this component**. That is not tidiness — it is the reason the
-inspector can be trusted, because there is no version of the trigger path that only runs when
-somebody is watching.
+Every seam is a thing the composition root already injects, so `packages/context`,
+`packages/realtime` and `packages/world-model` are **unchanged by this component**. That is not
+tidiness — it is the reason the inspector can be trusted, because there is no version of the turn
+path that only runs when somebody is watching.
 
 ### 3.1 Push for edges, pull for state
 
-Ticks, turns and problems are pushed: they are events, they happen whether or not the window is
-open, and missing one is missing the thing you opened it to see. Ticks therefore accumulate from the
-moment the hub exists — the most useful moment to open an inspector is just *after* something looked
-wrong.
+Turns, tool calls, problems and trace steps are pushed: they are events, they happen whether or not
+the window is open, and missing one is missing the thing you opened it to see. Turns therefore
+accumulate from the moment the hub exists — the most useful moment to open an inspector is just
+*after* something looked wrong.
 
-The world model, the engine's switches, health and the counters are pulled when a frame is built.
-They are current-value questions, and pushing them would mean building a projection thirty times a
-second into a buffer nobody reads.
+The world model, the session, health and the action list are pulled when a frame is built. They are
+current-value questions, and pushing them would mean building a projection several times a second
+into a buffer nobody reads.
 
-### 3.2 Why the policy is the seam for engine state
+### 3.2 Why the snapshot source is the seam for turn text
 
-`EventEngine` exposes `counters()`, four setters, and the tape. The latch set, the per-kind cooldown
-clocks and the intensity score are private to it — correctly, since they are its invariants and an
-accessor is an invitation to write to them. But `GateContext` is assembled from all of them once per
-tick and handed to the policy, so decorating the policy sees everything without widening the
-engine's surface.
+`SnapshotSource.render` produces the text a turn is answered from; the agent composes it into one
+system message and forgets it, and `fixtures/golden/` only shows what the renderer produces for a
+*fixture*. So the one rendering that matters — the one Riki was about to answer on the strength of —
+has nowhere else to be read.
 
-The cost is stated where it shows: those values are current as of the last world-model version bump,
-not as of the frame. The panel is labelled *"as of the last tick, N ago"* rather than presented as
-live.
+A decorator rather than a hook on the agent, because the debug window's own `scenario.speak` renders
+a snapshot without going through the agent at all, and a hook there would miss it. The shell
+constructs one `SnapshotSource` and injects it into both.
 
-### 3.3 Why the context is the seam for turn text
+### 3.3 Why the dispatcher is the seam for tool calls
 
-`openTurn` renders the snapshot and the brief, appends both to the ledger, and returns them to the
-agent, which composes them into one system message and forgets them. Decorating `RikiContext` in the
-composition root covers every caller — the coaching path, the player path, and any future one — with
-no change to `createCoachingAgent`, whose correctness is load-bearing when the inspector is off.
+The same argument one layer along, and the reason §2.1 is possible at all. A tool call is dispatched
+inside `packages/realtime`'s turn handling and its output is sent and dropped; decorating the
+`ToolDispatcher` the composition root injects sees every call, its arguments, its answer and its
+duration, without `packages/realtime` or `packages/world-model` knowing a window exists.
 
-It is spread-and-override, which relies on `createContextAssembler` returning a plain record.
-`observing-context.test.ts` asserts that every key of a real assembler survives the wrap, so the
-assumption fails a test rather than failing silently.
+One thing it structurally cannot see, and the reason `DebugHub.recordToolCall` is public beside it:
+a call refused before dispatch — a tool name that is not one of the five, or arguments the schema
+rejects — never reaches a dispatcher. That is the model getting the tool surface wrong, which is the
+most interesting thing it can do, so it is recorded through the hub directly and carries the
+`refused` status (ADR-0047).
 
 ## 4. What it can and cannot change
 
@@ -226,21 +253,22 @@ The load-bearing property, and each part of it is enforced somewhere:
 
 | Claim | Enforced by |
 |---|---|
-| The policy decorator returns the delegate's decision | `observing-policy.test.ts` asserts object *identity*, not deep equality |
-| The context decorator returns the assembler's turn | `observing-context.test.ts`, and the ledger still receives both appends |
+| The snapshot decorator returns the renderer's own text | `observing-snapshot.test.ts` |
+| The dispatch decorator returns the dispatcher's own answer, and re-throws its errors | `observing-dispatch.test.ts` asserts object *identity*, not deep equality — and that a rejection still rejects, because `packages/realtime` turns a failed call into a degraded answer rather than a dead turn |
 | The telemetry decorator never swallows an event | `telemetry.test.ts` walks every member of `ShellTelemetry` reflectively, keyed off `nullTelemetry()`, and asserts each one reached the delegate — so an arm that mirrors a fault but drops its `delegate.` line fails, and a member added later is covered the day it compiles |
 | An untouched inspector is inert end to end | `shell.test.ts` replays `fixtures/gsi/laning-phase.jsonl` twice, with the flag off and on, and asserts the same utterances come out |
-| The live config, gates and detectors are the real ones until moved | `controls.test.ts` compares each against `DEFAULT_TRIGGER_CONFIG`, `GATES` and `DETECTORS` field by field and verdict by verdict |
 
-The fourth is the test worth having. In a product whose failure mode is Riki talking when it should
-not, a debug tool that perturbs the trigger path *by existing* is worse than no debug tool.
+The last is the test worth having. A debug tool that perturbs the turn path *by existing* is worse
+than no debug tool, and the decorator on the dispatcher is the easiest place in the codebase to
+break that: it sits on the path a spoken answer runs through, and one swallowed rejection turns a
+failed tool into silence.
 
-A gate that throws is reported as **refusing**, not passing. The inspector asks all thirteen gates
-about candidates the shipping path would have short-circuited past, so it is the one place in the
-app that can provoke a gate with an input the policy never would — and an answer that cannot be
-relied on should not look like a pass.
+### 4.2 …and when it does, it is one row of a registry — history
 
-### 4.2 …and when it does, it is one row of a registry
+> Every control described below is deleted: the registry was `packages/events`' thresholds, gates
+> and detectors, and ADR-0042 deleted all three. ADR-0039's scenarios are the window's only write
+> surface now, and the *reachable set is a registry, not a surface* rule at the end of §5.1 is what
+> survives of this section.
 
 ADR-0037. The window was read-only, which was right for §4.1 and wrong for the question it kept
 producing: *`ult_ready` scored 0.281 and `speakThreshold` is 0.3; what happens at 0.25?* The only
@@ -322,26 +350,29 @@ Created on demand and destroyed on close — the reverse of the overlay, which i
 because it has a latency budget. The inspector has none, and a renderer holding a frame every 250 ms
 for a whole match while nobody looks at it is exactly the cost a debug tool must not impose.
 
-### 5.1 Four intents, and two of them write
+### 5.1 Four intents, and one of them writes
 
-`RikiDebugBridge` has two methods and `send` accepts four things: `ready`, `fault`, `control` and
-`reset-controls`. The last two make this the widest renderer surface in the app — it was the least
-privileged process and is now the most — so the allow-list is checked at both boundaries and the two
-checks ask **different questions**:
+`RikiDebugBridge` has two methods and `send` accepts four things: `ready`, `fault`, `action` and
+`clear-trace`. `action` is the whole of the write surface — ADR-0037's `control` and ADR-0038's
+`rehearse` are both gone, and neither is deferred: every row in the control registry described a
+threshold or a gate in `packages/events`, and a rehearsal ran one coach turn. ADR-0042 deleted all
+of it, so the two intents named things that no longer exist.
 
-- **Preload** asks whether the payload is *shaped* like a control intent: a non-empty id, a value
-  that is a boolean, a finite number or a string, both bounded. That is all a boundary with no access
-  to the registry can honestly check, and a copy of the registry here would be a second list to keep
-  in step whose weaker half is the one this file was trusted for.
-- **Main** asks whether the id names a **registered, unlocked control**. A refusal becomes an
-  `inspector` problem in the Problems panel rather than a silence, because a control that appears to
-  do nothing is the failure this window exists to make impossible.
+The id is checked at both boundaries and the two checks ask **different questions**:
 
-There is still no `evaluate`, no `speak`, no "replay this tick", and no way to name a field rather
-than a control. The window can turn knobs the app was built with; it cannot drive the app.
-`intents.test.ts` names what it must refuse, and `electron-window.ts`'s sender check matters more
-than it did: a `control` arriving from the overlay's `webContents` must not be honoured just because
-it parses.
+- **Preload** asks whether the payload is *shaped* like an action intent: a non-empty, bounded id.
+  That is all a boundary with no access to the registry can honestly check, and a copy of the
+  registry here would be a second list to keep in step whose weaker half is the one this file was
+  trusted for.
+- **Main** asks whether the id names a **registered action that is not already running**. A refusal
+  becomes an `inspector` problem in the Problems panel rather than a silence, because a button that
+  appears to do nothing is the failure this window exists to make impossible.
+
+**The reachable set is a registry, not a surface.** There is no `evaluate`, no way to name a field,
+no way to reach a file, and nothing here can reach mute — which keeps the one producer ADR-0028 gave
+it. `intents.test.ts` names what it must refuse, and `electron-window.ts`'s sender check still
+matters: an `action` arriving from the overlay's `webContents` must not be honoured just because it
+parses.
 
 ## 6. What it does not carry
 
@@ -351,30 +382,30 @@ player's speech is neither, and it is the one thing in this process that is nobo
 theirs (dota2 §7). The length is enough to tell "the transcript arrived and was empty" from "no
 transcript arrived", which is the only thing about it this window needs to answer.
 
-The coach's transcript *is* carried — "what did it actually say" is half the reason the window
+Riki's own transcript *is* carried — "what did it actually say" is half the reason the window
 exists.
 
+**That absence is why the no-tool-call mark is wider than the failure it hunts** (§2.1). It cannot
+be narrowed without the question, and the question is not available at any price.
+
 **And this is why the default is off.** With `debug.enabled` false the shell builds no hub, so no
-rendered snapshot, brief or coach transcript is held anywhere; installs no observing policy, so the
-extra gate evaluations never run; and offers no tray row. Each is a reason on its own, and the first
-makes the default a privacy decision rather than a performance one. `repo-hygiene.test.ts` asserts
-`RIKI_DEBUG=off` alongside `RIKI_CAPTIONS` and `RIKI_UNPROMPTED`.
+rendered snapshot, tool result or transcript is held anywhere; installs no decorators; and offers no
+tray row. Each is a reason on its own, and the first makes the default a privacy decision rather
+than a performance one. `repo-hygiene.test.ts` asserts `RIKI_DEBUG=off` alongside `RIKI_CAPTIONS`
+and `RIKI_UNPROMPTED`.
 
 ## 7. Bounds
 
-Every buffer in `hub.ts` is capped by `DEBUG_LIMITS`, and the two long text fields are clipped on
-the way in, with a marker — a snapshot that ends mid-line and one that *was rendered* mid-line look
+Every buffer in `hub.ts` is capped by `DEBUG_LIMITS`, and every long text field is clipped on the
+way in, with a marker — a snapshot that ends mid-line and one that *was rendered* mid-line look
 identical otherwise, and the second is a real failure.
 
-Empty ticks are counted but not kept. A match spends most of its time producing them, and retaining
-them would push every interesting tick out of a 200-entry buffer within seconds. The count survives
-in `counters.ticks`, which is what keeps *"the engine is not running"* distinguishable from *"the
-engine found nothing"* — the same distinction §5.4 is built around, one level up.
-
-`not_in_match` ticks are hidden by default in the view, with a count of how many were hidden. During
-a draft, a post-game screen, or any Turbo or Ability Draft game, the detectors keep producing
-candidates and the ladder refuses every one at the first question. Those ticks are correct, and there
-are thousands of them.
+Tool results are the binding constraint on frame size and carry the tightest bound: forty turns ×
+eight calls × 800 characters is the worst case a frame can hold, which is the same order as the
+snapshot text beside it. Calls past the eighth in one turn are dropped oldest-first and **counted**
+into `toolsDropped`, because a truncated list that reads like a complete one is the one thing this
+window must never produce. A turn that made nine calls is itself a finding, so the cap is not the
+place to make it disappear.
 
 ## 8. Enabling it
 
@@ -418,17 +449,15 @@ Then **Riki ▸ Open Inspector…** in the tray. `docs/runbooks/dev-setup.md` ha
    (§2.3, ADR-0036) and so does keyboard focus, which `app.ts` restores by `data-focus` key; text
    selection inside a panel does not, and that is what the freeze button is for. The same redraw is
    why every control is a button rather than a text field.
-6. **This is a tool, not a measurement.** It makes the thresholds in `packages/events/src/config.ts`
-   inspectable *and movable*; it does not tune them, and it does not judge the result. That is still
-   coaching-trigger-architecture.md §16 step 3 — which now needs a person with a corpus and an
-   opinion, rather than a person with a corpus, an opinion and a rebuild between every reading.
-7. ~~**Settings only, not actions.**~~ **One action exists: ADR-0038's rehearsal** (§2.5). "Force a
-   tick" is now a button, taken as a decision rather than an extension, and taken on a coaching root
-   built for the call and thrown away — so the live latches, cooldowns and ledger are untouched. The
-   other two remain declined and remain different in kind: "clear the latches" mutates the live
-   coach, and "say this now" reaches the session port, which is the one thing the bridge has never
-   been able to do. **Still open within the rehearsal:** a mock state is a whole recording replayed
-   to its end, so there is no way to ask about a point part-way through one. That needs a scrubber
-   and a decision about what "the state at line 40" means when fusion is order-dependent.
-8. **No sweep.** `DebugSurface.controls` is exposed so a headless replay can move a threshold between
-   runs, which is the shape a `pnpm dev:replay` sweep would use — nothing does yet.
+6. **This is a tool, not a measurement.** It makes a turn's tool calls visible; it does not judge
+   whether the model called the right tool, or enough of them. The no-tool-call mark is the one
+   verdict it offers and it is deliberately a crude one (§2.1).
+7. **The dispatch decorator is not wired yet.** `observeToolCalls` is written, exported and tested
+   against a fake dispatcher, and the composition root does not install it — there is no
+   `ToolDispatcher` to decorate until T4 of the conversational migration lands tool calling in the
+   session. Wiring it is one call of the shape `observeSnapshots` already has. Until then the Turns
+   panel's tool section renders the empty case for every turn, and **every spoken turn is marked**;
+   that is the honest reading of "no call was recorded", but it will look like an alarm.
+8. **A refused call has a producer that does not exist either.** `parseToolCall`'s three failures are
+   the model getting the tool surface wrong, and the `refused` status is reachable only by whoever
+   wires that branch (T4). The hub API is public for it; nothing calls it today.

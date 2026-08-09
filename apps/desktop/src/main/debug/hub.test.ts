@@ -63,12 +63,15 @@ describe('turns', () => {
   it('joins the close and the transcript to the turn that was opened', () => {
     const hub = createDebugHub();
     hub.recordTurnOpened(turn());
-    hub.recordTurnClosed('voice_1', 'spoke');
+    hub.recordTurnClosed('voice_1', 'spoke', 2_400);
     hub.recordAgentTranscript('voice_1', 'Your ult is up.');
 
     const [held] = hub.frame(0).turns;
     expect(held?.outcome).toBe('spoke');
     expect(held?.agentSaid).toBe('Your ult is up.');
+    // The question-to-answer leg spans two events, so the close has to carry its own timestamp —
+    // the hub has no clock and a frame is a snapshot of neither end.
+    expect(held?.closedAt).toBe(2_400);
   });
 
   it('never carries the player transcript, only its length', () => {
@@ -85,8 +88,20 @@ describe('turns', () => {
   it('ignores a transcript for a turn it never saw open', () => {
     const hub = createDebugHub();
     hub.recordAgentTranscript('voice_99', 'from a match that ended');
-    hub.recordTurnClosed('voice_99', 'spoke');
+    hub.recordTurnClosed('voice_99', 'spoke', 2_400);
     expect(hub.frame(0).turns).toEqual([]);
+  });
+
+  it('starts a turn with no calls and no close, rather than with plausible zeroes', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn());
+
+    const [held] = hub.frame(0).turns;
+    // An open turn that has called nothing *yet* and a spoken turn that called nothing are the same
+    // shape here and different findings on screen, which is `view.ts`' problem rather than this one.
+    expect(held?.tools).toEqual([]);
+    expect(held?.toolsDropped).toBe(0);
+    expect(held?.closedAt).toBeNull();
   });
 
   it('clips long text rather than letting one turn fill the window', () => {
@@ -112,6 +127,118 @@ describe('turns', () => {
     const frame = hub.frame(0);
     expect(frame.turns).toHaveLength(DEBUG_LIMITS.turns);
     expect(JSON.stringify(frame)).not.toContain('too late');
+  });
+});
+
+describe('tool calls (ADR-0047)', () => {
+  it('attributes a call to the turn that was open, without being told which', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn({ turnId: 'voice_1', at: 1_000 }));
+    hub.recordTurnOpened(turn({ turnId: 'voice_2', at: 5_000 }));
+
+    const seq = hub.recordToolCall({ name: 'enemy', args: '{"hero":"puck"}', at: 5_120 });
+    hub.recordToolResult(seq, { status: 'ok', result: '{"heroes":[]}', at: 5_138 });
+
+    const [first, second] = hub.frame(6_000).turns;
+    // `ToolDispatcher.call` is `(name, args)` and carries no turn id. Widening it so the inspector
+    // could read one would make `packages/realtime` aware of a debug window (ADR-0032).
+    expect(first?.tools).toEqual([]);
+    expect(second?.tools).toHaveLength(1);
+    expect(second?.tools[0]?.name).toBe('enemy');
+    expect(second?.tools[0]?.args).toBe('{"hero":"puck"}');
+    expect(second?.tools[0]?.result).toBe('{"heroes":[]}');
+    expect(second?.tools[0]?.durationMs).toBe(18);
+  });
+
+  it('shows a call with no result yet as pending rather than as nothing', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn());
+    hub.recordToolCall({ name: 'my_state', args: '{}', at: 1_100 });
+
+    const [call] = hub.frame(1_200).turns[0]?.tools ?? [];
+    // A dispatcher that hangs is the failure worth seeing, and a row that appeared only once a
+    // result landed would render a hang as nothing at all.
+    expect(call?.status).toBe('pending');
+    expect(call?.result).toBeNull();
+    expect(call?.durationMs).toBeNull();
+  });
+
+  it('keeps a tool that answered `unknown` apart from one that failed', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn());
+
+    const unknown = hub.recordToolCall({ name: 'world_at', args: '{"clock":120}', at: 1_100 });
+    hub.recordToolResult(unknown, {
+      status: 'unknown',
+      result: '{"unknown":"never observed this match"}',
+      at: 1_105,
+    });
+    const failed = hub.recordToolCall({ name: 'economy', args: '{}', at: 1_200 });
+    hub.recordToolResult(failed, { status: 'failed', result: 'Error: no scoreboard', at: 1_210 });
+
+    const calls = hub.frame(1_300).turns[0]?.tools ?? [];
+    // An honest "nobody observed this" is an answer (ADR-0043); a throw is ours. Collapsing them
+    // would make a vague answer and a broken tool the same row.
+    expect(calls.map((call) => call.status)).toEqual(['unknown', 'failed']);
+  });
+
+  it('records a call that arrived with no turn open, rather than dropping it', () => {
+    const hub = createDebugHub();
+    hub.recordToolCall({ name: 'my_state', args: '{}', at: 900 });
+
+    const frame = hub.frame(1_000);
+    expect(frame.turns).toEqual([]);
+    // Every turn has a key press behind it (ADR-0042), so this means the session answered something
+    // nobody asked — and it is invisible everywhere else in the process.
+    expect(frame.problems[0]?.origin).toBe('inspector');
+    expect(frame.problems[0]?.message).toContain('my_state');
+  });
+
+  it('counts the calls the per-turn cap dropped, so a truncated list says it is one', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn());
+    for (let i = 0; i < DEBUG_LIMITS.toolCallsPerTurn + 3; i += 1) {
+      hub.recordToolCall({ name: `call_${String(i)}`, args: '{}', at: 1_000 + i });
+    }
+
+    const [held] = hub.frame(2_000).turns;
+    expect(held?.tools).toHaveLength(DEBUG_LIMITS.toolCallsPerTurn);
+    expect(held?.toolsDropped).toBe(3);
+    // Oldest dropped, newest kept: the last thing it asked for is the thing you are looking at.
+    expect(held?.tools[0]?.name).toBe('call_3');
+  });
+
+  it('clips arguments and results, which are the only unbounded thing a call carries', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn());
+    const seq = hub.recordToolCall({
+      name: 'enemy',
+      args: 'a'.repeat(DEBUG_LIMITS.toolArgsChars + 100),
+      at: 1_000,
+    });
+    hub.recordToolResult(seq, {
+      status: 'ok',
+      result: 'b'.repeat(DEBUG_LIMITS.toolResultChars + 100),
+      at: 1_010,
+    });
+
+    const [call] = hub.frame(2_000).turns[0]?.tools ?? [];
+    expect(call?.args).toContain('more characters');
+    expect(call?.result).toContain('more characters');
+  });
+
+  it('drops a result whose call has fallen out of the buffer', () => {
+    const hub = createDebugHub();
+    hub.recordTurnOpened(turn({ turnId: 'voice_0' }));
+    const seq = hub.recordToolCall({ name: 'my_state', args: '{}', at: 1_000 });
+
+    for (let i = 1; i <= DEBUG_LIMITS.turns; i += 1) {
+      hub.recordTurnOpened(turn({ turnId: `voice_${String(i)}` }));
+    }
+    hub.recordToolResult(seq, { status: 'ok', result: 'too late', at: 9_000 });
+
+    // The call index must not outlive the ring buffer, or a long match leaks an entry per call.
+    expect(JSON.stringify(hub.frame(9_100))).not.toContain('too late');
   });
 });
 

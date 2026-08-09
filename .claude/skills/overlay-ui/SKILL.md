@@ -76,6 +76,30 @@ unit tests.
 
 ## Learnings
 
+**2026-08-09 — a CSS rule you cannot see is not a mark, and 90 seconds of Electron settles it.**
+ADR-0047's no-tool-call flag was a red 2px `border-left` on `.ins-turn`, which is exactly right in
+the source and **invisible on screen**: a turn fills its panel, so the border lands on the column
+divider and reads as part of it. Every Tier 1 test passed, because a test can assert a class name
+and cannot see. The check that found it, and the reason it is cheap enough to be routine:
+
+```sh
+# a throwaway *.test.ts in src/renderer/debug/ that mounts the view against a realistic frame
+# and writes `<style>${css}</style>${document.body.innerHTML}` to /tmp/inspector.html
+pnpm exec vitest run --project desktop-renderer <the probe>
+xvfb-run -a node_modules/.pnpm/electron@*/node_modules/electron/dist/electron /tmp/shot.mjs
+```
+
+`shot.mjs` is ten lines: `app.whenReady().then(...)`, a `BrowserWindow` with
+`webPreferences: { offscreen: true }` and `show: false`, `loadFile`, `capturePage()`,
+`writeFileSync(png)`. **No app boot, no preload, no IPC** — the view is pure and the stylesheet is a
+file, so the whole visual layer can be photographed without the composition root. It also caught a
+`grid-template-columns` still declaring three columns after ADR-0042 left two, which had been
+shipping as dead space.
+
+*Why:* the `run` recipes in this repo all boot the app, which is right for wiring and far too
+expensive to repeat while iterating on a colour. Delete the probe before committing — it is a
+measurement, not a fixture.
+
 **2026-08-04 — the inspector can run two scenarios now, and the panel worth having is the *trace*
 (ADR-0039).** `main/debug/actions.ts` is a second registry beside `controls.ts` — a control is a
 value you move, an action is something you start, and ADR-0037 admitted the first while explicitly

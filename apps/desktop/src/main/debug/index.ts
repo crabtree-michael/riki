@@ -15,6 +15,7 @@
  *
  * ```
  *   SnapshotSource ──decorated──►┐
+ *   ToolDispatcher ──decorated──►│
  *   ShellTelemetry ──decorated──►├──► DebugHub ──frame(now)──► DebugWindow ──IPC──► renderer/debug
  *   VoiceSessionPort ─────sub──►│         ▲
  *   WorldModel / health / etc ──┘         └── pulled at frame time, not pushed
@@ -52,6 +53,8 @@ export * from './contracts.js';
 export { createDebugHub, toCounts } from './hub.js';
 export { observeSnapshots } from './observing-snapshot.js';
 export type { ObservingSnapshotDeps } from './observing-snapshot.js';
+export { observeToolCalls } from './observing-dispatch.js';
+export type { ObservingDispatchDeps } from './observing-dispatch.js';
 export { withDebugTelemetry } from './telemetry.js';
 export type { DebugTelemetryDeps } from './telemetry.js';
 export { projectWorld, renderValue } from './projections.js';

@@ -42,9 +42,14 @@ const MAX_VALUE_CHARS = 160;
  * `JSON.stringify` for anything structured, which is the honest choice for a debug view: it shows
  * the shape as well as the contents, and a hand-written formatter per leaf type would be six
  * formatters that drift from the fields they format.
+ *
+ * `max` is a parameter because the same rendering serves a tool call's arguments and its result
+ * (`observing-dispatch.ts`), which are bounded by `DEBUG_LIMITS` at quite different sizes — a
+ * `world_at` argument is one field and an `enemy()` answer is five heroes with an envelope each.
+ * One renderer, several bounds; not several renderers.
  */
-export function renderValue(value: unknown): string {
-  return clamp(text(value));
+export function renderValue(value: unknown, max: number = MAX_VALUE_CHARS): string {
+  return clamp(text(value), max);
 }
 
 /**
@@ -56,8 +61,8 @@ export function renderValue(value: unknown): string {
  * source said. `shared/debug.ts` promises that a frame is a projection rather than a log and that
  * everything in it is bounded; a value that skipped this would be the one place that is not true.
  */
-function clamp(rendered: string): string {
-  return rendered.length <= MAX_VALUE_CHARS ? rendered : `${rendered.slice(0, MAX_VALUE_CHARS)}…`;
+function clamp(rendered: string, max: number): string {
+  return rendered.length <= max ? rendered : `${rendered.slice(0, max)}…`;
 }
 
 function text(value: unknown): string {

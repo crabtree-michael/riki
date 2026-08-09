@@ -6,12 +6,12 @@
  * can only answer about a moment somebody wrote down in advance. Its design is
  * docs/design/debug-inspector.md.
  *
- * ⚠ **Mid-migration.** ADR-0042 deleted the trigger engine, and with it the gate ladder that was
- * this window's centre of gravity. The Triggers, Gate state, Counters, Controls and Rehearsal panels
- * every one observed something that no longer exists, so they are gone rather than empty — a panel
- * that renders "0 of 13 gates" against no engine is worse than an absent one. Their replacement is a
- * per-turn tool trace (conversational-architecture.md §10), and that is T9 of the migration rather
- * than this file's current contents.
+ * ADR-0042 deleted the trigger engine, and with it the gate ladder that was this window's centre of
+ * gravity. The Triggers, Gate state, Counters, Controls and Rehearsal panels every one observed
+ * something that no longer exists, so they went rather than being left empty — a panel that renders
+ * "0 of 13 gates" against no engine is worse than an absent one. **What replaced them is
+ * `DebugToolCall`**: a turn now carries the calls the model made to answer it, with their arguments,
+ * their results and how long each took (ADR-0047).
  *
  * Three properties of this file are load-bearing:
  *
@@ -35,6 +35,13 @@
  * composed and was about to send to a model — the player's speech is neither, and it is the one
  * thing in this process that is nobody's business but theirs (dota2 §7). Riki's own transcript *is*
  * carried: "what did it actually say" is half the reason this window exists.
+ *
+ * That absence is why the no-tool-call flag below is deliberately wider than the failure it hunts.
+ * conversational-architecture.md §10 names the risk as *a turn that answered a **factual** question
+ * without calling a tool*, and nothing here can tell a factual question from "say that again" —
+ * because nothing here has the question. So `DebugToolCall`'s consumers flag every **spoken** turn
+ * with no call and accept the false positives, which ADR-0047 argues is the right trade for a
+ * window whose job is to make an omission visible rather than to adjudicate it.
  *
  * ⚠ Same transitional note as `shared/overlay.ts`: this crosses a process boundary, so by
  * REPO_SKELETON.md §4 it belongs in `@riki/protocol` as zod schemas once that package lands. It is
@@ -188,15 +195,17 @@ export interface DebugDerived {
 // -----------------------------------------------------------------------------------------------
 
 /**
- * One question, with the text that was composed to answer it.
+ * One question: what the model was given, what it went and asked for, and what it said.
  *
  * This is the only place in the process where the snapshot can be read as it was actually rendered:
- * the golden corpora render it for a fixture, and nothing keeps the live one.
+ * the golden corpora render it for a fixture, and nothing keeps the live one. The same is now true
+ * of the tool calls — a `function_call_output` is composed, sent and forgotten, and `tools` is the
+ * one record that it happened at all.
  *
  * It used to carry the coaching brief and the LLM coach's drafted line beside the snapshot, and a
- * `mockState` for a rehearsed turn. ADR-0042 deleted all three. What belongs in their place is the
- * tool calls the model made to answer — T9 of the migration — so a turn today is a snapshot, an
- * outcome and a transcript.
+ * `mockState` for a rehearsed turn. ADR-0042 deleted all three, and `tools` is what took their
+ * place: with no trigger engine choosing the topic, *which questions the model asked the world* is
+ * the interesting half of a turn, and it is the half nothing else can see (ADR-0047).
  */
 export interface DebugTurn {
   readonly turnId: string;
@@ -216,6 +225,29 @@ export interface DebugTurn {
   readonly snapshotOmitted: readonly string[];
   /** `open` until the turn resolves, then `spoke` | `cancelled`. */
   readonly outcome: string;
+  /**
+   * When the turn resolved, on the same clock as `at`. Null while it is open.
+   *
+   * Carried rather than derived from a `DebugProblem`-style age, because the leg somebody is
+   * actually timing — question to answer — spans two events and the frame is a snapshot of neither.
+   */
+  readonly closedAt: DebugMillis | null;
+  /**
+   * Every tool call made inside this turn, oldest first. Capped; see `DEBUG_LIMITS`.
+   *
+   * Empty on a turn that answered from what the model already had, which is the failure mode
+   * conversational-architecture.md §10 names — see `toolsDropped` for the other way this list can
+   * be shorter than the truth.
+   */
+  readonly tools: readonly DebugToolCall[];
+  /**
+   * How many calls the per-turn cap discarded, oldest first.
+   *
+   * Zero on every turn anyone will ever see. It exists because the alternative to counting is a
+   * truncated list that reads exactly like a complete one, and this window's entire value is that
+   * what it shows is what happened.
+   */
+  readonly toolsDropped: number;
   /** What Riki actually said, once the final transcript arrives. Null while a turn is open. */
   readonly agentSaid: string | null;
   /**
@@ -225,6 +257,61 @@ export interface DebugTurn {
    * the only thing about it this window needs to answer. See the header.
    */
   readonly playerSaidChars: number | null;
+}
+
+/**
+ * One call the model made to the world, and what came back.
+ *
+ * The five tools of ADR-0042 are the whole of Riki's pull path, so this row is where the two
+ * questions that used to be answered by the gate ladder now live: *did it ask*, and *what did it
+ * get*. Both matter for the same reason the ladder did — an answer that sounds fine and was never
+ * grounded is indistinguishable from a correct one, right up until it kills somebody's hero.
+ *
+ * `args` and `result` are **pre-rendered JSON**, produced in main by the same `renderValue` the
+ * world panel uses. The alternative is shipping the parsed objects and teaching a sandboxed
+ * renderer the shape of five result schemas, which is a second copy of `@riki/protocol` living in
+ * the window that exists to check the first one.
+ */
+export interface DebugToolCall {
+  /**
+   * Monotonic within the app's run, across all turns.
+   *
+   * The renderer keys rows by it, and main joins a result to its call by it — a name is not
+   * unique (`enemy` twice in one turn is ordinary) and an index shifts when the per-turn cap drops
+   * the oldest.
+   */
+  readonly seq: number;
+  readonly at: DebugMillis;
+  /** `my_state` | `enemy` | `objectives` | `economy` | `world_at` — or whatever the model invented. */
+  readonly name: string;
+  /** The arguments as JSON. `{}` for the three tools that take none. */
+  readonly args: string;
+  /**
+   * `pending` | `ok` | `unknown` | `refused` | `failed`.
+   *
+   * Five and not two, because the three failures are different bugs with different owners.
+   * `unknown` is the tool answering honestly that nothing was observed (ADR-0043) and is **not** a
+   * fault — but a turn full of them is why an answer was vague, which is otherwise unanswerable.
+   * `refused` is a call that never reached a tool at all: the model named something that does not
+   * exist, or sent arguments the schema rejects. `failed` is ours.
+   */
+  readonly status: string;
+  /**
+   * The result as JSON, or the reason there is none. Null only while `pending`.
+   *
+   * Clipped hard — see `DEBUG_LIMITS.toolResultChars`. A full `enemy()` answer is five heroes with
+   * an envelope each, and forty of those in the ring buffer is a frame nobody wants to serialise
+   * four times a second.
+   */
+  readonly result: string | null;
+  /**
+   * How long the call itself took, or null while pending.
+   *
+   * The dispatch leg only. The wait between the model deciding to call and the call arriving is
+   * inside the session and is not ours to measure; `at` minus the turn's `at` is the closest this
+   * window gets to it, and the renderer shows exactly that rather than implying more.
+   */
+  readonly durationMs: number | null;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -315,6 +402,23 @@ export const DEBUG_LIMITS = {
   facts: 64,
   /** Snapshot text, per turn. Generous — a snapshot is ~300 tokens by design. */
   textChars: 8_000,
+  /**
+   * Tool calls kept per turn.
+   *
+   * Eight is several times what a turn should ever need: the model is answering one spoken
+   * question, and a turn that called ten tools is itself the finding — which is why the overflow is
+   * counted into `toolsDropped` rather than quietly widening this number.
+   */
+  toolCallsPerTurn: 8,
+  /** Arguments, per call. Two of the five tools take an argument, and both are one short field. */
+  toolArgsChars: 200,
+  /**
+   * A result, per call. The binding constraint on frame size, so it is the tightest bound here.
+   *
+   * Forty turns × eight calls × this is the worst case a frame carries, and at 4 Hz that has to
+   * stay in the same order as the snapshot text it sits beside.
+   */
+  toolResultChars: 800,
   /** An action id. It is ours; the cap is against a malformed sender. */
   actionIdChars: 64,
   /**

@@ -688,7 +688,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     disposers.push(
       session.onEvent((voice) => {
         if (voice.kind === 'turn' && voice.event === 'responseEnded') {
-          debug.hub.recordTurnClosed(String(voice.turnId), 'spoke');
+          debug.hub.recordTurnClosed(String(voice.turnId), 'spoke', clock.now());
           return;
         }
         if (voice.kind !== 'transcript' || !voice.final) return;
