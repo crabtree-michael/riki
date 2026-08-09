@@ -5,5 +5,9 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
+  // `tools/` and `timeline/` answer the five tools, whose argument and result shapes are
+  // @riki/protocol's (ADR-0042). That is the only thing this package imports, and it must stay
+  // that way: a boundary rule already forbids @riki/realtime, and the model must not learn it is
+  // feeding an LLM through some other door.
   "references": [{ "path": "../protocol" }]
 }

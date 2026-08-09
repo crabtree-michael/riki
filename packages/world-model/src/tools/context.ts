@@ -33,7 +33,7 @@
  * The cost is one recomputation per call, and tool calls happen once or twice a turn.
  */
 
-import type { KnownFact, ToolFact, GameClock as ClockString } from '@riki/protocol';
+import type { KnownFact, ToolFact } from '@riki/protocol';
 import { UNKNOWN_REASONS } from '@riki/protocol';
 import type { Fact } from '../fact.js';
 import type { WorldState } from '../state.js';
@@ -129,25 +129,23 @@ export const whole = (value: number): number => Math.round(value);
 /**
  * Match-clock seconds to `12:34`, `1:05:00`, or `-1:30` before the horn.
  *
- * `GameClock` in `packages/protocol` is a string and here it is a branded number, which is why this
- * exists at all: the model both reads this and says it, and seconds would be the one number in the
- * answer with no unit attached. The negative branch is not cosmetic — pre-horn time is not `0:00`,
- * and the sign is in the protocol's grammar for that reason.
+ * `GameClock` in `packages/protocol` is a string and here it is a branded number, which is why a
+ * conversion is needed at all: the model both reads this and says it, and seconds would be the one
+ * number in the answer with no unit attached. The negative branch is not cosmetic — pre-horn time
+ * is not `0:00`, and the sign is in the protocol's grammar for that reason.
+ *
+ * **It lives in `packages/protocol` and not here**, beside the pattern it has to satisfy, because
+ * T6 needs the inverse as well: `world_at` is *given* a clock string by the model and has to turn
+ * it back into seconds to seek on. A formatter here and a parser there would be two readings of one
+ * grammar, and they would disagree about `1:05:00` long before anyone noticed. `formatGameClock`
+ * and `parseGameClock` are a tested pair (ADR-0048).
  *
  * `packages/context/src/snapshot/sections/util.ts` formats a clock too, and does not grow an hour
- * field. It is not shared: that one renders a snapshot line under a token budget, this one has to
- * satisfy a regex the model is shown, and a package that may not import the other is the wrong
- * place to discover they disagree.
+ * field. That one is still not shared: it renders a snapshot line under a token budget, this one
+ * has to satisfy a regex the model is shown, and a package that may not import the other is the
+ * wrong place to discover they disagree.
  */
-export function clockString(seconds: number): ClockString {
-  const sign = seconds < 0 ? '-' : '';
-  const abs = Math.abs(Math.trunc(seconds));
-  const ss = String(abs % 60).padStart(2, '0');
-  const hours = Math.floor(abs / 3600);
-
-  if (hours === 0) return `${sign}${String(Math.floor(abs / 60))}:${ss}`;
-  return `${sign}${String(hours)}:${String(Math.floor(abs / 60) % 60).padStart(2, '0')}:${ss}`;
-}
+export { formatGameClock } from '@riki/protocol';
 
 // -----------------------------------------------------------------------------------------------
 // The one guard every tool shares

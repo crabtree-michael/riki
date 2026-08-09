@@ -46,9 +46,18 @@ describe('the manifest', () => {
     }
   });
 
-  it('asks for a clock in world_at and requires it', () => {
+  it('offers world_at both ways of naming a moment, and neither is required (ADR-0048)', () => {
+    // Since T6 both fields are optional and a refinement demands exactly one, which
+    // `z.toJSONSchema` cannot express — so `required` is gone and the prose is the only thing
+    // carrying the rule to the model. The two assertions below are what is left of the guarantee.
     const worldAt = manifest.find((tool) => tool.name === 'world_at');
-    expect(worldAt?.parameters).toMatchObject({ required: ['clock'] });
+    expect(worldAt?.parameters).not.toHaveProperty('required');
+    expect(Object.keys((worldAt?.parameters as { properties: object }).properties).sort()).toEqual([
+      'clock',
+      'seconds_ago',
+      'topic',
+    ]);
+    expect(JSON.stringify(worldAt?.parameters)).toContain('never both');
   });
 
   it('stays inside its share of the cached prefix', () => {

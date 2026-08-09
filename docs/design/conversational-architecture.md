@@ -115,9 +115,15 @@ A match is recorded to disk as it plays, and the recording is the agent's memory
 timestamps; a full keyframe — a serialised `WorldState` — is written every 30 seconds.
 
 **Reading it back.** `world_at(t)` seeks the nearest keyframe at or before `t` and replays
-observations forward to the instant. Bounded work per query: never more than 30 seconds of replay
-regardless of match length. This is what `tools/gsi-replay` already does, pointed at a different
-question.
+observations forward to the instant. Bounded work per query, and flat in match length. This is what
+`tools/gsi-replay` already does, pointed at a different question.
+
+> **Amended by [ADR-0048](../adr/0048-world-at-takes-a-clock-or-an-offset-and-they-are-different-axes.md):**
+> the bound is the *delta-history window* (5½ minutes, ~2,600 fusions, a few milliseconds) and not
+> the 30-second keyframe interval this paragraph assumed. A keyframe does not carry the delta ring,
+> and `objectives.recently_lost` is recovered from it — so a 30-second replay would report an empty
+> array meaning "nothing has fallen". The property being protected here, a constant cost independent
+> of match length, is intact; the constant is larger.
 
 **Why disk rather than memory.** Three things fall out of it that memory does not give:
 
@@ -196,6 +202,8 @@ easy for the model to say as a number is.
 
 1. Does `enemy()` with no argument return five summaries or refuse and ask which hero? Five
    summaries is more useful and more tokens.
-2. Should `world_at` accept a wall-clock offset ("thirty seconds ago") as well as a game clock?
-   Players speak in both.
+2. ~~Should `world_at` accept a wall-clock offset ("thirty seconds ago") as well as a game clock?
+   Players speak in both.~~ **Settled by [ADR-0048](../adr/0048-world-at-takes-a-clock-or-an-offset-and-they-are-different-axes.md):**
+   yes, as `seconds_ago`, and it seeks on the wall axis rather than being converted to a clock —
+   the two differ during a pause, and only the wall axis exists at all during the draft.
 3. Does the vitals pre-injection in §10 belong in v1, or is it premature before latency is measured?

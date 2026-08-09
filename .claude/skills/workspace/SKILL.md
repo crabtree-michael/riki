@@ -241,7 +241,10 @@ seconds and the only thing that exercises the `default` condition. Run it for ev
 or whose tsconfig you touch:
 
 ```sh
-cd apps/desktop && for p in config context events gsi log-tail protocol realtime world-model; do
+# The list is `apps/desktop`'s own @riki/* dependencies and nothing else — a package it does not
+# declare cannot resolve from here, so `telemetry` (and `events` and `coach`, which ADR-0042
+# deleted) produce a FAIL that looks exactly like the thing you are testing for.
+cd apps/desktop && for p in audio config context gsi log-tail protocol realtime world-model; do
   node -e "import('@riki/$p').then(()=>console.log('OK  $p')).catch(e=>console.log('FAIL $p', e.message))"
 done
 ```

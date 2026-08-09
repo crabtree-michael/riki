@@ -97,8 +97,10 @@ export {
   WorldAtArguments,
   WorldAtReport,
   WorldAtResult,
+  formatGameClock,
   isUnknown,
   orUnknown,
+  parseGameClock,
   toolFact,
 } from './schemas/tools.js';
 export type {

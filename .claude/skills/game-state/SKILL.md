@@ -71,6 +71,23 @@ Three rules that are easy to break by accident:
 - **Chat text never reaches the file.** The event is recorded with `text` and `speaker` removed and
   `redacted: true` on the line (dota2 §7). `player.steamid` is *not* hashed yet — T10 owns that.
 
+## Reading it back (`packages/world-model/src/timeline/`)
+
+`openTimeline(contents)` indexes a recording; `at({clock})` or `at({secondsAgo})` returns the model
+as of that instant, or an `UnknownFact` saying why not. `answerWorldAt` joins that to `tools/` and
+is the fifth tool. Four things about it that are not guessable from the signature:
+
+- **Two axes, never converted into each other** (ADR-0048). `clock` seeks on match time,
+  `seconds_ago` on wall time. They diverge during a pause, and only the wall axis exists during the
+  draft.
+- **The replay reaches back a *delta window*, not a keyframe interval.** A keyframe carries no ring,
+  and `objectives.recently_lost` is read out of the ring — so the replay rebuilds it as it goes and
+  anchors far enough back to fill it. Design §6 says 30 s and is amended.
+- **`seconds_ago` is measured from the last line the timeline holds.** A live caller reopens the
+  timeline per query; one opened at match start answers "thirty seconds ago" about the first thirty
+  seconds forever.
+- **It does no I/O.** `record/file-sink.ts` is still the only file in the package that does.
+
 ## Fairness
 
 Riki may only reason about what the player can already see. If a fusion rule would surface
@@ -87,6 +104,42 @@ client that has not POSTed for 40 s of paused game is still gone. One `basis: 'w
 on the age policy makes both correct through a pause without special-casing either.
 
 ## Learnings
+
+**2026-08-09 — a `WorldSnapshot` you kept is not a snapshot of the rings, and a test baseline made
+from one contains the future.** `fusion/reducer.ts` says it plainly — "every version shares the same
+ring object, so a snapshot's view of them is as of the moment it is *read*, not the moment it was
+taken" — and the consequence for tests is not obvious until it bites. Capturing `store.snapshot(now)`
+at each POST and calling `objectives()` on them *after* the run reports towers that fell later, so a
+correct historical reconstruction fails against a baseline that is itself wrong. Anything reading
+`state.history` or `state.chat` has to be evaluated **at** the instant, not from a snapshot held
+over it. `flattenFacts` is safe — facts are structurally shared and never mutated — which is what
+makes the trap selective enough to miss. *Why:* the failing diff points at the code under test, and
+the code under test is right.
+
+**2026-08-09 — the four tools have two callers, and `ToolContext` is why that is free.** `tools/`
+projects a `ToolContext` — `{state, now, clock}` — onto the result shapes, and both the live path
+(a `WorldSnapshot`, which satisfies it structurally) and `world_at` (a `Reconstruction`) hand it
+one. `world_at` then *calls those same four functions* via `DEFAULT_WORLD_AT_PROJECTIONS`; it does
+not render anything itself. Keep it that way. A second renderer for `MyStateReport` would mean
+`my_state()` and `world_at(topic: 'my_state')` answering the same question differently, and nothing
+would fail — both parse, both sound right, one is current. The test that holds the line runs the
+live tools at an instant and asserts `world_at` at that instant equals them, section by section.
+
+**2026-08-09 — `fuse` consults `now` in exactly two places, and a GSI-only fixture reaches neither.**
+The timeline reader (`src/timeline/`) replays a recording by calling `fuse` once per line with the
+`now` that line was recorded at. Stamping every line with the *query's* timestamp instead is a real
+bug — and it reconstructs `fixtures/gsi/laning-phase.jsonl` perfectly, field for field, version for
+version. Both places `now` reaches are windows in `precedence.ts`: the GSI shadow
+(`now - existing.observedAt < 2000`) and the confidence window (same comparison, within one source).
+Neither can fire in a stream of GSI POSTs, because GSI outranks everything it writes and there is no
+second source to lose to.
+
+So a replay test built only on GSI is asserting less than it looks like it is. The cheapest fixture
+that discriminates is two CV sightings of one enemy position a second apart, the second less
+confident: live, the confidence window refuses the blob; replayed at any later clock the window has
+passed and the blob wins. *Why:* found by mutation — the correct-looking test passed with the wrong
+`now` wired in, and nothing but deliberately breaking the reader revealed it. If you touch fusion or
+anything that calls it with a synthesised `now`, mutate the timestamp and check something fails.
 
 **2026-08-01 — the class-level contract now exists, and it is a separate document.**
 `docs/design/dota2-state-capture-design.md` decides *what* is observed; **`docs/design/state-capture-architecture.md`**

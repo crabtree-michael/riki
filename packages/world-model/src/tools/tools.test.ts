@@ -29,7 +29,7 @@ import type { HeroId, ItemId, MatchPhase, WorldState } from '../state.js';
 import { emptyState, fieldPath, heroField, itemSeenField, writeFact } from '../state.js';
 import { asGameClock, asMonoMs, asSeconds } from '../time.js';
 import type { ToolContext } from './context.js';
-import { clockString } from './context.js';
+import { formatGameClock } from './context.js';
 import { buildingName } from './buildings.js';
 import { economy } from './economy.js';
 import { enemy } from './enemy.js';
@@ -645,19 +645,22 @@ describe('economy', () => {
 // The two formatters
 // -----------------------------------------------------------------------------------------------
 
-describe('clockString', () => {
+// The round trip against `parseGameClock` is asserted where the pair lives, in
+// `packages/protocol`'s `tools-contract.test.ts`. This is the consumer's own check that the
+// strings `objectives` puts in front of a model are the ones the schema accepts.
+describe('formatGameClock', () => {
   it('matches the grammar the model is shown', () => {
-    expect(clockString(0)).toBe('0:00');
-    expect(clockString(754)).toBe('12:34');
-    expect(clockString(-90)).toBe('-1:30'); // pre-horn is not 0:00, which is why the sign is grammar
-    expect(clockString(3900)).toBe('1:05:00');
-    expect(clockString(3599)).toBe('59:59');
-    expect(clockString(3600)).toBe('1:00:00');
+    expect(formatGameClock(0)).toBe('0:00');
+    expect(formatGameClock(754)).toBe('12:34');
+    expect(formatGameClock(-90)).toBe('-1:30'); // pre-horn is not 0:00, which is why the sign is grammar
+    expect(formatGameClock(3900)).toBe('1:05:00');
+    expect(formatGameClock(3599)).toBe('59:59');
+    expect(formatGameClock(3600)).toBe('1:00:00');
   });
 
   it('produces only strings the protocol accepts', () => {
     const pattern = /^-?\d{1,3}:[0-5]\d(:[0-5]\d)?$/;
-    for (let t = -180; t < 7300; t += 7) expect(clockString(t)).toMatch(pattern);
+    for (let t = -180; t < 7300; t += 7) expect(formatGameClock(t)).toMatch(pattern);
   });
 });
 

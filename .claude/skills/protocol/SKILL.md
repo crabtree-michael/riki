@@ -42,6 +42,22 @@ parsed.
 
 ## Learnings
 
+**2026-08-09 — a tool's arguments must be one object at the root, so "either A or B" is a
+refinement and not a union.** `world_at` needed a second way of naming a moment (ADR-0048) and the
+obvious encoding is `z.union([z.strictObject({clock, …}), z.strictObject({seconds_ago, …})])`.
+`z.toJSONSchema` turns that into **`anyOf` at the root**, with `additionalProperties: false` pushed
+down into each branch and nothing at the top — so `assertRealtimeToolShape` throws, and OpenAI's
+strict function schema wants a root object anyway. What works is one `strictObject` with both
+fields optional plus `.refine`, which keeps `type: object` and `additionalProperties: false` intact.
+
+The price, and it is real: **`z.toJSONSchema` silently drops a `.refine`.** No error, no
+`unrepresentable` complaint — the constraint simply is not in what the model is shown, so it has to
+be in the field `describe()` text instead, and `parseToolCall`'s rejection is the only enforcement.
+That inverts the usual rule here: for a refined argument schema the JSON Schema is *not* the whole
+contract, so write a test asserting the prose survives. *Why:* both halves were measured with a
+throwaway `z.toJSONSchema` call, which takes ten seconds and is the only way to know — T2 had
+predicted the union would be additive, and it is not.
+
 **2026-08-09 — `.meta({ id })` is right for the Rust path and wrong for anything a model reads.**
 The entry below says to give every named schema an `id` or the Rust output is a pile of anonymous
 duplicates. That is still true, and it has an exact opposite on the tool surface: an `id` is

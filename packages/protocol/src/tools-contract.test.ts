@@ -19,7 +19,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { TOOLS, ToolName, isUnknown, toolFact, type ToolFact } from './schemas/tools.js';
+import {
+  GameClock,
+  TOOLS,
+  ToolName,
+  formatGameClock,
+  isUnknown,
+  parseGameClock,
+  toolFact,
+  type ToolFact,
+} from './schemas/tools.js';
 
 const FIXTURES = fileURLToPath(new URL('../../../fixtures/protocol/tools', import.meta.url));
 
@@ -199,6 +208,54 @@ describe('every fact-shaped field in every tool', () => {
 });
 
 // -----------------------------------------------------------------------------------------------
+// The clock grammar
+// -----------------------------------------------------------------------------------------------
+
+describe('the clock, in both directions', () => {
+  it('round-trips every form the pattern accepts, unchanged', () => {
+    // The pair is here rather than in `packages/world-model` so that the parser and the pattern
+    // cannot disagree. This is the test that would catch it if they did.
+    for (const clock of ['0:00', '12:34', '-1:30', '-0:45', '59:59', '1:05:00', '2:00:00']) {
+      expect(TOOLS.world_at.arguments.safeParse({ clock }).success).toBe(true);
+      const seconds = parseGameClock(clock);
+      expect(seconds, clock).not.toBeNull();
+      expect(formatGameClock(seconds!)).toBe(clock);
+    }
+  });
+
+  it('reads the fields in the right order — 1:05:00 is 65 minutes, not 1 minute 5 seconds', () => {
+    expect(parseGameClock('1:05:00')).toBe(3900);
+    expect(parseGameClock('12:34')).toBe(754);
+    expect(parseGameClock('-1:30')).toBe(-90);
+    expect(parseGameClock('0:00')).toBe(0);
+  });
+
+  it('refuses what the pattern refuses, rather than guessing', () => {
+    for (const text of ['thirty seconds ago', '12:99', '754', '12.34', '', '12:', ':30']) {
+      expect(parseGameClock(text), text).toBeNull();
+    }
+  });
+
+  it('only shows an hours field once there is an hour, because nobody says "0:12:34"', () => {
+    expect(formatGameClock(754)).toBe('12:34');
+    expect(formatGameClock(3599)).toBe('59:59');
+    expect(formatGameClock(3600)).toBe('1:00:00');
+    expect(formatGameClock(-45)).toBe('-0:45');
+  });
+
+  it('emits only what the schema accepts, for any second of a long match', () => {
+    // Two hours and a bit, pre-horn included. `at_clock` is a `GameClock`, so a formatter that
+    // produced one string the pattern refuses would fail a `world_at` answer at the last step —
+    // after the reconstruction, inside a turn that is already speaking.
+    for (let seconds = -90; seconds <= 7_500; seconds += 7) {
+      const shown = formatGameClock(seconds);
+      expect(GameClock.safeParse(shown).success, shown).toBe(true);
+      expect(parseGameClock(shown), shown).toBe(seconds);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------------------------
 // The registry
 // -----------------------------------------------------------------------------------------------
 
@@ -230,6 +287,35 @@ describe('the registry', () => {
     for (const clock of ['thirty seconds ago', '12:99', '754', '12.34', '']) {
       expect(TOOLS.world_at.arguments.safeParse({ clock }).success).toBe(false);
     }
+  });
+
+  it('takes "thirty seconds ago" as a number of seconds, and never as words (ADR-0048)', () => {
+    expect(TOOLS.world_at.arguments.safeParse({ seconds_ago: 30 }).success).toBe(true);
+    expect(TOOLS.world_at.arguments.safeParse({ seconds_ago: 0 }).success).toBe(true);
+    for (const seconds_ago of ['30', 'thirty', -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(TOOLS.world_at.arguments.safeParse({ seconds_ago }).success).toBe(false);
+    }
+  });
+
+  it('insists on exactly one way of naming the moment', () => {
+    // Both is the interesting one: a model that hedges by sending a clock *and* an offset has
+    // asked two different questions, and answering either of them is answering a coin toss.
+    expect(TOOLS.world_at.arguments.safeParse({ clock: '12:34', seconds_ago: 30 }).success).toBe(
+      false,
+    );
+    expect(TOOLS.world_at.arguments.safeParse({}).success).toBe(false);
+    expect(TOOLS.world_at.arguments.safeParse({ topic: 'enemy' }).success).toBe(false);
+  });
+
+  it('says so in prose as well, because the JSON Schema cannot carry the refinement', () => {
+    // `z.toJSONSchema` drops a `.refine`, so the only thing that tells the model the rule before
+    // it makes the call is the field descriptions. If they stop saying it, the first the model
+    // hears of it is a rejected call in the middle of a sentence.
+    const shown = JSON.stringify(
+      z.toJSONSchema(TOOLS.world_at.arguments, { target: 'draft-2020-12', io: 'input' }),
+    );
+    expect(shown).toContain('never both');
+    expect(shown).toContain('seconds_ago');
   });
 
   it('refuses a world_at answer with no sections in it', () => {

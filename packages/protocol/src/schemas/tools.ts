@@ -145,9 +145,15 @@ export type ToolFact<T> = KnownFact<T> | UnknownFact;
  * The only accessor. There is deliberately no `valueOr(fact, fallback)` and no `factValue()`
  * returning `T | undefined`: both are one keystroke from the flattening this whole file exists to
  * prevent, and a fallback is a made-up number with a real number's type.
+ *
+ * Widened past `ToolFact<T>` because `orUnknown` produces unions this had no way to guard — a
+ * whole `MyStateReport`-or-nothing, or T6's reconstruction-or-nothing — and a caller that cannot
+ * use the one accessor writes its own `'unknown' in x`, which is the second declaration of the
+ * distinction the union exists to make. `T extends object` keeps the useful half of the old
+ * signature: a bare number was never a thing that might be unknown.
  */
-export function isUnknown<T>(fact: ToolFact<T>): fact is UnknownFact {
-  return 'unknown' in fact;
+export function isUnknown(value: object): value is UnknownFact {
+  return 'unknown' in value;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -171,10 +177,52 @@ const ItemName = z.string().min(1);
  * inside `world_at`'s *arguments*, which are the one thing in this file the model actually reads.
  * A five-line indirection for a string with a pattern is worse than the pattern.
  */
+const GAME_CLOCK_PATTERN = /^-?\d{1,3}:[0-5]\d(:[0-5]\d)?$/;
+
 export const GameClock = z
   .string()
-  .regex(/^-?\d{1,3}:[0-5]\d(:[0-5]\d)?$/)
+  .regex(GAME_CLOCK_PATTERN)
   .describe('Match clock, `m:ss` or `h:mm:ss`; negative before 0:00.');
+
+/**
+ * The clock as seconds, or null if it is not spelled the way the pattern above demands.
+ *
+ * Here rather than in `packages/world-model` because the pattern is here: a reader that split on
+ * `:` somewhere else would be a second, informal declaration of the grammar, and the two would
+ * disagree about `1:05:00` long before anyone noticed. The world model's own `GameClock` is a
+ * branded *number* of seconds, so something has to convert, and this is the pair that does it in
+ * both directions.
+ */
+export function parseGameClock(text: string): number | null {
+  if (!GAME_CLOCK_PATTERN.test(text)) return null;
+  const negative = text.startsWith('-');
+  const parts = (negative ? text.slice(1) : text).split(':').map(Number);
+  // Two fields are `m:ss`, three are `h:mm:ss`. The pattern has already refused everything else.
+  const seconds =
+    parts.length === 3
+      ? (parts[0] ?? 0) * 3600 + (parts[1] ?? 0) * 60 + (parts[2] ?? 0)
+      : (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+  return negative ? -seconds : seconds;
+}
+
+/**
+ * Seconds as the clock a player reads off the top of the screen.
+ *
+ * `h:mm:ss` only once there is an hour to show, because "0:12:34" is not what anyone says about a
+ * twelve-minute game, and the pattern accepts both forms.
+ */
+export function formatGameClock(seconds: number): string {
+  const total = Math.round(seconds);
+  const sign = total < 0 ? '-' : '';
+  const magnitude = Math.abs(total);
+  const hours = Math.floor(magnitude / 3600);
+  const minutes = Math.floor(magnitude / 60) % 60;
+  const rest = magnitude % 60;
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return hours > 0
+    ? `${sign}${String(hours)}:${pad(minutes)}:${pad(rest)}`
+    : `${sign}${String(Math.floor(magnitude / 60))}:${pad(rest)}`;
+}
 
 /**
  * The five tools, and the four topics `world_at` can reconstruct.
@@ -456,21 +504,43 @@ export const ObjectivesArguments = z.strictObject({}).meta({ id: 'ObjectivesArgu
 export const EconomyArguments = z.strictObject({}).meta({ id: 'EconomyArguments' });
 
 /**
- * `topic` narrows the reconstruction, and omitting it asks for everything.
+ * Two ways to name a moment, because players use both, and `topic` to narrow what comes back.
  *
- * Design §11 open question 2 — should `world_at` also take "thirty seconds ago", since players
- * speak in both — is T6's to settle and is deliberately not settled here. It is additive when it
- * comes: `clock` becomes one branch of a union and every existing call keeps parsing. What is
- * *not* additive is accepting free text and parsing it loosely, which is how a voice tool call
- * fails in the middle of a spoken sentence.
+ * Design §11 open question 2 is settled here as **yes** (ADR-0048). Without `seconds_ago` the
+ * commonest phrasing in the whole product — "where was he just now?" — costs the model an
+ * `objectives()` call for the current clock and then sexagesimal subtraction, and a slip in that
+ * subtraction produces a confident answer about the wrong minute, which is indistinguishable from
+ * a right one. A number of seconds is not free text: the loose parsing T2 warned against is what
+ * this avoids, not what it introduces.
+ *
+ * **It is one object with two optional fields and a refinement, and not the union T2 predicted.**
+ * `z.union` of two strict objects emits `anyOf` at the *root* of `parameters`, which has no
+ * top-level `additionalProperties` — so `assertRealtimeToolShape` throws on the manifest, and the
+ * Realtime API's strict function schema wants a root object besides. Measured, not assumed.
+ *
+ * The cost of the shape that does work: `z.toJSONSchema` cannot express the refinement, so the
+ * model is shown two optional fields and is told the rule in prose. `parseToolCall` still enforces
+ * it, and its message is the correction handed back.
  */
 export const WorldAtArguments = z
   .strictObject({
-    clock: GameClock.describe('The moment to reconstruct, as a match clock: "12:34".'),
+    clock: GameClock.optional().describe(
+      'The moment to reconstruct, as a match clock: "12:34". Give this or `seconds_ago`, never both.',
+    ),
+    seconds_ago: z
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'The moment to reconstruct, as seconds before now: 30 for "half a minute ago". Give this or `clock`, never both.',
+      ),
     topic: z
       .enum(WORLD_AT_TOPICS)
       .optional()
       .describe('Which part of the world. Omit for all of it, which costs more to read.'),
+  })
+  .refine((args) => (args.clock === undefined) !== (args.seconds_ago === undefined), {
+    message: 'name the moment with exactly one of `clock` or `seconds_ago`',
   })
   .meta({ id: 'WorldAtArguments' });
 

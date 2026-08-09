@@ -13,7 +13,7 @@ import type { ToolContext } from './context.js';
 import {
   UNKNOWN_REASONS,
   atLeastZero,
-  clockString,
+  formatGameClock,
   envelope,
   envelopeOf,
   noMatchInProgress,
@@ -33,7 +33,7 @@ export function objectives(ctx: ToolContext): ToolResultFor<'objectives'> {
     // Every other timing in this report is relative to it, so it travels with them rather than
     // being assumed. Enveloped from `meta.clock` and not from `ctx.clock`: the age matters, because
     // a clock read forty seconds ago makes every rune timing below it forty seconds wrong.
-    clock: envelopeOf(state.meta.clock, now, UNKNOWN_REASONS.noClockYet, clockString),
+    clock: envelopeOf(state.meta.clock, now, UNKNOWN_REASONS.noClockYet, formatGameClock),
     daytime: envelope(state.map.daytime, now, NOT_SEEN),
     buildings: envelope(
       buildingsFact(state, now, ctx.clock) ?? undefined,
