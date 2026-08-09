@@ -24,6 +24,7 @@ import type {
   VoiceTelemetry,
 } from '../src/types.js';
 import type { ClientEvent } from '../src/wire.js';
+import type { ToolDispatcher } from '../src/tools.js';
 
 const CONFIG: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
@@ -61,7 +62,7 @@ function telemetrySpies() {
     fault: vi.fn(),
     cost: vi.fn(),
     selfInterruption: vi.fn(),
-    strayToolCall: vi.fn(),
+    toolCallRejected: vi.fn(),
   };
   const sink: VoiceTelemetry = {
     turnLatency: spies.turnLatency,
@@ -70,12 +71,14 @@ function telemetrySpies() {
     fault: spies.fault,
     cost: spies.cost,
     selfInterruption: spies.selfInterruption,
-    strayToolCall: spies.strayToolCall,
+    toolCallRejected: spies.toolCallRejected,
   };
   return { spies, sink };
 }
 
-async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
+async function session(
+  over: { transportKind?: 'webrtc' | 'websocket'; tools?: ToolDispatcher } = {},
+) {
   resetTurnIds();
   const transport = createFakeRealtimeTransport();
   if (over.transportKind) Object.assign(transport, { kind: over.transportKind });
@@ -115,6 +118,9 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
         },
       },
       telemetry: telemetrySink,
+      // Absent unless a test asks for one, because absent is what decides whether the session
+      // advertises tools at all — see `RealtimeSessionDeps.tools`.
+      ...(over.tools === undefined ? {} : { tools: over.tools }),
     },
     { preambleText: 'You are Riki.' },
     CONFIG,
@@ -138,6 +144,14 @@ async function session(over: { transportKind?: 'webrtc' | 'websocket' } = {}) {
       transport
         .sent()
         .filter((event): event is Extract<ClientEvent, { type: T }> => event.type === type),
+    /**
+     * Let a dispatch settle.
+     *
+     * A tool call is several awaits deep — the dispatcher, then `encodeToolOutput`'s parse — and a
+     * fixed count of microtask ticks gets partway and then asserts about a step that has not
+     * happened (`testing` skill, 2026-08-09). A macrotask is the flush that works.
+     */
+    flush: () => new Promise((resolve) => setTimeout(resolve, 0)),
   };
 }
 
@@ -417,37 +431,213 @@ describe('transcription and local command parsing', () => {
   });
 });
 
-describe('a function call from a session that has no tools', () => {
-  it('counts it and answers nothing at all', async () => {
-    // ADR-0023 deleted command execution, so this event has no correct handling other than a
-    // counter. Answering it would create a `function_call_output` for a call the conversation does
-    // not contain; dispatching it would need a pipeline that no longer exists.
-    const harness = await session();
-    harness.transport.emit({
-      type: 'response.function_call_arguments.done',
-      name: 'get_timings',
-    });
+/**
+ * The tool round trip (ADR-0042, T4), and the failures that must not become silence.
+ *
+ * Everything here is asserted on what we *sent*, for this file's usual reason: a
+ * `function_call_output` addressed to the wrong id, or one that never goes out, is invisible in a
+ * reply — the model simply stops, mid-sentence, having asked a question nobody answered.
+ */
+describe('a tool call', () => {
+  /** A dispatcher written by hand, so no world model is anywhere near this file. */
+  function dispatcherReturning(result: unknown): {
+    dispatcher: ToolDispatcher;
+    calls: { name: string; args: unknown }[];
+  } {
+    const calls: { name: string; args: unknown }[] = [];
+    return {
+      calls,
+      dispatcher: {
+        call: (name, args) => {
+          calls.push({ name, args });
+          return Promise.resolve(result as never);
+        },
+      },
+    };
+  }
 
-    expect(harness.telemetry.strayToolCall).toHaveBeenCalledWith('get_timings');
+  const enemyCall = (over: Partial<{ name: string; args: string; callId: string }> = {}) =>
+    ({
+      type: 'response.function_call_arguments.done' as const,
+      call_id: (over.callId ?? 'call_1') as never,
+      name: over.name ?? 'enemy',
+      arguments: over.args ?? '{"hero":"puck"}',
+    }) satisfies Parameters<ReturnType<typeof createFakeRealtimeTransport>['emit']>[0];
+
+  /** The `function_call_output` items we sent, unwrapped from their conversation items. */
+  const outputs = (harness: Awaited<ReturnType<typeof session>>) =>
+    harness
+      .sentOf('conversation.item.create')
+      .map((event) => event.item as { type: string; call_id: string; output: string })
+      .filter((item) => item.type === 'function_call_output');
+
+  it('advertises the five tools, and a tool_choice, once a dispatcher is injected', async () => {
+    const { dispatcher } = dispatcherReturning({ enemies: [] });
+    const harness = await session({ tools: dispatcher });
+    const update = harness.transport.sent()[0] as unknown as {
+      session: { tools: { name: string }[]; tool_choice: string };
+    };
+
+    expect(update.session.tools.map((tool) => tool.name).sort()).toEqual([
+      'economy',
+      'enemy',
+      'my_state',
+      'objectives',
+      'world_at',
+    ]);
+    expect(update.session.tool_choice).toBe('auto');
+  });
+
+  it('dispatches it and answers with the tool’s own JSON, then lets the model carry on', async () => {
+    const { dispatcher, calls } = dispatcherReturning({ enemies: [] });
+    const harness = await session({ tools: dispatcher });
+    harness.transport.emit(enemyCall());
+    await harness.flush();
+
+    expect(calls).toEqual([{ name: 'enemy', args: { hero: 'puck' } }]);
+    expect(outputs(harness)).toEqual([
+      { type: 'function_call_output', call_id: 'call_1', output: '{"enemies":[]}' },
+    ]);
+
+    // Order is the assertion: an output that arrives after the `response.create` it belongs to is
+    // an answer the model was not looking at when it resumed speaking.
+    const types = harness.transport.sent().map((event) => event.type);
+    expect(types.lastIndexOf('conversation.item.create')).toBeLessThan(
+      types.lastIndexOf('response.create'),
+    );
+  });
+
+  /**
+   * The ticket's second half, and the one that decides whether a bad afternoon is a wrong answer
+   * or a dead session: *a tool that throws produces a degraded answer rather than a dead turn.*
+   */
+  it('turns a thrown dispatcher into an `unknown`, and still continues the response', async () => {
+    const harness = await session({
+      tools: {
+        call: () => Promise.reject(new Error('the world model is not running')),
+      },
+    });
+    harness.transport.emit(enemyCall());
+    await harness.flush();
+
+    expect(outputs(harness)).toHaveLength(1);
+    expect(JSON.parse(outputs(harness)[0]?.output ?? '{}')).toEqual({
+      unknown: expect.stringContaining('the world model is not running') as unknown,
+    });
+    expect(harness.sentOf('response.create')).toHaveLength(1);
+  });
+
+  /**
+   * The other side of `encodeToolOutput`'s refusal. A tool that answered a never-observed field
+   * with a zero is the failure the whole `Fact` envelope exists to prevent (ADR-0043) — it must
+   * not reach the model, and it must not take the turn down with it either.
+   */
+  it('degrades a result the tool’s own schema refuses', async () => {
+    const { dispatcher } = dispatcherReturning({ enemies: [{ hero: '' }] });
+    const harness = await session({ tools: dispatcher });
+    harness.transport.emit(enemyCall());
+    await harness.flush();
+
+    expect(JSON.parse(outputs(harness)[0]?.output ?? '{}')).toHaveProperty('unknown');
+    expect(harness.sentOf('response.create')).toHaveLength(1);
+  });
+
+  it('refuses a tool that does not exist without dispatching, and says so to the model', async () => {
+    const { dispatcher, calls } = dispatcherReturning({ enemies: [] });
+    const harness = await session({ tools: dispatcher });
+    harness.transport.emit(enemyCall({ name: 'read_screen' }));
+    await harness.flush();
+
+    expect(calls).toEqual([]);
+    expect(harness.telemetry.toolCallRejected).toHaveBeenCalledWith('read_screen', 'unknown-tool');
+    // Answered anyway: the detail names the five tools, so the refusal is also the correction.
+    expect(JSON.parse(outputs(harness)[0]?.output ?? '{}')).toEqual({
+      unknown: expect.stringContaining('read_screen') as unknown,
+    });
+    expect(harness.sentOf('response.create')).toHaveLength(1);
+  });
+
+  it('refuses arguments the schema rejects without dispatching', async () => {
+    const { dispatcher, calls } = dispatcherReturning({ enemies: [] });
+    const harness = await session({ tools: dispatcher });
+    harness.transport.emit(enemyCall({ args: '{"heroes":["puck"]}' }));
+    await harness.flush();
+
+    expect(calls).toEqual([]);
+    expect(harness.telemetry.toolCallRejected).toHaveBeenCalledWith('enemy', 'invalid-arguments');
+    expect(outputs(harness)).toHaveLength(1);
+  });
+
+  /**
+   * A call with no id has nowhere for the answer to land, and the API refuses an output item
+   * addressed to nothing — mid-turn, out loud. The empty `sessionId` that failed four layers away
+   * as silence is the same shape (voice-realtime skill, 2026-08-04); this one is caught here.
+   */
+  it('does not answer a call it has no id to answer', async () => {
+    const { dispatcher, calls } = dispatcherReturning({ enemies: [] });
+    const harness = await session({ tools: dispatcher });
+    harness.transport.emit(enemyCall({ callId: '' }));
+    await harness.flush();
+
+    expect(calls).toEqual([]);
+    expect(harness.telemetry.toolCallRejected).toHaveBeenCalledWith('enemy', 'no-call-id');
+    expect(outputs(harness)).toEqual([]);
+    expect(harness.sentOf('response.create')).toEqual([]);
+  });
+
+  /**
+   * The tool layer is not wired in production yet — the dispatcher would have to cross the preload
+   * bridge — so this is the live path, and it is the one ADR-0023 described: nothing advertised,
+   * so a call can only be the model inventing one (realtime §11.6).
+   */
+  it('with no dispatcher, advertises nothing and answers nothing', async () => {
+    const harness = await session();
+    const update = harness.transport.sent()[0] as unknown as { session: Record<string, unknown> };
+    expect(update.session.tools).toEqual([]);
+    expect(update.session).not.toHaveProperty('tool_choice');
+
+    harness.transport.emit(enemyCall({ name: 'get_timings' }));
+    await harness.flush();
+
+    expect(harness.telemetry.toolCallRejected).toHaveBeenCalledWith('get_timings', 'no-tools');
     expect(harness.sentOf('conversation.item.create')).toEqual([]);
     expect(harness.sentOf('response.create')).toEqual([]);
   });
 
-  it('does not stall the turn, because nothing is waiting on it', async () => {
-    // The whole class of machinery §3.1 removed — the watchdog, the one-result invariant, the
-    // breaker — existed because an unanswered call stalls a voice conversation. With no dispatch
-    // there is nothing to answer and nothing to stall.
+  it('does not stall the turn when it answers nothing', async () => {
+    // The machinery ADR-0042 removed — the watchdog, the one-result invariant, the breaker —
+    // existed because an unanswered call stalls a voice conversation. Nothing here waits on one.
     const harness = await session();
-    harness.transport.emit({ type: 'response.function_call_arguments.done', name: 'read_screen' });
-    harness.transport.emit({
-      type: 'response.done',
-      response_id: 'resp_1' as never,
-      usage: null,
-    });
+    harness.transport.emit(enemyCall({ name: 'read_screen' }));
+    harness.transport.emit({ type: 'response.done', response_id: 'resp_1' as never, usage: null });
+    await harness.flush();
 
     expect(
       harness.events.filter((event) => event.kind === 'turn' && event.event === 'responseEnded'),
     ).toHaveLength(1);
+  });
+
+  /**
+   * A tool call puts an `await` in the middle of a spoken response, which is the one place where
+   * "the player pressed Esc" and "we are about to ask for more speech" are both true. The output
+   * still goes out — a conversation must not carry a call with no answer — and the continuation
+   * does not, because resuming forty milliseconds after being told to stop is precisely the
+   * interruption ADR-0042 removed by construction.
+   */
+  it('answers a call the player cancelled, but does not resume speaking', async () => {
+    let release = (result: unknown): void => void result;
+    const harness = await session({
+      tools: { call: () => new Promise((resolve) => (release = resolve)) as never },
+    });
+
+    harness.transport.emit(enemyCall());
+    await harness.session.turns.abort();
+    release({ enemies: [] });
+    await harness.flush();
+
+    expect(outputs(harness)).toHaveLength(1);
+    expect(harness.sentOf('response.cancel')).toHaveLength(1);
+    expect(harness.sentOf('response.create')).toEqual([]);
   });
 });
 

@@ -20,6 +20,7 @@
  */
 
 import type { ModelId, VoiceName } from './types.js';
+import type { RealtimeToolDefinition } from './tools.js';
 
 /**
  * ADR-0017. `createResponse` is the literal `false`: the gesture is the only thing that creates a
@@ -87,7 +88,10 @@ const GA_PCM_FORMAT = { type: 'audio/pcm', rate: REALTIME_SAMPLE_RATE } as const
  * it, on the grounds that low temperature does not make audio deterministic and high temperature
  * produces audible artefacts (realtime §11.7). Tone is controlled through prompting only.
  */
-export function buildSessionUpdate(config: RealtimeSessionConfig): SessionUpdate {
+export function buildSessionUpdate(
+  config: RealtimeSessionConfig,
+  tools: readonly RealtimeToolDefinition[] = [],
+): SessionUpdate {
   const detection = config.turnDetection;
 
   return {
@@ -127,12 +131,21 @@ export function buildSessionUpdate(config: RealtimeSessionConfig): SessionUpdate
           voice: config.voice,
         },
       },
-      // Explicitly empty rather than omitted, and that is a decision (ADR-0023,
-      // coaching-architecture.md §2.4). Riki has no tools: the facts a turn needs are assembled
-      // before the model is asked to speak. Sending the field says so, where omitting it leaves
-      // the question to a default we do not control. `tool_choice` is gone with it — there is
-      // nothing to choose between.
-      tools: [],
+      // A parameter rather than a constant, which is ADR-0042 reversing ADR-0023's `tools: []`.
+      // The old reasoning — "the facts a turn needs are assembled before the model is asked to
+      // speak" — held while a trigger engine chose the topic of a turn, and did not survive it.
+      //
+      // Empty is still a value this sends explicitly rather than omitting, for the reason ADR-0023
+      // gave and which is unchanged: an omitted field leaves the question to a default we do not
+      // control. It is what a session with no `ToolDispatcher` injected sends, and it is the only
+      // case in which `tool_choice` is absent — there is genuinely nothing to choose between.
+      //
+      // `auto` and not `required`: a turn that needs no tool ("say that again") must be able to
+      // answer without one, and `required` would make every such turn a refusal or an invented
+      // call. The prompt is what makes a call mandatory *for a factual claim* (T8), because that
+      // is a distinction only the model can draw.
+      tools,
+      ...(tools.length === 0 ? {} : { tool_choice: 'auto' }),
       // The discriminator is required and there is no `auto` on the wire: GA takes
       // `{type: 'retention_ratio', retention_ratio}`, and refuses the object without a `type` with
       // `Missing required parameter: 'session.truncation.type'` — which fails the whole session

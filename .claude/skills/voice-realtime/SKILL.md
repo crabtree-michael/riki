@@ -47,6 +47,36 @@ path; keep it cheap and unit-test it.
 
 ## Learnings
 
+**2026-08-09 — the session dispatches tool calls now, and the dispatcher has nowhere to live yet.**
+T4 wired the round trip: `session.update` carries the manifest, `response.function_call_arguments.done`
+is parsed, dispatched and answered with a `function_call_output`, and the turn controller sends the
+continuation `response.create`. Four things about it that are cheap to say and were not obvious:
+
+- **The manifest is sent only when a `ToolDispatcher` is injected** (ADR-0049). `deps.tools` is
+  optional, and its absence is what sends `tools: []`. So if you are looking at a live session and no
+  tool is ever called, check that a dispatcher was passed before checking anything else — the two
+  states differ by one field on a deps object and are otherwise identical from the outside.
+- **Nothing implements the port in production, and it is not an oversight.** The session runs in the
+  voice window; the world model runs in main. A real dispatcher is a renderer→main request that
+  `schemas/voice.ts` does not have, which is a protocol coordination event. `RealtimeSessionDeps.tools`
+  says so, and so does voice-input-architecture.md's protocol-drift list.
+- **Every failure answers `{ unknown: reason }` rather than throwing.** That works because every tool
+  result is `orUnknown(Report)`, so one encoding is valid for all five — `tools.test.ts` asserts it per
+  tool rather than assuming it, and that test is what would fail if a sixth tool were added with a bare
+  result. The consequence to hold onto: a completely broken tool layer sounds like a slightly vague
+  Riki, so `toolCallRejected` telemetry and ADR-0047's no-call mark are the only things that make it
+  visible.
+- **`VoiceTelemetry.strayToolCall` is now `toolCallRejected(name, reason)`.** Same signal, honest
+  name: under ADR-0023 it counted a call that should never have arrived, and it now counts one that
+  arrived and could not be answered. `no-tools` is the old meaning and should still read zero.
+
+*Why:* the one that cost time was none of the above — it was realising that the obvious place to send
+the continuation `response.create` (beside the dispatch, in `session.ts`) puts a second producer of it
+in the package and quietly breaks ADR-0017. It is `TurnController.submitToolOutput`, which also
+suppresses the continuation after an `Esc`: a tool call is the only `await` inside a spoken response,
+so it is the only place where "the player said stop" and "we are about to ask for more speech" are both
+true. Mutation-tested — deleting that one guard fails a test.
+
 **2026-08-09 — Riki has tools again, and a Realtime tool definition is flat.** ADR-0042 reverses
 `tools: []`. The definitions are `{ type, name, description, parameters }` at the top level;
 Chat Completions nests those four under a `function` key and that is the form most examples show.

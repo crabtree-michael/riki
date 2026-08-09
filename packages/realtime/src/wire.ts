@@ -13,7 +13,7 @@
  * See docs/design/voice-input-architecture.md §5.2.
  */
 
-import type { ItemId, MonoMs, ResponseId, TokenUsage } from './types.js';
+import type { CallId, ItemId, MonoMs, ResponseId, TokenUsage } from './types.js';
 import type { SessionUpdate } from './session-config.js';
 
 export type ClientEvent =
@@ -52,8 +52,20 @@ export type ServerEvent =
       readonly item_id: ItemId;
       readonly transcript: string;
     }
-  /** Should never arrive: the session is configured with `tools: []`. Counted, never answered. */
-  | { readonly type: 'response.function_call_arguments.done'; readonly name: string }
+  /**
+   * The model asking the world a question, mid-answer (ADR-0042).
+   *
+   * All three fields are load-bearing now that this is dispatched rather than counted: `call_id`
+   * is what the `function_call_output` is addressed to, and an answer sent without it lands
+   * nowhere; `arguments` is the raw JSON string the API sends, validated by `parseToolCall`
+   * against the same schema the model was shown.
+   */
+  | {
+      readonly type: 'response.function_call_arguments.done';
+      readonly call_id: CallId;
+      readonly name: string;
+      readonly arguments: string;
+    }
   | {
       readonly type: 'response.done';
       readonly response_id: ResponseId;
@@ -186,12 +198,20 @@ export function parseServerEvent(raw: unknown, at: MonoMs): ServerEvent {
       };
 
     case 'response.function_call_arguments.done':
-      // Kept, and kept deliberately thin. Riki sends `tools: []`, so this event should never
-      // arrive; it is parsed to a name and nothing else because the only thing done with it is
-      // counting it (coaching-architecture.md §2.4). No `call_id`, because nothing joins on it —
-      // there is no result to submit — and no `arguments`, because the model's arguments to a tool
-      // that does not exist are not information.
-      return { type, name: str(event.name) ?? '' };
+      // Was a name and nothing else, on the grounds that a session sending `tools: []` has no
+      // result to submit and the arguments to a tool that does not exist are not information.
+      // ADR-0042 reversed both halves of that.
+      //
+      // Missing fields become `''` rather than throwing, as everywhere else in this parser — and
+      // the empty `call_id` is *acted on* rather than passed through: `session.ts` refuses to
+      // dispatch a call it could not answer, which is the lesson of the empty `sessionId` that
+      // failed four layers away as silence (voice-realtime skill, 2026-08-04).
+      return {
+        type,
+        call_id: (str(event.call_id) ?? '') as CallId,
+        name: str(event.name) ?? '',
+        arguments: str(event.arguments) ?? '',
+      };
 
     case 'response.done': {
       const response = record(event.response);

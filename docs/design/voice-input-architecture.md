@@ -551,9 +551,15 @@ charge on top of the audio tokens, which is why it is a setting and not a consta
 
 "Command parsing" in a voice product usually means turning speech into intents. Here, most of that
 job used to belong to the model and arrive back as a tool call — `get_enemy_detail`, `read_screen`.
-**ADR-0023 deleted that half entirely** (`coaching-architecture.md` §7.1): the session is configured
-with `tools: []`, a stray function call is counted and never answered, and the facts a turn needs
-are assembled before the model is asked to speak.
+**ADR-0023 deleted that half entirely** (`coaching-architecture.md` §7.1) and
+[ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) brought a
+different half back: the session advertises five *read-only* tools over the world model, dispatches
+what the model calls, and answers with a `function_call_output`. Nothing a tool returns is an
+action — `my_state`, `enemy`, `objectives`, `economy`, `world_at` all answer questions and change
+nothing — so the distinction this section draws survives the reversal intact. A call that cannot be
+answered comes back as `{ unknown: reason }` rather than as silence
+([ADR-0049](../adr/0049-a-failed-tool-call-is-an-unknown-not-a-silence.md)), and a session with no
+dispatcher injected still sends `tools: []` and counts what arrives.
 
 What is left is the only thing in Riki that turns speech into an action — a short list of **control
 phrases that must work when the model is unavailable, slow, or misbehaving**. They matter *more*
@@ -1112,10 +1118,16 @@ plan against.
 
 What changed against that table:
 
-- **`voice.tool.call` / `result` are gone.** [ADR-0023](../adr/0023-coaching-replaces-command-execution.md)
-  deleted the pull model they belonged to; the session is configured with `tools: []` and a stray
-  tool call is counted and ignored rather than answered. Consent went with them, so `VoiceCommand`
-  is `interrupt | abort`.
+- **`voice.tool.call` / `result` are gone, and something like them is owed again.**
+  [ADR-0023](../adr/0023-coaching-replaces-command-execution.md) deleted the pull model they
+  belonged to; consent went with them, so `VoiceCommand` is `interrupt | abort`. ADR-0042 then
+  reversed the tool decision, and T4 wired dispatch into the session behind a `ToolDispatcher` port
+  — but **the port has no implementation on this side of the bridge**. The session runs in the voice
+  window and the world model runs in main (ADR-0002, ADR-0015), so a real dispatcher needs a
+  renderer→main *request* carrying a tool name and arguments and getting a JSON result back. That
+  message does not exist in `schemas/voice.ts` and adding it is a protocol coordination event. Until
+  it lands, `apps/desktop` injects no dispatcher, the session sends `tools: []`, and Riki answers
+  from the injected snapshot alone — see `RealtimeSessionDeps.tools` and ADR-0049.
 - **`voice.turn.speak` was added.** The proactive path is the *primary* one under ADR-0023 and it is
   not a turn begin/end pair — no capture, no gesture, straight to a response.
 - **`voice.level.enable` was added.** Overlay §5.5 says level frames cross while the chip can show

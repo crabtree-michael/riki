@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { assertGaShape, buildSessionUpdate, REALTIME_SAMPLE_RATE } from './session-config.js';
 import type { RealtimeSessionConfig } from './session-config.js';
+import { buildToolManifest } from './tools.js';
 
 /** ADR-0017's configuration: VAD on, response creation ours, 200 ms silence. */
 const BASE: RealtimeSessionConfig = {
@@ -154,14 +155,36 @@ describe('truncation and tools', () => {
     expect(payload.truncation).toBe('disabled');
   });
 
-  it('sends an explicitly empty tool list, and no tool_choice', () => {
-    // ADR-0023: Riki has no tools. Empty rather than absent is the decision
-    // (coaching-architecture.md §2.4) — the field says so, where omitting it leaves the question
-    // to a default we do not control. `tool_choice` goes because there is nothing to choose.
+  it('sends an explicitly empty tool list, and no tool_choice, when given none', () => {
+    // The default, and still ADR-0023's decision about the *empty* case: the field says so, where
+    // omitting it leaves the question to a default we do not control. `tool_choice` goes with it
+    // because there is genuinely nothing to choose.
     expect(session().tools).toEqual([]);
     expect(session()).not.toHaveProperty('tool_choice');
-    // And the config cannot express anything else: a caller has no `tools` field to fill in.
+    // And the config still cannot express a tool list: it is a second argument, not a setting, so
+    // there is no caller-supplied second declaration of the tool set to drift (ADR-0049).
     expect(BASE).not.toHaveProperty('tools');
+  });
+
+  it('carries the manifest, and asks for `auto`, when there is one', () => {
+    // ADR-0042 reversing ADR-0023. `auto` and not `required`, because a turn that needs no tool
+    // ("say that again") must be able to answer without inventing a call — the prompt is what
+    // makes a call mandatory for a *factual* claim, which is a distinction only the model can draw.
+    const manifest = buildToolManifest();
+    const payload = buildSessionUpdate(BASE, manifest).session;
+
+    expect(payload.tools).toBe(manifest);
+    expect(payload.tool_choice).toBe('auto');
+  });
+
+  it('survives assertGaShape with the manifest attached', () => {
+    // The manifest is nested three deep in the payload and `findBetaKey` walks arrays as well as
+    // objects, so a tool `parameters` block that happened to contain a beta field name would fail
+    // the whole session open. Worth one assertion, because the failure would look like an audio
+    // problem.
+    expect(() => {
+      assertGaShape(buildSessionUpdate(BASE, buildToolManifest()));
+    }).not.toThrow();
   });
 
   it('omits transcription when it is off', () => {

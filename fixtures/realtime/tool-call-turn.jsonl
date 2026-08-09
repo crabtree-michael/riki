@@ -1,0 +1,7 @@
+{"type":"session.created"}
+{"type":"conversation.item.input_audio_transcription.completed","item_id":"user_1","transcript":"where was their puck"}
+{"type":"response.created","response_id":"resp_1"}
+{"type":"response.function_call_arguments.done","call_id":"call_1","name":"enemy","arguments":"{\"hero\":\"puck\"}"}
+{"type":"response.output_item.added","item_id":"item_1"}
+{"type":"response.output_audio_transcript.done","item_id":"item_1","transcript":"Bottom rune about thirty seconds ago, and that was a minimap read, so treat it loosely."}
+{"type":"response.done","response_id":"resp_1","response":{"id":"resp_1","usage":{"input_token_details":{"audio_tokens":900,"cached_tokens":740,"text_tokens":260},"output_token_details":{"audio_tokens":180,"text_tokens":14}}}}

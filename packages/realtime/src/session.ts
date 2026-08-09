@@ -28,6 +28,14 @@ import type {
   VoiceTelemetry,
 } from './types.js';
 import { buildSessionUpdate, assertGaShape } from './session-config.js';
+import {
+  assertRealtimeToolShape,
+  buildToolManifest,
+  callTool,
+  parseToolCall,
+  unknownOutput,
+  type ToolDispatcher,
+} from './tools.js';
 import { createTranscriptStream } from './transcript.js';
 import { createContextWindowExecutor } from './window.js';
 import { createTurnController } from './turn.js';
@@ -95,14 +103,33 @@ export interface RealtimeSessionDeps {
    * directions: nothing is sent, nothing is heard, and no error is raised by either side.
    */
   readonly media?: TransportMedia;
+  /**
+   * What answers the model's tool calls — `packages/world-model`'s five tools, behind a port so
+   * this package never learns what a `WorldState` is (ADR-0042, T3).
+   *
+   * **Optional, and its absence is what decides whether tools are advertised at all.** A session
+   * with no dispatcher sends `tools: []` and answers nothing, which is exactly the pre-ADR-0042
+   * behaviour; a session with one sends the manifest and dispatches. That coupling is deliberate:
+   * advertising a tool nobody can answer would make every call a degraded reply, which is a worse
+   * failure than the model working from the injected snapshot alone.
+   *
+   * It is optional rather than required because of where this code runs. The session lives in the
+   * voice window and the world model lives in main (ADR-0002, ADR-0015), so a real dispatcher has
+   * to reach across the preload bridge — a renderer→main *request*, which `schemas/voice.ts` does
+   * not have and which is a protocol coordination event. Until that lands, production injects
+   * nothing and Riki answers from the snapshot as it does today.
+   */
+  readonly tools?: ToolDispatcher;
 }
 
 /**
  * The preamble, from `packages/context`. ⚠ Structural mirror, as above.
  *
- * One field, where there were two. The other was a frozen tool manifest, and ADR-0023 deleted the
- * pull model it belonged to: what a turn needs is assembled and injected before the model is asked
- * to speak, so there is nothing for the session to advertise.
+ * Still one field, and still not the tool manifest — but for the opposite reason to the one that
+ * was here. ADR-0023 deleted the manifest because there was nothing to advertise; ADR-0042 brought
+ * tools back, and the manifest is derived from `@riki/protocol`'s schemas rather than supplied
+ * (`buildToolManifest`). A caller that could pass its own would be a second declaration of the tool
+ * set, which is the drift `packages/protocol` exists to prevent.
  */
 export interface SessionContext {
   readonly preambleText: string;
@@ -304,6 +331,58 @@ export async function createRealtimeSession(
     emit({ kind: 'command', command: match.command.kind, confidence: match.confidence });
   });
 
+  /**
+   * The model asked the world a question. Answer it, and let it carry on speaking.
+   *
+   * **Never rejects, and never leaves a call unanswered once one has been advertised.** This runs
+   * inside a response that is already being spoken, so every failure has the same shape as a
+   * success: a `function_call_output` carrying `{ unknown: … }`, which is the encoding the model
+   * already reads for a fact nobody observed (ADR-0043). A thrown dispatcher, a result its own
+   * schema refuses, a tool name outside the five, arguments that do not parse — all four become a
+   * degraded answer, because the alternative is a turn that stops mid-sentence with no audio and
+   * no explanation the player can act on.
+   *
+   * The two cases that are *not* answered are the two where an answer could not land: a session
+   * that advertised no tools, and a call with no id to address the output to.
+   */
+  const answerToolCall = async (
+    call: Extract<ServerEvent, { type: 'response.function_call_arguments.done' }>,
+  ): Promise<void> => {
+    const dispatcher = deps.tools;
+    if (dispatcher === undefined) {
+      // `session.update` carried `tools: []`, so this names a tool the model invented — realtime
+      // §11.6 records it doing exactly that, and narrating the arguments out loud. Answering would
+      // put an output into the conversation for a call we never offered. This is the counter that
+      // ADR-0023 said should read zero forever, and under ADR-0042 it still should.
+      deps.telemetry.toolCallRejected(call.name, 'no-tools');
+      return;
+    }
+    if (call.call_id === '') {
+      deps.telemetry.toolCallRejected(call.name, 'no-call-id');
+      return;
+    }
+
+    const parsed = parseToolCall(call.name, call.arguments);
+    if (!parsed.ok) {
+      // The model got the tool surface wrong, which is the most interesting thing it can do and
+      // the one thing the inspector's dispatch decorator structurally cannot see (ADR-0047) —
+      // nothing was dispatched. `detail` names the tool and what was wrong with it, so the answer
+      // is also the correction.
+      deps.telemetry.toolCallRejected(call.name, parsed.reason);
+      turns.submitToolOutput(call.call_id, unknownOutput(parsed.detail));
+      return;
+    }
+
+    let output: string;
+    try {
+      const encoded = await callTool(dispatcher, parsed.call);
+      output = encoded.ok ? encoded.json : unknownOutput(encoded.detail);
+    } catch (error) {
+      output = unknownOutput(`\`${parsed.call.name}\` could not answer: ${String(error)}`);
+    }
+    turns.submitToolOutput(call.call_id, output);
+  };
+
   const onServerEvent = (event: ServerEvent): void => {
     switch (event.type) {
       case 'session.created':
@@ -342,12 +421,13 @@ export async function createRealtimeSession(
         return;
 
       case 'response.function_call_arguments.done':
-        // Counted and ignored, and never answered (coaching-architecture.md §2.4). The session is
-        // configured with `tools: []`, so this is the model inventing a call — realtime §11.6
-        // documents it narrating calls it did not make. Answering would be worse than silence: it
-        // would create a `function_call_output` item for a call the conversation does not contain.
-        // A non-zero counter here is a bug in the model or in our config, not a condition.
-        deps.telemetry.strayToolCall(event.name);
+        // Deliberately not awaited, and this is the only `void` on an event path here. A dispatch
+        // is the one handler that can take milliseconds, and `onServerEvent` is the transport's
+        // synchronous listener — awaiting would hold up every event queued behind it, including
+        // the `response.done` that ends the turn and the `error` that says the session is gone.
+        // `answerToolCall` never rejects, which is what makes the floating promise safe rather
+        // than merely quiet.
+        void answerToolCall(event);
         return;
 
       case 'response.done':
@@ -428,12 +508,31 @@ export async function createRealtimeSession(
     emit({ kind: 'fault', fault });
   });
 
+  /**
+   * The manifest, and the two assertions that stand between it and a session that is configured
+   * with no usable tools.
+   *
+   * Both failures here are silent in the same way and that is why both are asserted rather than
+   * reviewed: a `session.update` in the beta shape misconfigures the audio, and a tool list in the
+   * Chat Completions shape configures no tools at all. Neither errors. The second is
+   * indistinguishable from a model that simply chose not to call anything, which is a thing models
+   * do — so without the assertion the first evidence would be a match's worth of confident,
+   * ungrounded answers.
+   *
+   * Empty when no dispatcher was injected: nothing is advertised that nothing can answer.
+   */
+  const tools = deps.tools === undefined ? [] : buildToolManifest();
+  assertRealtimeToolShape(tools);
+
   // Configure before anything else is sent: a session that receives audio before its format is
   // set interprets it with the default, which is the beta-schema failure by another route.
-  const update = buildSessionUpdate({
-    ...config,
-    instructions: context.preambleText,
-  });
+  const update = buildSessionUpdate(
+    {
+      ...config,
+      instructions: context.preambleText,
+    },
+    tools,
+  );
   assertGaShape(update);
   deps.transport.send(update);
 

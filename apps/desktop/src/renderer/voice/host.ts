@@ -163,7 +163,7 @@ export function createVoiceHost(deps: VoiceHostDeps): VoiceHost {
       // The AEC canary. Counted and dropped — see the header.
       selfInterruptions += 1;
     },
-    strayToolCall: () => undefined,
+    toolCallRejected: () => undefined,
   };
 
   async function closeSession(reason: string): Promise<void> {

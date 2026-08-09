@@ -13,8 +13,9 @@
  * See docs/design/voice-input-architecture.md §5.4, §5.5.
  */
 
-import type { ItemId, MonoMs, TurnId, Unsubscribe } from './types.js';
+import type { CallId, ItemId, MonoMs, TurnId, Unsubscribe } from './types.js';
 import type { ClientEvent } from './wire.js';
+import { functionCallOutputItem } from './tools.js';
 
 export type CaptureMode = 'push' | 'latch';
 
@@ -77,6 +78,24 @@ export interface TurnController {
 
   /** `Esc`, or a local `stop`. Cancels the response *and* truncates what was already heard. */
   abort(): Promise<void>;
+
+  /**
+   * Answers a tool call the model made mid-response, and lets it carry on speaking.
+   *
+   * Here rather than in `session.ts` because of the second half: continuing means a
+   * `response.create`, and this file is the one place that sends one. ADR-0017 makes the gesture
+   * the sole authority over when a response is *created*, and a continuation is not a new response
+   * — it is the rest of the one the gesture already asked for. That distinction only holds while
+   * something checks it, which is what this method is.
+   *
+   * The output item is sent **whether or not** the response is continued, so a conversation never
+   * carries a call with no answer. The `response.create` is what a cancel suppresses: a player who
+   * pressed `Esc` while a tool was in flight has said stop, and resuming forty milliseconds later
+   * because a dispatcher came back is exactly the interruption ADR-0042 removed by construction.
+   *
+   * Returns whether the model was asked to continue.
+   */
+  submitToolOutput(callId: CallId, output: string): boolean;
 
   /** The trigger policy's path: no capture, no gesture, straight to a response (dota2 §6.4). */
   speakUnprompted(context: TurnContext, brief: UnpromptedBrief): Promise<void>;
@@ -153,6 +172,17 @@ export function createTurnController(
   let active: TurnId | null = null;
 
   /**
+   * Whether the response currently in flight has been called off.
+   *
+   * Only `submitToolOutput` reads it, and it exists because a tool call puts an `await` in the
+   * middle of a spoken response — which is the one place where "the player told us to stop" and
+   * "we are about to send `response.create`" can be true at the same time. Set by every path that
+   * ends a response early, cleared at each `response.create`, which is the only moment a new
+   * response begins.
+   */
+  let cancelled = false;
+
+  /**
    * The one place a truncate is sent, so the "twice at two different offsets" failure has a
    * single site to not have.
    */
@@ -186,6 +216,7 @@ export function createTurnController(
       active = null;
 
       if (reason === 'cancel') {
+        cancelled = true;
         deps.send({ type: 'input_audio_buffer.clear' });
         return;
       }
@@ -210,6 +241,7 @@ export function createTurnController(
         });
       }
 
+      cancelled = false;
       deps.send({ type: 'response.create' });
       for (const listener of submitted) listener(turnId);
     },
@@ -221,6 +253,10 @@ export function createTurnController(
        * idea of what it said would then be wrong in a way that is *harder* to reason about than
        * not truncating at all. On WebSocket nothing else will do it.
        */
+      // Whoever truncates, the response is over: with `interrupt_response: true` the server ends
+      // it, and on WebSocket the truncate above is us ending it. A tool call still in flight must
+      // not resume it when it lands.
+      cancelled = true;
       if (deps.transportKind === 'websocket') truncate();
       return Promise.resolve();
     },
@@ -229,6 +265,7 @@ export function createTurnController(
       // The row that is easy to miss: a cancel has no speech behind it, so VAD never fired and no
       // server-side truncation happened. Cancel *and* truncate, or the model believes it finished
       // a sentence the player cut off — and every later turn is built on that.
+      cancelled = true;
       deps.send({ type: 'response.cancel' });
       truncate();
       if (deps.capture.isOpen) deps.capture.close();
@@ -256,9 +293,20 @@ export function createTurnController(
           },
         });
       }
+      cancelled = false;
       deps.send({ type: 'response.create' });
       for (const listener of submitted) listener(context.turnId);
       return Promise.resolve();
+    },
+
+    submitToolOutput(callId, output) {
+      deps.send({
+        type: 'conversation.item.create',
+        item: functionCallOutputItem(callId, output),
+      });
+      if (cancelled) return false;
+      deps.send({ type: 'response.create' });
+      return true;
     },
 
     onSubmitted(listener) {

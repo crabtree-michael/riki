@@ -39,6 +39,14 @@ export type TurnId = string & { readonly __brand: 'TurnId' };
 export type ResponseId = string & { readonly __brand: 'ResponseId' };
 /** A conversation item id, as the API assigns it. The join key for truncation and deletion. */
 export type ItemId = string & { readonly __brand: 'ItemId' };
+/**
+ * A tool call's id, as the API assigns it. The join key between a call and its output.
+ *
+ * Distinct from `ItemId` and not interchangeable with it: a `function_call_output` addresses the
+ * call, and addressing it with the id of the assistant item that contains the call is the kind of
+ * mistake two `string`s make and two brands do not.
+ */
+export type CallId = string & { readonly __brand: 'CallId' };
 
 export type ModelId = 'gpt-realtime-2.1' | 'gpt-realtime-2.1-mini';
 
@@ -87,6 +95,23 @@ export interface TokenUsage {
 // -----------------------------------------------------------------------------------------------
 
 export type LocalCommandKind = 'stop' | 'mute' | 'quiet-mode' | 'cancel';
+
+/**
+ * Why a call could not be turned into an invocation. Three, because they need different answers
+ * and only one of them is our bug — see `ToolCallFailure` in tools.ts, which is where they are
+ * produced.
+ */
+export type ToolCallRefusal = 'unknown-tool' | 'malformed-json' | 'invalid-arguments';
+
+/**
+ * Why a call never reached a dispatcher: a refusal, or one of the two conditions that stop us
+ * before there is anything to parse.
+ *
+ * `no-tools` is a session with no `ToolDispatcher` injected, which sends `tools: []` and therefore
+ * advertised nothing to call. `no-call-id` is a call with no id to answer: there is nowhere to put
+ * the output, and sending one anyway is an item the API refuses in the middle of a spoken turn.
+ */
+export type ToolCallRejection = ToolCallRefusal | 'no-tools' | 'no-call-id';
 
 export type VoiceEvent =
   | { readonly kind: 'capture'; readonly event: 'opened' | 'firstAudio' | 'closed' }
@@ -137,12 +162,18 @@ export interface VoiceTelemetry {
   /** `speech_started` while our gate is shut: the model is hearing itself (architecture §9). */
   selfInterruption(): void;
   /**
-   * A `response.function_call_arguments.done` from a session configured with `tools: []`.
+   * A tool call that never reached a dispatcher, and why not.
    *
-   * Should be zero, forever. It exists because realtime §11.6 records the model narrating tool
-   * calls it did not make and leaking call arguments into speech — so a model told it has no tools
-   * emitting one anyway is a thing we want a counter for rather than an unhandled event. Nothing
-   * dispatches it and nothing answers it (coaching-architecture.md §2.4).
+   * This was `strayToolCall`, and under ADR-0023 it was a counter that should have read zero
+   * forever: the session advertised `tools: []`, so a call could only be the model inventing one
+   * (realtime §11.6 records it narrating calls it did not make). ADR-0042 gave Riki five real
+   * tools and T4 dispatches them, so the interesting signal is no longer *that* a call arrived but
+   * that one could not be answered — a name outside the five, arguments the schema refuses, or a
+   * session with no tool layer wired at all.
+   *
+   * It is the only signal for the failures the inspector's dispatch decorator structurally cannot
+   * see (ADR-0047), because they are refused before anything is dispatched. `no-tools` is still
+   * the old counter, and it should still read zero.
    */
-  strayToolCall(name: string): void;
+  toolCallRejected(name: string, reason: ToolCallRejection): void;
 }

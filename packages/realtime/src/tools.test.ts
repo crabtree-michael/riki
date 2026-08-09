@@ -14,9 +14,13 @@ import {
   TOOL_MANIFEST_BUDGET_CHARACTERS,
   assertRealtimeToolShape,
   buildToolManifest,
+  callTool,
   encodeToolOutput,
+  functionCallOutputItem,
   parseToolCall,
+  unknownOutput,
 } from './tools.js';
+import type { CallId } from './types.js';
 
 const manifest = buildToolManifest();
 
@@ -203,5 +207,74 @@ describe('encodeToolOutput', () => {
 
   it('is a value rather than a throw, because this runs inside a turn already speaking', () => {
     expect(() => encodeToolOutput({ name: 'economy', result: undefined as never })).not.toThrow();
+  });
+});
+
+describe('unknownOutput', () => {
+  /**
+   * The property the whole degraded-answer path rests on, asserted rather than assumed.
+   *
+   * Every result is `orUnknown(Report)`, which is what lets one encoding serve all four of the
+   * ways a call fails on our side — a refused parse, a thrown dispatcher, a result its own schema
+   * rejects, and a session with no tool layer. If a tool were ever added whose result is not an
+   * `orUnknown`, this fails here rather than mid-match as a `function_call_output` the model
+   * cannot read.
+   */
+  it('is a valid result for every one of the five tools', () => {
+    const output: unknown = JSON.parse(unknownOutput('the world model is not running'));
+    for (const name of ToolName.options) {
+      expect(TOOLS[name].result.safeParse(output).success, name).toBe(true);
+    }
+  });
+
+  it('never produces the one thing `UnknownFact` refuses, which is an empty reason', () => {
+    // `.min(1)`, so an empty reason would be refused by the very schema this exists to satisfy —
+    // and a degraded answer that fails validation is a silence.
+    const output: unknown = JSON.parse(unknownOutput('   '));
+    expect(TOOLS.economy.result.safeParse(output).success).toBe(true);
+  });
+});
+
+describe('functionCallOutputItem', () => {
+  it('is flat, addressed by call id, and carries the JSON as a string', () => {
+    // The `output` field is text, not an object. Getting that wrong is the same class of quiet
+    // misconfiguration as nesting a tool definition under `function`.
+    const item = functionCallOutputItem('call_1' as CallId, '{"enemies":[]}');
+    expect(item).toEqual({
+      type: 'function_call_output',
+      call_id: 'call_1',
+      output: '{"enemies":[]}',
+    });
+  });
+});
+
+describe('callTool', () => {
+  it('joins the dispatcher’s answer to the name it was called with', async () => {
+    const encoded = await callTool(
+      { call: () => Promise.resolve({ enemies: [] } as never) },
+      { name: 'enemy', arguments: {} },
+    );
+    expect(encoded).toEqual({ ok: true, json: '{"enemies":[]}' });
+  });
+
+  it('refuses an answer the tool’s own schema rejects, rather than passing it on', async () => {
+    // The cast inside `callTool` is what makes the union type-check; this is the check that the
+    // cast did not paper over a real mismatch.
+    const encoded = await callTool(
+      { call: () => Promise.resolve({ enemies: [{ hero: '' }] } as never) },
+      { name: 'enemy', arguments: {} },
+    );
+    expect(encoded).toMatchObject({ ok: false });
+  });
+
+  it('rejects when the dispatcher rejects, because degrading is the session’s decision', async () => {
+    // Deliberately not swallowed here: only the session knows a turn is mid-sentence, and only it
+    // can decide that an `unknown` beats silence.
+    await expect(
+      callTool(
+        { call: () => Promise.reject(new Error('boom')) },
+        { name: 'economy', arguments: {} },
+      ),
+    ).rejects.toThrow('boom');
   });
 });

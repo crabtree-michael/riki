@@ -44,7 +44,10 @@ import {
   type ToolArgumentsFor,
   type ToolInvocation,
   type ToolResultFor,
+  type UnknownFact,
 } from '@riki/protocol';
+
+import type { CallId, ToolCallRefusal } from './types.js';
 
 // -----------------------------------------------------------------------------------------------
 // The manifest
@@ -151,7 +154,7 @@ export function assertRealtimeToolShape(
  */
 export interface ToolCallFailure {
   readonly ok: false;
-  readonly reason: 'unknown-tool' | 'malformed-json' | 'invalid-arguments';
+  readonly reason: ToolCallRefusal;
   /** Safe to hand back as the function output: it names the tool and what was wrong with it. */
   readonly detail: string;
 }
@@ -235,6 +238,41 @@ export function encodeToolOutput(answer: ToolAnswer): EncodedToolOutput {
   return { ok: true, json: JSON.stringify(parsed.data) };
 }
 
+/**
+ * A failure, in the one shape the model has already been taught to read.
+ *
+ * Every tool result is `orUnknown(Report)`, so `{ unknown: reason }` is a **valid** answer to all
+ * five — which makes it the right encoding for the four ways a call can fail on our side as well:
+ * a refused parse, a dispatcher that threw, a result its own schema rejects, and a tool layer that
+ * is not wired. The model does not need a second vocabulary for "I could not get that", and it
+ * handles this one already (ADR-0043). `tools.test.ts` asserts the validity rather than assuming
+ * it, because it is the whole reason for the choice.
+ *
+ * The fallback text exists because `UnknownFact.unknown` is `.min(1)`: an empty reason would be
+ * refused by the very schema this is trying to satisfy, which is a silence in place of a degraded
+ * answer.
+ */
+export function unknownOutput(reason: string): string {
+  const unknown: UnknownFact = {
+    unknown: reason.trim() === '' ? 'the tool could not be answered, and gave no reason' : reason,
+  };
+  return JSON.stringify(unknown);
+}
+
+/**
+ * The conversation item that answers a call, as the API wants it.
+ *
+ * Flat, like the tool definition, and addressed by `call_id` rather than by the id of the item the
+ * call arrived in. `output` is a **string** — the JSON goes in as text, not as an object — and
+ * getting that wrong is the same class of quiet misconfiguration as the nested `function` key.
+ */
+export function functionCallOutputItem(
+  callId: CallId,
+  output: string,
+): Readonly<Record<string, unknown>> {
+  return { type: 'function_call_output', call_id: callId, output };
+}
+
 /** zod's issue list, flattened to one line for a log or a function output. */
 function describeIssues(error: z.ZodError): string {
   return error.issues
@@ -258,4 +296,29 @@ function describeIssues(error: z.ZodError): string {
  */
 export interface ToolDispatcher {
   call<N extends ToolName>(name: N, args: ToolArgumentsFor<N>): Promise<ToolResultFor<N>>;
+}
+
+/**
+ * Dispatch a parsed call and validate what comes back.
+ *
+ * Exists to hold the one cast in this package's tool path. `ToolInvocation` is a union of five
+ * (name, arguments) pairs and `ToolAnswer` is the matching union of (name, result) pairs, but
+ * TypeScript cannot see that a `name` and a `result` obtained together came from the same member —
+ * so composing the answer needs an assertion. The alternative is a five-armed switch, which would
+ * be the tool list written out for a third time and would drift the first time a tool is added.
+ *
+ * The assertion is checked a line later rather than trusted: `encodeToolOutput` looks the schema up
+ * by `answer.name` and parses `answer.result` against it, so a mismatched pair comes back as a
+ * refusal instead of reaching the model.
+ *
+ * **Rejects when the dispatcher rejects.** Turning a thrown tool into a degraded answer is the
+ * session's decision, not this function's — the session is the layer that knows a turn is
+ * mid-sentence and that silence is the expensive outcome.
+ */
+export async function callTool(
+  dispatcher: ToolDispatcher,
+  call: ToolInvocation,
+): Promise<EncodedToolOutput> {
+  const result = await dispatcher.call(call.name, call.arguments);
+  return encodeToolOutput({ name: call.name, result } as ToolAnswer);
 }

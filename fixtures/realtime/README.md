@@ -17,7 +17,8 @@ missing recording fails there rather than surprising someone three tasks later.
 | --- | --- |
 | `ptt-turn.jsonl` | One push-to-talk turn: commit, both transcripts, usage |
 | `barge-in.jsonl` | `speech_started` with the gate shut — self-interruption, and a truncated transcript |
-| `stray-function-call.jsonl` | A function call from a session told `tools: []`. Counted, ignored, never answered (ADR-0023) |
+| `tool-call-turn.jsonl` | A turn that answers by calling `enemy` — the ADR-0042 round trip, dispatch to `function_call_output` |
+| `stray-function-call.jsonl` | A function call from a session with no dispatcher, so nothing was advertised. Counted, never answered |
 | `mid-response-disconnect.jsonl` | A turn that never ends. The hung-session shape (research §11.3) |
 | `context-exhaustion.jsonl` | The API truncating before we did — a bug, not a condition (context §6) |
 | `long-session-25min.jsonl` | 75 turns at one per 20 s, for cost and cached-fraction accounting |

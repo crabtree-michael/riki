@@ -19,6 +19,7 @@ import { resetTurnIds } from '../src/turn.js';
 import type { FixtureSession } from '../src/testing/index.js';
 import type { RealtimeSessionConfig } from '../src/session-config.js';
 import type { MonoMs, SessionId, VoiceEvent, VoiceTelemetry } from '../src/types.js';
+import type { ToolDispatcher } from '../src/tools.js';
 
 const CONFIG: RealtimeSessionConfig = {
   model: 'gpt-realtime-2.1-mini',
@@ -69,7 +70,7 @@ function telemetrySpies() {
     fault: vi.fn(),
     cost: vi.fn(),
     selfInterruption: vi.fn(),
-    strayToolCall: vi.fn(),
+    toolCallRejected: vi.fn(),
   };
   const sink: VoiceTelemetry = {
     turnLatency: spies.turnLatency,
@@ -78,12 +79,12 @@ function telemetrySpies() {
     fault: spies.fault,
     cost: spies.cost,
     selfInterruption: spies.selfInterruption,
-    strayToolCall: spies.strayToolCall,
+    toolCallRejected: spies.toolCallRejected,
   };
   return { spies, sink };
 }
 
-async function replay(name: string) {
+async function replay(name: string, tools?: ToolDispatcher) {
   resetTurnIds();
   const transport = createFakeRealtimeTransport();
   const clock = new FakeClock(1000);
@@ -116,6 +117,7 @@ async function replay(name: string) {
       playback: { audibleMs: () => 1200 },
       clock: { now: clock.now, schedule: (_ms, fire) => (fire(), () => undefined) },
       telemetry: sink,
+      ...(tools === undefined ? {} : { tools }),
     },
     { preambleText: 'You are Riki.' },
     CONFIG,
@@ -123,6 +125,9 @@ async function replay(name: string) {
 
   session.onEvent((event) => events.push(event));
   await transport.play(loadFixture(name));
+  // A dispatch is several awaits deep and `play` does not wait for one — a fixed count of
+  // microtask ticks asserts about a step that has not happened (`testing` skill, 2026-08-09).
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   return { session, events, transport, telemetry: spies };
 }
@@ -178,15 +183,95 @@ describe('barge-in.jsonl', () => {
   });
 });
 
+/**
+ * The ADR-0042 round trip, over a recorded turn rather than events written inline.
+ *
+ * The `Fact` envelope is the whole point of the assertion. What goes onto the wire is the answer
+ * the tool gave, byte for byte — a 0.55-confidence minimap read at 34 seconds old stays a
+ * 0.55-confidence minimap read at 34 seconds old, and `respawn_in_seconds` stays an `unknown` with
+ * a reason rather than becoming a zero. Everything else in this package can be got right and this
+ * one still lost, and losing it is what makes Riki confidently get somebody killed.
+ */
+describe('tool-call-turn.jsonl', () => {
+  const PUCK_LAST_SEEN = {
+    enemies: [
+      {
+        hero: 'puck',
+        level: { value: 11, age_seconds: 4.2, confidence: 1, source: 'gsi' },
+        alive: { value: true, age_seconds: 4.2, confidence: 1, source: 'gsi' },
+        respawn_in_seconds: { unknown: 'they are alive' },
+        last_seen: {
+          value: { x: -1400, y: -3800, area: null },
+          age_seconds: 34,
+          confidence: 0.55,
+          source: 'cv',
+        },
+        net_worth: { unknown: 'never observed this match' },
+        items_seen: { unknown: 'nothing has read their inventory' },
+      },
+    ],
+  };
+
+  async function replayWithPuck() {
+    const calls: { name: string; args: unknown }[] = [];
+    const result = await replay('tool-call-turn.jsonl', {
+      call: (name, args) => {
+        calls.push({ name, args });
+        return Promise.resolve(PUCK_LAST_SEEN as never);
+      },
+    });
+    return { ...result, calls };
+  }
+
+  it('dispatches the recorded call with the arguments the model sent', async () => {
+    const { calls } = await replayWithPuck();
+    expect(calls).toEqual([{ name: 'enemy', args: { hero: 'puck' } }]);
+  });
+
+  it('answers it with the fact envelope intact, and asks the model to carry on', async () => {
+    const { transport } = await replayWithPuck();
+    const items = transport
+      .sent()
+      .filter((event) => event.type === 'conversation.item.create')
+      .map((event) => event.item as { type: string; call_id: string; output: string });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.call_id).toBe('call_1');
+    expect(JSON.parse(items[0]?.output ?? 'null')).toEqual(PUCK_LAST_SEEN);
+    expect(transport.sent().filter((event) => event.type === 'response.create')).toHaveLength(1);
+  });
+
+  it('leaves the turn ending exactly as a turn with no call does', async () => {
+    // The call sits in the middle of a response, so the events after it must be unaffected: a
+    // dispatch that swallowed `response.done` would end the match with the chip stuck speaking.
+    const { events } = await replayWithPuck();
+    expect(finalTranscripts(events).map((entry) => entry.role)).toEqual(['player', 'agent']);
+    expect(events.some((event) => event.kind === 'turn' && event.event === 'responseEnded')).toBe(
+      true,
+    );
+  });
+
+  it('answers nothing at all when no dispatcher is wired', async () => {
+    // The same recording through a session that advertised `tools: []`. This is the live path
+    // until the dispatcher crosses the preload bridge, and it must stay silent rather than
+    // half-answer.
+    const { transport, telemetry: tel } = await replay('tool-call-turn.jsonl');
+    expect(tel.toolCallRejected).toHaveBeenCalledWith('enemy', 'no-tools');
+    expect(transport.sent().filter((event) => event.type === 'conversation.item.create')).toEqual(
+      [],
+    );
+  });
+});
+
 describe('stray-function-call.jsonl', () => {
   it('counts the call, answers nothing, and lets the turn finish', async () => {
-    // The session is configured with `tools: []`, so this event should never arrive. When it does
-    // — realtime §11.6 records the model narrating calls it did not make — the only correct
-    // response is a counter. Answering would put a `function_call_output` item into a conversation
-    // that contains no call (coaching-architecture.md §2.4).
+    // A session with no dispatcher advertises `tools: []`, so this event should never arrive. When
+    // it does — realtime §11.6 records the model narrating calls it did not make — the only
+    // correct response is a counter. Answering would put a `function_call_output` into a
+    // conversation for a call we never offered (ADR-0049).
     const { events, transport, telemetry: tel } = await replay('stray-function-call.jsonl');
 
-    expect(tel.strayToolCall).toHaveBeenCalledWith('read_screen');
+    expect(tel.toolCallRejected).toHaveBeenCalledWith('read_screen', 'no-tools');
     expect(transport.sent().filter((event) => event.type === 'conversation.item.create')).toEqual(
       [],
     );

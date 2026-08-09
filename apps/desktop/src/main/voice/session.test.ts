@@ -487,7 +487,7 @@ describe('renewing an expired session', () => {
             fault: () => undefined,
             cost: () => undefined,
             selfInterruption: () => undefined,
-            strayToolCall: () => undefined,
+            toolCallRejected: () => undefined,
           },
         },
         { preambleText: directive.session.instructions },

@@ -100,31 +100,54 @@ describe('GA events', () => {
     });
   });
 
-  it('reads a function call down to its name, and keeps nothing else', () => {
-    // The branch survives the deletion of command execution on purpose (coaching-architecture.md
-    // §2.4): a session told `tools: []` should never produce one, and we want a counter rather
-    // than an unhandled event if it does. It keeps the name because that is what gets counted, and
-    // drops `call_id` and `arguments` because nothing joins on the first and the second is a
-    // model's arguments to a tool that does not exist.
+  it('keeps all three fields of a function call, because all three are dispatched on', () => {
+    // This used to keep the name alone, on ADR-0023's grounds that a session sending `tools: []`
+    // has no result to submit and no use for arguments to a tool that does not exist. ADR-0042
+    // reversed it: `call_id` addresses the output and `arguments` is what gets validated.
     expect(
       parseServerEvent(
         {
           type: 'response.function_call_arguments.done',
           call_id: 'c1',
-          name: 'get_timings',
-          arguments: '{"which":"roshan"}',
+          name: 'enemy',
+          arguments: '{"hero":"puck"}',
         },
         AT,
       ),
-    ).toEqual({ type: 'response.function_call_arguments.done', name: 'get_timings' });
+    ).toEqual({
+      type: 'response.function_call_arguments.done',
+      call_id: 'c1',
+      name: 'enemy',
+      arguments: '{"hero":"puck"}',
+    });
   });
 
-  it('does not throw on malformed arguments, because it never looks at them', () => {
+  it('does not throw on malformed arguments, because validating them is not its job', () => {
+    // `parseToolCall` classifies the JSON; this layer's contract is that no frame throws. A parser
+    // that rejected here would take the session down over one bad call.
     const event = parseServerEvent(
       { type: 'response.function_call_arguments.done', call_id: 'c1', name: 'x', arguments: '{{{' },
       AT,
     );
-    expect(event).toEqual({ type: 'response.function_call_arguments.done', name: 'x' });
+    expect(event).toEqual({
+      type: 'response.function_call_arguments.done',
+      call_id: 'c1',
+      name: 'x',
+      arguments: '{{{',
+    });
+  });
+
+  it('reports a missing call id as empty rather than inventing one', () => {
+    // The session refuses to answer a call with no id: there is nowhere to address the output, and
+    // an item the API rejects arrives in the middle of a spoken turn.
+    expect(
+      parseServerEvent({ type: 'response.function_call_arguments.done', name: 'enemy' }, AT),
+    ).toEqual({
+      type: 'response.function_call_arguments.done',
+      call_id: '',
+      name: 'enemy',
+      arguments: '',
+    });
   });
 
   it('reads errors from either shape', () => {
