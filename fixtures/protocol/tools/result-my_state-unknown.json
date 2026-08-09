@@ -1,0 +1,13 @@
+{
+  "hero": { "unknown": "never observed this match" },
+  "team": { "unknown": "never observed this match" },
+  "level": { "unknown": "never observed this match" },
+  "alive": { "unknown": "never observed this match" },
+  "respawn_in_seconds": { "unknown": "never observed this match" },
+  "health": { "unknown": "never observed this match" },
+  "mana": { "unknown": "never observed this match" },
+  "gold": { "unknown": "never observed this match" },
+  "buyback": { "unknown": "never observed this match" },
+  "items": { "unknown": "never observed this match" },
+  "abilities": { "unknown": "the source that would know is not running" }
+}

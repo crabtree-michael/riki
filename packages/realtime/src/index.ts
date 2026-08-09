@@ -39,4 +39,5 @@ export * from './turn.js';
 export * from './window.js';
 export * from './transcript.js';
 export * from './commands.js';
+export * from './tools.js';
 export * from './session.js';

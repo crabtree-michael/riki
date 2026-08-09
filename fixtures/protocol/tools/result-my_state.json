@@ -1,0 +1,80 @@
+{
+  "hero": { "value": "shadow_fiend", "age_seconds": 0.2, "confidence": 1, "source": "gsi" },
+  "team": { "value": "radiant", "age_seconds": 0.2, "confidence": 1, "source": "gsi" },
+  "level": { "value": 11, "age_seconds": 0.2, "confidence": 1, "source": "gsi" },
+  "alive": { "value": true, "age_seconds": 0.2, "confidence": 1, "source": "gsi" },
+  "respawn_in_seconds": { "value": 0, "age_seconds": 0.2, "confidence": 1, "source": "gsi" },
+  "health": {
+    "value": { "current": 1043, "max": 1680 },
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "gsi"
+  },
+  "mana": {
+    "value": { "current": 312, "max": 903 },
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "gsi"
+  },
+  "gold": {
+    "value": { "reliable": 640, "unreliable": 1228 },
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "gsi"
+  },
+  "buyback": {
+    "value": { "cost": 1512, "cooldown_seconds": 0, "affordable": true },
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "derived"
+  },
+  "items": {
+    "value": [
+      {
+        "id": "power_treads",
+        "location": "inventory",
+        "charges": null,
+        "cooldown_seconds": 0,
+        "castable": true
+      },
+      {
+        "id": "magic_wand",
+        "location": "inventory",
+        "charges": 12,
+        "cooldown_seconds": 0,
+        "castable": true
+      },
+      {
+        "id": "tpscroll",
+        "location": "teleport",
+        "charges": 1,
+        "cooldown_seconds": 43.5,
+        "castable": false
+      }
+    ],
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "gsi"
+  },
+  "abilities": {
+    "value": [
+      {
+        "id": "nevermore_shadowraze1",
+        "level": 4,
+        "cooldown_seconds": 0,
+        "castable": true,
+        "ultimate": false
+      },
+      {
+        "id": "nevermore_requiem",
+        "level": 1,
+        "cooldown_seconds": 61.2,
+        "castable": false,
+        "ultimate": true
+      }
+    ],
+    "age_seconds": 0.2,
+    "confidence": 1,
+    "source": "gsi"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "at_clock": "12:30",
+  "enemies": {
+    "enemies": [
+      {
+        "hero": "puck",
+        "level": { "value": 8, "age_seconds": 1.9, "confidence": 0.88, "source": "cv" },
+        "alive": { "value": true, "age_seconds": 1.9, "confidence": 0.88, "source": "cv" },
+        "respawn_in_seconds": { "unknown": "never observed this match" },
+        "last_seen": {
+          "value": { "x": 1240, "y": -880, "area": "bottom rune" },
+          "age_seconds": 4.2,
+          "confidence": 0.55,
+          "source": "cv"
+        },
+        "net_worth": { "unknown": "never observed this match" },
+        "items_seen": [{ "value": "blink", "age_seconds": 8.1, "confidence": 0.91, "source": "cv" }]
+      }
+    ]
+  },
+  "objectives": {
+    "clock": { "value": "12:30", "age_seconds": 0.5, "confidence": 1, "source": "gsi" },
+    "daytime": { "value": true, "age_seconds": 0.5, "confidence": 1, "source": "gsi" },
+    "buildings": {
+      "value": {
+        "towers": { "mine": 11, "theirs": 10 },
+        "barracks": { "mine": 6, "theirs": 6 },
+        "recently_lost": [{ "side": "theirs", "name": "bottom tier 1" }]
+      },
+      "age_seconds": 0.5,
+      "confidence": 1,
+      "source": "gsi"
+    },
+    "roshan": { "unknown": "nobody has seen Roshan this match" },
+    "runes": {
+      "value": {
+        "next_bounty_in_seconds": 90,
+        "next_power_in_seconds": 90,
+        "next_water_in_seconds": null
+      },
+      "age_seconds": 0.5,
+      "confidence": 1,
+      "source": "derived"
+    }
+  }
+}

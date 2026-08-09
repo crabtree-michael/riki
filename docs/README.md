@@ -146,6 +146,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md) | A scenario drives the real chain, and the trace shows where it stopped | Accepted — ordered trace, two scenario rows, and the voice telemetry made real. Now the inspector's only write surface: ADR-0042 removed ADR-0037's controls and ADR-0038's rehearsal |
 
 | [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) | Riki answers questions instead of deciding when to speak | Accepted — deletes `packages/events` and `packages/coach`; five narrow tools over the world model, every answer a `Fact`, the match recorded to disk. Reverses ADR-0023 and closes open question 18 |
+| [0043](adr/0043-an-unknown-is-a-shape-not-a-null.md) | An unknown is a shape, not a null | Accepted — the tool surface is zod in `packages/protocol`, a fact crosses to the model as one of two strict shapes, and the manifest's JSON Schema is generated from it. Completes ADR-0018's migration |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.

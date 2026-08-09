@@ -1,0 +1,14 @@
+{
+  "my_net_worth": { "value": 14320, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+  "team_net_worth": {
+    "value": { "ours": 58210, "theirs": 61045, "lead": -2835 },
+    "age_seconds": 96.2,
+    "confidence": 0.74,
+    "source": "derived"
+  },
+  "gpm": { "value": 583, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+  "xpm": { "value": 611, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+  "last_hits": { "value": 214, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+  "denies": { "value": 12, "age_seconds": 0.4, "confidence": 1, "source": "gsi" },
+  "lanes": { "unknown": "the scoreboard has not been open this match" }
+}

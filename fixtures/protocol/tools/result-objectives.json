@@ -1,0 +1,40 @@
+{
+  "clock": { "value": "27:41", "age_seconds": 0.3, "confidence": 1, "source": "gsi" },
+  "daytime": { "value": false, "age_seconds": 0.3, "confidence": 1, "source": "gsi" },
+  "buildings": {
+    "value": {
+      "towers": { "mine": 9, "theirs": 7 },
+      "barracks": { "mine": 6, "theirs": 6 },
+      "recently_lost": [
+        { "side": "theirs", "name": "bottom tier 2" },
+        { "side": "mine", "name": "top tier 1" }
+      ]
+    },
+    "age_seconds": 0.3,
+    "confidence": 1,
+    "source": "gsi"
+  },
+  "roshan": {
+    "value": {
+      "state": "dead",
+      "respawn_window": {
+        "opens_in_seconds": 128,
+        "closes_in_seconds": 308,
+        "maybe_up": false
+      }
+    },
+    "age_seconds": 352,
+    "confidence": 1,
+    "source": "log"
+  },
+  "runes": {
+    "value": {
+      "next_bounty_in_seconds": 19,
+      "next_power_in_seconds": 79,
+      "next_water_in_seconds": null
+    },
+    "age_seconds": 0.3,
+    "confidence": 1,
+    "source": "derived"
+  }
+}

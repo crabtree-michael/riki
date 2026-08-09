@@ -20,5 +20,9 @@
   },
   "scripts": {
     "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@riki/protocol": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

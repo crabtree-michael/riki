@@ -9,15 +9,23 @@ description: Rules for `packages/protocol` and `crates/riki-ipc` — the zod sch
 Electron main ↔ renderer, and Electron ↔ the Rust sidecar. It is deliberately small and
 deliberately central — it is the one place two parallel agents *will* collide.
 
+**There are now three surfaces here, and two of the rules below apply to only one of them.**
+`schemas/sidecar.ts` crosses a language boundary and generates Rust; `schemas/voice.ts` crosses a
+process boundary and generates nothing; `schemas/tools.ts` (ADR-0043) crosses to a *language
+model* and generates nothing, carries no version, and is written in snake_case. Check which one you
+are in before applying a rule — "protocol means generated and versioned" is now a wrong summary of
+this package rather than a rough one.
+
 ## Rules
 
 - **zod is the source of truth.** JSON Schema is generated from it; Rust types in
   `crates/riki-ipc` are generated from that JSON Schema. Never hand-edit a generated file —
   that is the failure mode this whole arrangement exists to prevent.
 - **Run `pnpm codegen` and commit the result.** CI fails if regenerating produces a diff.
-- **Every message is versioned.** During development the sidecar and the app are routinely
-  different builds. A version mismatch must produce a clear error, not a confusing parse
-  failure three layers down.
+- **Every message that crosses to another *build* is versioned.** During development the sidecar
+  and the app are routinely different builds. A version mismatch must produce a clear error, not a
+  confusing parse failure three layers down. The tool surface is the exception and says why in its
+  header: its peer is a model, which has no build and would invent any version it sent.
 - **Confidence, provenance and timestamp are non-optional on every CV-derived fact.** If a
   CV position can be constructed without a confidence score, it will eventually reach the
   agent as if it were certain, and Riki will tell a player something false with a confident
@@ -33,6 +41,34 @@ same commit. A message with no fixture is a message the other language has never
 parsed.
 
 ## Learnings
+
+**2026-08-09 — `.meta({ id })` is right for the Rust path and wrong for anything a model reads.**
+The entry below says to give every named schema an `id` or the Rust output is a pile of anonymous
+duplicates. That is still true, and it has an exact opposite on the tool surface: an `id` is
+precisely what makes `z.toJSONSchema` lift a subschema into `$defs` and leave a `$ref` behind, and
+the tool *arguments* are shown to a model that then has to resolve it. `GameClock` in
+`schemas/tools.ts` therefore carries `.describe()` and no `id`, deliberately, with a comment saying
+so — it is the only schema in the file without one and it looks like an oversight otherwise. Rule
+of thumb: `id` on anything that becomes a Rust type or a `$defs` entry; no `id` on anything that
+appears inside a tool's argument schema. `buildToolManifest` also strips `$schema` for the same
+reason — it is a fact about the document, not about the arguments, and it is charged for in the
+cached prefix on every session.
+
+**2026-08-09 — `z.object` would have made the `unknown` branch a lie, silently.** `ToolFact` is
+`z.union([known, UnknownFact])` and both branches are `z.strictObject`. With plain `z.object` the
+known branch parses `{ value: 0, …, unknown: 'never seen' }`, **strips** the `unknown`, and hands a
+model a confident zero — zod's default key-stripping turning a contradiction into a value. The
+whole "an unknown cannot be coerced" property (ADR-0043) rests on those two `strict`s, and nothing
+about the union's shape hints at it. If you write a two-branch union where one branch means
+*absence*, make both strict and write a test that feeds it both keys at once.
+
+**2026-08-09 — a test that mutates the corpus covers fields nobody thought to assert.**
+`tools-contract.test.ts` walks each known fixture, finds every fact-shaped leaf, and at each one
+asserts it may be `{ unknown }` and may not be a bare value. That is ~60 assertions from ~20 lines,
+and — the actual point — a field added to a tool next month is covered the moment a fixture carries
+it, where a hand-written list would have gone stale silently. Worth copying wherever a corpus and a
+per-leaf invariant meet. Pair it with a `expect(leaves.length).toBeGreaterThanOrEqual(n)` guard, or
+a walker that finds nothing passes both loops.
 
 **2026-08-02 — a corpus keyed on message *type* reports full coverage while a payload union goes
 unparsed.** The previous entry below fixed "which message is missing" by deriving the expected set

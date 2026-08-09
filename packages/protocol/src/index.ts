@@ -12,13 +12,18 @@
  *
  * ## What is here, and what is not yet
  *
- * Two protocols, and only one of them generates anything:
+ * Three boundaries, and only one of them generates anything:
  *
  * - **The sidecar stdio protocol** (`schemas/sidecar.ts`, `codec.ts`). Crosses a *language*
  *   boundary, so `pnpm codegen` turns it into JSON Schema and then into `crates/riki-ipc`.
  * - **The voice window's preload bridge** (`schemas/voice.ts`, `voice-codec.ts`). Main ↔ the hidden
  *   renderer that owns the microphone (ADR-0010). A process boundary but not a language one, so
  *   nothing is generated from it and `crates/riki-ipc` never sees it.
+ * - **The tool surface** (`schemas/tools.ts`). What the model may ask the world model for, and the
+ *   shape of every answer (ADR-0042, ADR-0043). The peer is a language model rather than another
+ *   build of Riki, which is why it is the one surface here with no version field — and the JSON
+ *   Schema it is shown is generated at run time by `packages/realtime/src/tools.ts`, not by
+ *   `pnpm codegen`.
  *
  * The **overlay's** main ↔ renderer messages are still in `apps/desktop/src/shared`, which is where
  * they were written before this package had any schemas. Moving them is its own coordination event
@@ -62,3 +67,46 @@ export {
   voiceUpdates,
   type Decoded,
 } from './voice-codec.js';
+
+export {
+  AbilityReport,
+  BuildingsReport,
+  EconomyArguments,
+  EconomyReport,
+  EconomyResult,
+  EnemiesReport,
+  EnemyArguments,
+  EnemyReport,
+  EnemyResult,
+  FactSource,
+  GameClock,
+  ItemReport,
+  MapPoint,
+  MyStateArguments,
+  MyStateReport,
+  MyStateResult,
+  ObjectivesArguments,
+  ObjectivesReport,
+  ObjectivesResult,
+  RoshanReport,
+  RuneReport,
+  TOOLS,
+  ToolName,
+  UNKNOWN_REASONS,
+  UnknownFact,
+  WorldAtArguments,
+  WorldAtReport,
+  WorldAtResult,
+  isUnknown,
+  orUnknown,
+  toolFact,
+} from './schemas/tools.js';
+export type {
+  KnownFact,
+  ToolAnswer,
+  ToolArgumentsFor,
+  ToolFact,
+  ToolInvocation,
+  ToolResultFor,
+  ToolSpec,
+} from './schemas/tools.js';

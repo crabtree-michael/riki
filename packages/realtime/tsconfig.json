@@ -13,5 +13,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../audio" }]
+  "references": [{ "path": "../audio" }, { "path": "../protocol" }]
 }

@@ -1,0 +1,30 @@
+{
+  "enemies": [
+    {
+      "hero": "puck",
+      "level": { "value": 12, "age_seconds": 46.1, "confidence": 0.82, "source": "cv" },
+      "alive": { "value": true, "age_seconds": 46.1, "confidence": 0.82, "source": "cv" },
+      "respawn_in_seconds": { "unknown": "never observed this match" },
+      "last_seen": {
+        "value": { "x": -1920, "y": 1160, "area": "their offlane, near the tier 2" },
+        "age_seconds": 34.4,
+        "confidence": 0.55,
+        "source": "cv"
+      },
+      "net_worth": { "value": 9840, "age_seconds": 112.7, "confidence": 0.74, "source": "cv" },
+      "items_seen": [
+        { "value": "blink", "age_seconds": 240.9, "confidence": 0.91, "source": "cv" },
+        { "value": "black_king_bar", "age_seconds": 61.3, "confidence": 0.55, "source": "cv" }
+      ]
+    },
+    {
+      "hero": "witch_doctor",
+      "level": { "unknown": "never observed this match" },
+      "alive": { "unknown": "never observed this match" },
+      "respawn_in_seconds": { "unknown": "never observed this match" },
+      "last_seen": { "unknown": "never observed this match" },
+      "net_worth": { "unknown": "never observed this match" },
+      "items_seen": { "unknown": "never observed this match" }
+    }
+  ]
+}

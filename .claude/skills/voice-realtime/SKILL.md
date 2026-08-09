@@ -47,6 +47,22 @@ path; keep it cheap and unit-test it.
 
 ## Learnings
 
+**2026-08-09 — Riki has tools again, and a Realtime tool definition is flat.** ADR-0042 reverses
+`tools: []`. The definitions are `{ type, name, description, parameters }` at the top level;
+Chat Completions nests those four under a `function` key and that is the form most examples show.
+`packages/realtime/src/tools.ts` builds the manifest from the zod schemas in `@riki/protocol` and
+`assertRealtimeToolShape` refuses the nested form by name — the same third-layer assertion
+`assertGaShape` is for the session payload, because a session that was configured with no usable
+tools does not error, it just never calls one, which is indistinguishable from a model choosing not
+to. What the API actually does with the nested form is **not measured**; the assertion is there so
+nobody finds out mid-match.
+
+Two consequences for anything you write here. The manifest sits in the **cached prefix**, so it is
+computed once at session open and never changed mid-session — availability belongs in the *result*
+of a call (`{ unknown: reason }`), never in the presence of the tool, which is ADR-0011's surviving
+half. And it is charged for on every session whether or not anything calls it, which is why
+`TOOL_MANIFEST_BUDGET_CHARACTERS` exists and a test asserts it (1,811 of 3,000 characters today).
+
 **2026-08-04 — the mint's session id moved to `session.id`, and an empty one fails four layers away
 as silence.** `parseClientSecret` read `session_id` from the response root or from `client_secret`,
 and fell back to `''` when it found neither. The GA response nests the whole session object and
