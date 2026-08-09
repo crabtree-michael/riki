@@ -16,9 +16,8 @@
  *   time the overlay was hidden on a non-macOS platform, which is every time.
  * - **No dock icon on macOS.** The tray is the control surface (ui-design.md §2.2). A dock icon
  *   for an app with no window is a promise of a window.
- * - **`before-quit` awaits `stop()`.** The sidecar is a child process and durable memory is
- *   batched: quitting without draining both leaves an orphan and loses the match's memory. The
- *   quit is deferred exactly once and then allowed through.
+ * - **`before-quit` awaits `stop()`.** The sidecar is a child process: quitting without draining it
+ *   leaves an orphan. The quit is deferred exactly once and then allowed through.
  *
  * ## What this does not do
  *
@@ -37,23 +36,11 @@ import { createConsoleLogTailer, defaultMatchers } from '@riki/log-tail';
 import type { Clock as WorldClock } from '@riki/world-model';
 
 import type { Millis } from '../shared/overlay.js';
-import type { CoachModel, LlmCoachConfig } from '@riki/coach';
-import { createOpenAiCoachModel } from '@riki/coach';
 import { loadConfig, voiceEnabled } from '@riki/config';
 import { createFakeVisionSidecar, defaultVisionScript } from '@riki/protocol/testing';
 
-import {
-  loadOrCreateGsiToken,
-  loadOrCreateInstallId,
-  loadSettings,
-  resolvePaths,
-  saveSettings,
-} from './bootstrap.js';
-import {
-  createElectronDebugWindowFactory,
-  createMockStateLibrary,
-  nodeMockStateFiles,
-} from './debug/index.js';
+import { loadOrCreateGsiToken, loadOrCreateInstallId, resolvePaths } from './bootstrap.js';
+import { createElectronDebugWindowFactory } from './debug/index.js';
 import type { DebugHub } from './debug/index.js';
 import { createElectronOverlayWindowFactory } from './overlay/electron-window.js';
 import type { Clock as UiClock } from './session/contracts.js';
@@ -131,7 +118,6 @@ function buildShell(): RikiShell {
   });
 
   const clock = createElectronClock();
-  const apiKey = config.openai.apiKey;
   const voiceTrace = createVoiceTrace(() => clock.now());
 
   /**
@@ -139,8 +125,8 @@ function buildShell(): RikiShell {
    *
    * With no `RIKI_OPENAI_API_KEY` the app boots with voice disabled and says so (ADR-0006) — which
    * is the mode every test, every fixture run and CI are in — and the silent stand-in keeps the
-   * whole coaching pipeline observable through the ledger and the counters. With a key, the same
-   * pipeline ends in a hidden renderer that actually talks.
+   * whole turn path observable through the inspector. With a key, the same path ends in a hidden
+   * renderer that actually talks.
    *
    * `createVoiceSession` is handed the key by injection and never reads the environment; it is the
    * only thing in the process that touches `ClientSecretBroker`, and what crosses the preload
@@ -182,7 +168,7 @@ function buildShell(): RikiShell {
      * been executed (ADR-0033), while its portable `--backend replay` has no atlas and so reports
      * region digests and no facts. The fake speaks the same protocol over the same
      * `ChildProcessPort`, so everything above this line — the handshake, the codec, supervision and
-     * restart, fusion, the trigger ladder — is the production path either way (ADR-0035).
+     * restart, fusion — is the production path either way (ADR-0035).
      *
      * `loop` because a sidecar that goes permanently silent after a minute is one the health poll
      * reports as `degraded` for the rest of the session, and `speed: 1` because a dev run wants the
@@ -192,25 +178,6 @@ function buildShell(): RikiShell {
     processes: config.vision.fake
       ? createFakeVisionSidecar({ script: defaultVisionScript(), speed: 1, loop: true })
       : createNodeChildProcessPort(),
-
-    // Supplied only when there is a key to build it with. `undefined` is what makes the tray's
-    // Coach row report the LLM coach as unavailable rather than offering a mode that would start a
-    // match and then say nothing all game.
-    ...(apiKey === null
-      ? {}
-      : {
-          coachModel: (coachConfig: LlmCoachConfig): CoachModel =>
-            createOpenAiCoachModel({ apiKey, config: coachConfig }),
-        }),
-
-    // What makes the tray's Coach row a setting rather than a gesture. The shell does no I/O, so it
-    // announces the change and this writes it.
-    onCoachModeChanged: (mode) => {
-      // Read-modify-write through `bootstrap.ts` rather than from `config`: the resolved value has
-      // already had the environment and the defaults folded into it, so writing it back would
-      // persist settings the player never chose.
-      saveSettings(dataDir, { coach: { ...loadSettings(dataDir).coach, mode } });
-    },
 
     sources: {
       gsi: (cfg: ShellConfig, worldClock: WorldClock) =>
@@ -251,12 +218,6 @@ function buildShell(): RikiShell {
       preloadPath: paths.debugPreload,
       entryPath: paths.debugEntry,
     }),
-
-    // The inspector's rehearsal library (ADR-0038), also consulted only when the flag is on. Built
-    // here rather than in the shell because it is a directory read and `shell/index.ts` does no
-    // I/O — the same split as `createFileMemoryStore`. A missing directory is an empty dropdown,
-    // which is what a packaged build gets.
-    mockStates: createMockStateLibrary({ files: nodeMockStateFiles(paths.mockStates) }),
   });
 
   // After construction, because the hub is the shell's and the session is built before it. Null
@@ -291,12 +252,12 @@ function createVoiceTrace(now: () => number): {
 
   return {
     sink: {
-      speaking: (turnId, reason, chars) => {
+      speaking: (turnId, scenario, chars) => {
         record(
           'session',
-          reason === null
-            ? `turn ${turnId} closed, ${String(chars)} chars`
-            : `speakUnprompted ${turnId} sent — ${reason.eventId} at salience ${reason.salience.toFixed(3)}, ${String(chars)} chars`,
+          scenario
+            ? `speakNow ${turnId} sent — ${String(chars)} chars`
+            : `turn ${turnId} closed, ${String(chars)} chars`,
         );
       },
       // The line that would have named the bug on 2026-08-04's first run.
@@ -362,8 +323,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', (event) => {
     if (quitting || shell === null) return;
     quitting = true;
-    // Deferred exactly once. The sidecar is a child process and durable memory is batched; both
-    // need draining, and `stop()` is the only thing that does it.
+    // Deferred exactly once. The sidecar is a child process and needs draining, and `stop()` is the
+    // only thing that does it.
     event.preventDefault();
     void shell.stop().finally(() => {
       shell = null;

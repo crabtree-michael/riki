@@ -1,42 +1,36 @@
 /**
- * The inspector — a dev-only window showing everything the judge and the coach currently believe.
+ * The inspector — a dev-only window showing everything the world model currently believes.
  *
  * ## What it is for
  *
- * Before this, the only way to see what Riki thought was `fixtures/golden/`: the snapshot and brief
- * renderers' output for six moments somebody wrote down in advance. That answers *does the format
+ * Before this, the only way to see what Riki thought was `fixtures/golden/`: the snapshot
+ * renderer's output for four moments somebody wrote down in advance. That answers *does the format
  * still render correctly*, and it is the right tool for that. It answers none of the questions that
- * come up while the app is running — what does the world model actually hold right now, which
- * detections fired, which gate refused them, what text was composed for the turn that did happen,
- * and what went wrong underneath. Every one of those was a `console.log` somebody could not write,
- * because `console.*` is confined to `packages/telemetry` and that package is a skeleton.
+ * come up while the app is running — what does the world model actually hold right now, what text
+ * was composed for the turn that happened, and what went wrong underneath. Every one of those was a
+ * `console.log` somebody could not write, because `console.*` is confined to `packages/telemetry`
+ * and that package is a skeleton.
  *
  * ## Shape
  *
  * ```
- *   TriggerPolicy ──decorated──►┐
- *   RikiContext   ──decorated──►│
- *   ShellTelemetry──decorated──►├──► DebugHub ──frame(now)──► DebugWindow ──IPC──► renderer/debug
- *   CoachingSessionPort ──sub──►│         ▲
+ *   SnapshotSource ──decorated──►┐
+ *   ShellTelemetry ──decorated──►├──► DebugHub ──frame(now)──► DebugWindow ──IPC──► renderer/debug
+ *   VoiceSessionPort ─────sub──►│         ▲
  *   WorldModel / health / etc ──┘         └── pulled at frame time, not pushed
  * ```
  *
  * Three properties hold the whole thing together, and each is enforced somewhere rather than
  * remembered:
  *
- * - **It changes nothing on its own.** Both decorators return their delegate's value unchanged
- *   (`observing-policy.ts`, `observing-context.ts`) and the telemetry decorator calls its delegate
- *   first and always, so with the window open and untouched the app behaves exactly as it does with
- *   the flag off. The one thing that *can* change behaviour is a `control` intent, which only
- *   arrives when somebody clicks and can only reach a row in `controls.ts`' registry (ADR-0037).
- *   The `rehearse` intent (ADR-0038) is an action rather than a setting and still does not weaken
- *   this: it builds a world, a coach and a context of its own, runs one turn against them and
- *   discards all three, so the live match's facts, latches, cooldowns and ledger are untouched and
- *   no session is reachable from it. `rehearsal.ts` is where that is argued.
+ * - **It changes nothing on its own.** The decorator returns its delegate's value unchanged
+ *   (`observing-snapshot.ts`) and the telemetry decorator calls its delegate first and always, so
+ *   with the window open and untouched the app behaves exactly as it does with the flag off. The one
+ *   thing that *can* change behaviour is an `action` intent, which only arrives when somebody clicks
+ *   and can only reach a row in `actions.ts`' registry (ADR-0039).
  * - **It costs nothing when off.** `config.debug.enabled` is false by default; with it false the
- *   shell builds no hub, installs no decorator, adds no tray row and creates no window, so the
- *   extra gate evaluations in `observing-policy.ts` never run.
- * - **It is bounded.** Every buffer in `hub.ts` is capped and the two long text fields are clipped.
+ *   shell builds no hub, installs no decorator, adds no tray row and creates no window.
+ * - **It is bounded.** Every buffer in `hub.ts` is capped and the long text fields are clipped.
  *
  * ## Frames
  *
@@ -52,54 +46,22 @@ import type { Timers } from '@riki/context';
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugHub, DebugSurface, DebugWindow, DebugWindowFactory } from './contracts.js';
 import type { DebugActionPort } from './actions.js';
-import type { DebugControlPort } from './controls.js';
-import type { DebugRehearsalPort } from './rehearsal.js';
 import { createDebugHub } from './hub.js';
 
 export * from './contracts.js';
 export { createDebugHub, toCounts } from './hub.js';
-export { createObservingPolicy } from './observing-policy.js';
-export type { ObservingPolicyDeps } from './observing-policy.js';
-export { observeContext } from './observing-context.js';
-export type { ObservingContextDeps } from './observing-context.js';
+export { observeSnapshots } from './observing-snapshot.js';
+export type { ObservingSnapshotDeps } from './observing-snapshot.js';
 export { withDebugTelemetry } from './telemetry.js';
 export type { DebugTelemetryDeps } from './telemetry.js';
-export { projectCounters, projectWorld, renderValue } from './projections.js';
+export { projectWorld, renderValue } from './projections.js';
 export type { WorldProjectionDeps } from './projections.js';
-export { createDebugControls } from './controls.js';
 export { createDebugActions } from './actions.js';
 export type { DebugActionDeps, DebugActionOutcome, DebugActionPort } from './actions.js';
 export { stackWindowScript, runMatchScenario } from './scenarios.js';
 export type { MatchScenarioDeps, ScenarioFrame } from './scenarios.js';
-export type {
-  CoachModeControl,
-  DebugControlOutcome,
-  DebugControlPort,
-  DebugControls,
-  DebugControlsDeps,
-  UnpromptedControl,
-} from './controls.js';
 export { createElectronDebugWindowFactory } from './electron-window.js';
 export type { ElectronDebugWindowOptions } from './electron-window.js';
-export {
-  createMockStateLibrary,
-  emptyMockStateLibrary,
-  nodeMockStateFiles,
-  projectMockStates,
-} from './mock-states.js';
-export type {
-  MockState,
-  MockStateFiles,
-  MockStateLibrary,
-  MockStateLibraryDeps,
-} from './mock-states.js';
-export { createDebugRehearsal, resetRehearsalIds } from './rehearsal.js';
-export type {
-  DebugRehearsalDeps,
-  DebugRehearsalPort,
-  RehearsalOutcome,
-  RehearsalStack,
-} from './rehearsal.js';
 
 export interface DebugSurfaceDeps {
   readonly hub: DebugHub;
@@ -116,26 +78,11 @@ export interface DebugSurfaceDeps {
   readonly now: () => number;
   readonly intervalMs?: number;
   /**
-   * Absent means **display but do not control** — every `control` intent is refused and recorded.
-   *
-   * Optional for the same reason `windows` is: the collection half of this component is testable
-   * with neither, and a headless replay wants frames without a way to move a threshold underneath
-   * itself. It is also what keeps a shell built before this port existed compiling unchanged.
-   */
-  readonly controls?: DebugControlPort;
-  /**
-   * Absent means **the rehearse button is dark** — every `rehearse` intent is refused and recorded.
-   *
-   * Optional for the same reasons `controls` is, plus one of its own: a rehearsal needs a library of
-   * mock states on disk and a way to build a throwaway coaching root, and neither exists in a
-   * packaged build or in a test that only drives the hub.
-   */
-  readonly rehearsal?: DebugRehearsalPort;
-  /**
    * Absent means **display but do not run** — every `action` intent is refused and recorded.
    *
-   * Optional for the reason `controls` is: a headless replay wants frames, and a shell built before
-   * ADR-0039 compiles unchanged.
+   * Optional for the same reason `windows` is: the collection half of this component is testable
+   * with neither, and a headless replay wants frames without a way to start a scenario underneath
+   * itself.
    */
   readonly actions?: DebugActionPort;
 }
@@ -183,69 +130,11 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
   }
 
   /**
-   * A control change, and then a frame straight back.
-   *
-   * Not waiting out the interval matters more here than anywhere else in this component: a control
-   * whose value visibly lags the click by up to 250 ms reads as a control that did not work, and the
-   * first thing anybody does with one that looks broken is click it again.
-   *
-   * A refusal — an unknown id, a locked gate, the wrong value type — becomes an `inspector` problem
-   * rather than a silence. `controls` being absent is the same case: the panel is displayed from
-   * whatever `DebugSources.controls` returns, so a window that could show controls but not move them
-   * has to say so somewhere.
-   */
-  function applyControl(id: string, value: boolean | number | string): void {
-    const outcome = deps.controls?.apply(id, value) ?? {
-      ok: false,
-      reason: 'this inspector has no control port',
-    };
-    if (!outcome.ok) {
-      hub.recordProblem('inspector', `${id}: ${outcome.reason ?? 'refused'}`, deps.now());
-    }
-    sendFrame();
-  }
-
-  /**
-   * A rehearsal, and then a frame as soon as it has produced one (ADR-0038).
-   *
-   * Not awaited by the intent handler: under `llm` this is a model call taking seconds, and an
-   * intent handler that blocked on it would stall the frame pump — so the window would freeze for
-   * the duration of the thing it is showing progress for. The port refuses a second run itself, so
-   * the fire-and-forget is bounded rather than a queue.
-   *
-   * A missing port is the same case as a missing control port and gets the same treatment: an
-   * `inspector` problem, because a button that quietly does nothing is the failure this window
-   * exists to make impossible.
-   */
-  function rehearse(stateId: string): void {
-    if (deps.rehearsal === undefined) {
-      hub.recordProblem('inspector', `rehearsal: this inspector has no mock states`, deps.now());
-      sendFrame();
-      return;
-    }
-    void deps.rehearsal.run(stateId).then(
-      () => {
-        sendFrame();
-      },
-      // `run` is total and records its own failures, so this is only reachable if the port itself
-      // is broken. Swallowing it would leave a button that did nothing and said nothing.
-      (error: unknown) => {
-        hub.recordProblem(
-          'inspector',
-          `rehearsal: ${error instanceof Error ? error.message : String(error)}`,
-          deps.now(),
-        );
-        sendFrame();
-      },
-    );
-  }
-
-  /**
    * Start a scenario, and answer in the same frame.
    *
-   * The same argument `applyControl` makes about latency, one step stronger: a scenario takes
-   * seconds, so the only immediate feedback is the row turning to `running` — and a click that
-   * produced no visible change for a quarter of a second is one somebody clicks twice.
+   * Not waiting out the frame interval, because a scenario takes seconds and the only immediate
+   * feedback is the row turning to `running` — a click that produced no visible change for a
+   * quarter of a second is one somebody clicks twice.
    */
   function runAction(id: string): void {
     const outcome = deps.actions?.run(id) ?? {
@@ -263,12 +152,6 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
     // interval on an empty document.
     if (intent.kind === 'ready') sendFrame();
     if (intent.kind === 'fault') hub.recordProblem('inspector', intent.message, deps.now());
-    if (intent.kind === 'control') applyControl(intent.id, intent.value);
-    if (intent.kind === 'rehearse') rehearse(intent.stateId);
-    if (intent.kind === 'reset-controls') {
-      deps.controls?.reset();
-      sendFrame();
-    }
     if (intent.kind === 'action') runAction(intent.id);
     if (intent.kind === 'clear-trace') {
       hub.clearTrace();
@@ -282,8 +165,6 @@ export function createDebugSurface(deps: DebugSurfaceDeps): DebugSurface {
 
   return {
     hub,
-    controls: deps.controls ?? null,
-    rehearsal: deps.rehearsal ?? null,
     actions: deps.actions ?? null,
 
     async open(): Promise<void> {

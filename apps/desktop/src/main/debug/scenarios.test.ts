@@ -1,19 +1,18 @@
 /**
  * The script, checked against the two facts it depends on and cannot assert at run time.
  *
- * Both are numbers owned by other packages — `DISCONTINUITY_THRESHOLD_SECONDS` in `@riki/gsi` and
- * `stackLeadSeconds`/`speakThreshold`/`kindWeight.stack_now` in `@riki/events` — so a change to
- * either would otherwise turn this scenario into one that silently proves nothing: a run that
- * resyncs the world model halfway, or one that never crosses the threshold it was aimed at.
+ * `DISCONTINUITY_THRESHOLD_SECONDS` is `@riki/gsi`'s, and a change to it would otherwise turn this
+ * scenario into one that silently proves nothing: a run that resyncs the world model halfway.
+ *
+ * The second fact used to be `packages/events`' salience arithmetic — that the walk actually reached
+ * a score above `speakThreshold`. ADR-0042 deleted the threshold, so what is left to assert is that
+ * the notes fire, which is the other way this script has already gone silently wrong once.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 import { DISCONTINUITY_THRESHOLD_SECONDS } from '@riki/gsi';
-import { DEFAULT_TRIGGER_CONFIG } from '@riki/events';
 
 import { stackWindowScript, runMatchScenario } from './scenarios.js';
-
-const STACK_AT = 53;
 
 function clockOf(frame: { readonly body: Record<string, unknown> }): number {
   const map = frame.body.map as { clock_time: number };
@@ -51,29 +50,6 @@ describe('the script', () => {
   });
 
   /**
-   * The run must actually reach a salience above `speakThreshold`, or it proves nothing.
-   *
-   * The arithmetic is `packages/events`': salience is `kindWeight × magnitude × urgency ×
-   * confidence`, and urgency is `horizon / (horizon + (deadline − speakLatency))`. Magnitude and
-   * confidence are 1 for a clock-derived detection.
-   */
-  it('walks the clock through a frame where stack_now can outscore the threshold', () => {
-    const cfg = DEFAULT_TRIGGER_CONFIG;
-    const best = stackWindowScript()
-      .map((frame) => STACK_AT - clockOf(frame))
-      .filter((until) => until > 0 && until <= cfg.stackLeadSeconds)
-      .map((until) => {
-        const effective = until - cfg.speakLatencySeconds;
-        const urgency =
-          effective <= 0 ? 0 : cfg.urgencyHorizonSeconds / (cfg.urgencyHorizonSeconds + effective);
-        return cfg.kindWeight.stack_now * urgency;
-      })
-      .reduce((a, b) => Math.max(a, b), 0);
-
-    expect(best).toBeGreaterThan(cfg.speakThreshold);
-  });
-
-  /**
    * The notes are the run's captions, and a caption keyed on an equality that cannot hold is a
    * silent nothing. The first draft tested `until === 12` while every frame's `until` was odd.
    */
@@ -85,8 +61,8 @@ describe('the script', () => {
     expect(notes).toHaveLength(4);
     expect(notes[0]).toContain('pre-game');
     expect(notes[1]).toContain('horn');
-    expect(notes[2]).toContain('starts detecting');
-    expect(notes[3]).toContain('crosses speakThreshold');
+    expect(notes[2]).toContain('is in range');
+    expect(notes[3]).toContain('about to close');
   });
 
   it('posts one match id throughout, so the run is one match and not several', () => {

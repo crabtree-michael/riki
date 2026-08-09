@@ -14,9 +14,9 @@
  * means writing one implementation of one interface and passing it to `createRikiShell`. Nothing
  * else moves.
  *
- * The interface composes the four sinks the subsystems declare separately rather than redeclaring
- * them, which is what keeps `createRikiShell` free of casts: one object satisfies the state
- * subsystem, the interaction machine, the coaching agent and the silent session at once.
+ * The interface composes the sinks the subsystems declare separately rather than redeclaring them,
+ * which is what keeps `createRikiShell` free of casts: one object satisfies the state subsystem,
+ * the interaction machine, the turn agent and the silent session at once.
  *
  * **Nothing here carries a transcript, a token, a path or a Steam ID.** dota2 §7 requires the last
  * of those to be hashed before any egress and ADR-0022 makes the API key unloggable by
@@ -24,16 +24,13 @@
  * them. `wouldSpeak` takes a character count for exactly this reason.
  */
 
-import type { CoachTelemetry } from '@riki/coach';
-import type { ReferenceDataPort } from '@riki/context';
-import type { CoachMode } from '@riki/config';
 import type { AgentTelemetry } from '../agent/index.js';
 import type { TelemetrySink } from '../session/contracts.js';
 import type { StateTelemetry } from '../state/index.js';
 import type { SilentSessionTelemetry } from './silent-session.js';
 
 export interface ShellTelemetry
-  extends StateTelemetry, TelemetrySink, AgentTelemetry, SilentSessionTelemetry, CoachTelemetry {
+  extends StateTelemetry, TelemetrySink, AgentTelemetry, SilentSessionTelemetry {
   /** The sidecar's stderr, a line at a time. A panic trace arrives here and nowhere else. */
   sidecarStderr(line: string): void;
   /** The sidecar answered the handshake. `backend` is what it can capture with, if anything. */
@@ -55,40 +52,11 @@ export interface ShellTelemetry
   /**
    * The Realtime session could not be opened for this match.
    *
-   * Not fatal and deliberately not a chip fault: detection, the gates and the brief all still run,
-   * so what the player has is a Riki that is thinking and not talking. The message is an `Error`'s
+   * Not fatal and deliberately not a chip fault: GSI, fusion and the world model all still run, so
+   * what the player has is a Riki that is watching and cannot answer. The message is an `Error`'s
    * own text and never carries config — `packages/config` keeps the key out of one by construction.
    */
   sessionOpenFailed(message: string): void;
-  /**
-   * Which coach a match is running under. Emitted on construction and on every live switch.
-   *
-   * Widened from `AgentTelemetry`'s optional method to a required one here, because the shell is the
-   * thing that knows: a record that cannot say which coach spoke makes any comparison between them
-   * unreadable after the fact.
-   */
-  coachMode(mode: CoachMode): void;
-  /**
-   * The LLM coach was asked for — from the tray, or from `settings.json` at startup — with no key
-   * behind it, or with no model factory wired.
-   *
-   * Reported **once**, when the driver would have been built, and never per turn. dota2 §9's rule:
-   * degrade loudly to the developer and quietly to the player. A coach that silently does nothing is
-   * the failure REPO_SKELETON.md §7.1 describes as discovering it ten minutes into a game.
-   */
-  coachUnavailable(reason: string): void;
-  /**
-   * Somebody moved a setting from the inspector's Controls panel (ADR-0037).
-   *
-   * The one thing about a session that cannot be reconstructed after the fact from anything else in
-   * this interface: "Riki spoke eleven times" means something different if `speakThreshold` spent
-   * six of them at 0.05. Only reachable with `debug.enabled`, which ships off.
-   *
-   * `value` is already a string because there is nothing here worth a union — every control's value
-   * is a boolean, a bounded number or one of two coach modes, and none of them can carry a
-   * transcript, a path or a key.
-   */
-  debugOverride(id: string, value: string): void;
 }
 
 /**
@@ -110,9 +78,9 @@ export function nullTelemetry(): ShellTelemetry {
     transition: () => undefined,
     visibilityLatency: () => undefined,
     rendererFault: () => undefined,
-    coachingTurn: () => undefined,
-    suppressed: () => undefined,
-    emptyBrief: () => undefined,
+    playerTurn: () => undefined,
+    emptySnapshot: () => undefined,
+    snapshotOmitted: () => undefined,
     wouldSpeak: () => undefined,
     sidecarStderr: () => undefined,
     sidecarReady: () => undefined,
@@ -121,33 +89,5 @@ export function nullTelemetry(): ShellTelemetry {
     hotkeyUnavailable: () => undefined,
     pushToTalkUnavailable: () => undefined,
     sessionOpenFailed: () => undefined,
-    coachMode: () => undefined,
-    coachUnavailable: () => undefined,
-    debugOverride: () => undefined,
-    consulted: () => undefined,
-    spoke: () => undefined,
-    declined: () => undefined,
-    skipped: () => undefined,
-    modelFailed: () => undefined,
   };
 }
-
-/**
- * No external reference data — matchup notes and build benchmarks are unavailable.
- *
- * `PreambleAssembler` is specified as total: an enrichment failure is recorded in `degraded`,
- * never thrown, because *"a preamble that fails is a match with no coach, and a coach with no
- * matchup notes is still a coach"* (context-and-memory §4.1). So answering `unavailable` is the
- * designed path rather than a broken one, and the two sections that wanted a port are omitted and
- * counted.
- *
- * dota2 §2.4 treats external data as best-effort throughout, and REPO_SKELETON.md §10 has no step
- * that provides it: there is no `packages/reference`, and ADR-0019 makes the benchmark a
- * reference-class judgement rather than a fetch. So this is not waiting on a known piece of work —
- * it is waiting on a decision that has not been made.
- */
-export const NULL_REFERENCE_DATA: ReferenceDataPort = {
-  item: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
-  matchup: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
-  benchmark: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
-};

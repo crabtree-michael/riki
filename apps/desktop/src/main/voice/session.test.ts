@@ -253,42 +253,39 @@ describe('turns', () => {
     });
   });
 
-  it('sends an unprompted turn with the detection behind it, for the ledger', async () => {
+  it('sends a scenario turn with no capture behind it (ADR-0039)', async () => {
     const { session, windows } = build(new ApiKey(KEY));
-    await session.openMatch('preamble');
+    await session.openMatch('instructions');
     ready(windows);
 
-    await session.speakUnprompted(
-      { turnId: 'coach_3' as TurnId, snapshotText: 'snapshot\n\nward the river' },
-      { eventId: 'enemy_missing:mid', salience: 0.7 },
-    );
+    await session.speakNow({
+      turnId: 'scenario_3' as TurnId,
+      snapshotText: 'snapshot\n\nward the river',
+    });
 
     expect(windows.window.sent.at(-1)).toMatchObject({
       type: 'voice.turn.speak',
-      turnId: 'coach_3',
-      eventId: 'enemy_missing:mid',
-      salience: 0.7,
+      turnId: 'scenario_3',
+      // The wire still carries `eventId` and `salience` — `packages/protocol` is a coordination
+      // event, not this package's to change — and they are filled with what is true now that
+      // ADR-0042 has deleted the detections they used to name.
+      eventId: 'scenario.speak',
+      salience: 1,
     });
   });
 
-  it('resolves speakUnprompted immediately, because the agent closes the turn from the events', async () => {
-    // The confusion `silent-session.ts` was written to avoid: `speakUnprompted` means *handed
-    // over*, not *finished speaking*. Resolving only when the response ended would leave gate 4
-    // armed for the duration and make a slow model look like a broken trigger policy.
+  it('resolves speakNow immediately, because the chip leaves Speaking from the events', async () => {
+    // The confusion `silent-session.ts` was written to avoid: `speakNow` means *handed over*, not
+    // *finished speaking*. Resolving only when the response ended would leave the overlay claiming
+    // Riki is talking for the duration and make a slow model look like a hung session.
     const { session, windows } = build(new ApiKey(KEY));
-    await session.openMatch('preamble');
+    await session.openMatch('instructions');
     ready(windows);
 
     let resolved = false;
-    const promise = session
-      .speakUnprompted(
-        { turnId: 'coach_1' as TurnId, snapshotText: 'x' },
-        { eventId: 'e', salience: 1 },
-      )
-      .then(() => {
-        resolved = true;
-      });
-    await promise;
+    await session.speakNow({ turnId: 'scenario_1' as TurnId, snapshotText: 'x' }).then(() => {
+      resolved = true;
+    });
     expect(resolved).toBe(true);
     // And nothing has come back from the renderer at all.
     expect(windows.window.sent.some((d) => d.type === 'voice.turn.speak')).toBe(true);

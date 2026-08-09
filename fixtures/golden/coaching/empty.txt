@@ -1,4 +1,0 @@
-(empty — this turn does not happen)
-
---- 0 tokens, empty
---- omitted: windows, positions, history

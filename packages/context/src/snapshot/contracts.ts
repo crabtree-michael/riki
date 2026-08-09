@@ -9,7 +9,6 @@
  * See docs/design/context-and-memory-architecture.md §5. Declarations only.
  */
 
-import type { EventId } from '../common/types.js';
 import type { WorldSnapshot } from '../common/ports.js';
 import type { Section } from '../render/types.js';
 import type { LadderEntry, RenderedSnapshot, SnapshotContext, SnapshotSectionId } from './types.js';
@@ -39,13 +38,13 @@ export interface SectionSource {
 /**
  * The truncation order, as data.
  *
- * `promote` is §5.2's one-section rule: the turn's cause moves exactly one section up the ladder,
- * chosen by a lookup table from `EventId`, so ordering stays a golden-testable fact rather than a
- * scoring function nobody can predict.
+ * Fixed, since ADR-0042. It used to carry a `promote(cause)` as well — §5.2's one-section rule,
+ * which moved whichever section explained the trigger up the ladder so the budget did not eat it.
+ * With every turn now caused by a key press there is no event to promote for, and what is left is
+ * a table plus the closure that keeps a pair from being split.
  */
 export interface PriorityLadder {
   readonly entries: readonly LadderEntry[];
-  promote(cause: EventId): SnapshotSectionId | null;
   /** Expands a set of drops to include everything that must go with it (`dropsWith`). */
   closure(dropping: readonly SnapshotSectionId[]): readonly SnapshotSectionId[];
 }

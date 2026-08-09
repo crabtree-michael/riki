@@ -13,6 +13,5 @@ export type * from './contracts.js';
 
 export { createSnapshotRenderer, isEmpty } from './renderer.js';
 export type { SnapshotRendererOptions } from './renderer.js';
-export { SNAPSHOT_LADDER, PROMOTION_BY_EVENT, createPriorityLadder, promoted } from './ladder.js';
-export { elide } from './elision.js';
-export { ALL_SECTIONS, MAX_TAPE_EVENTS, UNSEEN_AFTER_SECONDS } from './sections/index.js';
+export { SNAPSHOT_LADDER, createPriorityLadder } from './ladder.js';
+export { ALL_SECTIONS, UNSEEN_AFTER_SECONDS } from './sections/index.js';

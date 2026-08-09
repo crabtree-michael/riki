@@ -40,9 +40,11 @@ export interface PendingTimer {
  * add eighteen impossible combinations to the reducer (§4.2).
  *
  * `acting` and `confirming` are absent because ADR-0023 deleted their only producers — a tool call
- * slow enough to need its own pixels, and the consent gate in front of `read_screen`. A coaching
- * turn is `speaking` with `unprompted: true`, which §9.3 already specifies end to end and which is
- * now the most common thing the chip does.
+ * slow enough to need its own pixels, and the consent gate in front of `read_screen`.
+ *
+ * `speaking` used to carry `unprompted: boolean`, distinguishing an answer from a coaching turn
+ * that started itself. ADR-0042 deleted the second kind: every phase here is now reached from a key
+ * press, so the flag had one value and the projections never read it.
  */
 export type Phase =
   | { readonly kind: 'idle' }
@@ -53,7 +55,7 @@ export type Phase =
       readonly silentSince: Millis | null;
     }
   | { readonly kind: 'processing'; readonly startedAt: Millis }
-  | { readonly kind: 'speaking'; readonly unprompted: boolean }
+  | { readonly kind: 'speaking' }
   | { readonly kind: 'error'; readonly fault: Fault };
 
 /** The settings snapshot the machine is allowed to know about, injected from @riki/config. */
@@ -89,8 +91,6 @@ export type MachineInput =
   | { readonly kind: 'capture'; readonly event: 'opened' | 'firstAudio' | 'closed' }
   | { readonly kind: 'speech'; readonly event: 'silence' | 'resumed' }
   | { readonly kind: 'turn'; readonly event: 'submitted' | 'responseStarted' | 'responseEnded' }
-  /** The chip appears with no gesture behind it — the primary path under ADR-0023 (§9.3). */
-  | { readonly kind: 'unprompted'; readonly event: 'speechStarted' }
   | { readonly kind: 'fault'; readonly fault: Fault }
   | { readonly kind: 'mute'; readonly muted: boolean }
   | { readonly kind: 'settings'; readonly env: MachineEnvironment }

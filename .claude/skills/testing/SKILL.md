@@ -59,9 +59,8 @@ Say so rather than faking coverage. Anti-cheat interaction, real CV accuracy in 
 teamfight, whether Riki is *annoying*, and exclusive-fullscreen capture behaviour all need a
 runbook and a human, not a test. Write the runbook in `docs/runbooks/` and commit its result.
 
-Coverage is reported, not gated at a blanket number — except in `packages/world-model`,
-`packages/context` and `packages/events`, where a silent bug becomes wrong advice in a
-player's ear.
+Coverage is reported, not gated at a blanket number — except in `packages/world-model` and
+`packages/context`, where a silent bug becomes wrong advice in a player's ear.
 
 ## Learnings
 

@@ -2,18 +2,20 @@
  * Tier 2 — the snapshot renderer. Tier 1 by REPO_SKELETON.md §5.3.
  *
  * The tests §13 names for this unit, in the order it names them: the truncation ladder, the
- * `seen`/`unseen` pairing, cause-driven promotion, and the two dota2 §4 rules that this tier shares
- * with Tier 3 — a stale CV fact renders with its age and confidence, and a below-threshold fact is
- * dropped rather than hedged.
+ * `seen`/`unseen` pairing, and the two dota2 §4 rules that this tier shares with the tool layer —
+ * a stale CV fact renders with its age and confidence, and a below-threshold fact is dropped rather
+ * than hedged.
+ *
+ * Cause-driven promotion used to be the third item on that list and is gone with ADR-0042: the
+ * cause it promoted for was a trigger event, and there are no triggers.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, MonoMs, TurnId } from '../common/types.js';
-import type { SnapshotContext, TapeEvent, TurnCause } from './types.js';
+import type { SnapshotContext } from './types.js';
 import { FakeWorldModel, observed } from '../testing/index.js';
 import { DEFAULT_PRIVACY } from '../render/privacy.js';
 import { createSnapshotRenderer } from './renderer.js';
-import { createPriorityLadder, promoted, SNAPSHOT_LADDER } from './ladder.js';
 
 const NOW = 1_000 as MonoMs;
 
@@ -66,8 +68,6 @@ function ctx(overrides: Partial<SnapshotContext> = {}): SnapshotContext {
     cause: { by: 'player', gesture: 'push_to_talk' },
     budget: { maxTokens: 400, spentTokens: 0 },
     privacy: DEFAULT_PRIVACY,
-    tape: [],
-    elisionBase: null,
     ...overrides,
   };
 }
@@ -89,6 +89,15 @@ describe('the format', () => {
     const empty = new FakeWorldModel({ clock: null, roster: { enemies: [] }, facts: {} });
     const rendered = renderer.render(empty.snapshot(NOW), ctx());
     expect(rendered.text).toBe('T pre-horn');
+  });
+
+  it('renders the same text twice for the same world, whatever the turn', () => {
+    // The property the promotion rule used to cost: two turns against one world differ only in
+    // their `turnId`. It is worth an assertion rather than an observation, because the next thing
+    // anybody adds to `SnapshotContext` will be tempted to read it here.
+    const first = renderer.render(world().snapshot(NOW), ctx());
+    const second = renderer.render(world().snapshot(NOW), ctx({ turnId: 't2' as TurnId }));
+    expect(second.text).toBe(first.text);
   });
 });
 
@@ -131,17 +140,15 @@ describe('the truncation ladder', () => {
     expect(rendered.truncated).toBe(true);
   });
 
-  it('drops `recent` before anything else', () => {
-    const tape: TapeEvent[] = [
-      { id: 'hero_died' as never, at: 850 as GameClock, text: 'tide died top' },
-    ];
-    // dota2 §6.2 names history as the first thing to go. A budget just under the full render
-    // should cost exactly the tape and nothing else.
+  it('drops `map` before anything else', () => {
+    // `map` sits at the bottom of the ladder now that the event tape is gone, and a budget just
+    // under the full render should cost exactly that line and nothing else.
+    const full = renderer.render(world().snapshot(NOW), ctx());
     const tight = renderer.render(
       world().snapshot(NOW),
-      ctx({ tape, budget: { maxTokens: 155, spentTokens: 0 } }),
+      ctx({ budget: { maxTokens: full.tokens - 1, spentTokens: 0 } }),
     );
-    expect(tight.omitted).toStrictEqual(['recent']);
+    expect(tight.omitted).toStrictEqual(['map']);
   });
 
   it('drops `seen` and `unseen` together, never one without the other', () => {
@@ -157,77 +164,5 @@ describe('the truncation ladder', () => {
       expect(omitted.has('seen') === omitted.has('unseen')).toBe(true);
       expect(text.includes('unseen >20s')).toBe(text.includes('seen:'));
     }
-  });
-});
-
-describe('cause-driven promotion', () => {
-  const ladder = createPriorityLadder();
-
-  it('promotes exactly one section, by lookup rather than by scoring', () => {
-    expect(ladder.promote('rune_soon' as never)).toBe('derived');
-    expect(ladder.promote('enemy_missing' as never)).toBe('seen');
-    // An event this table has not heard of promotes nothing, which is the correct default.
-    expect(ladder.promote('something_new' as never)).toBeNull();
-  });
-
-  it('moves `derived` above `seen` for a rune trigger', () => {
-    const cause: TurnCause = { by: 'trigger', event: 'rune_soon' as never, salience: 0.8 };
-    const entries = promoted(SNAPSHOT_LADDER, ladder.promote('rune_soon' as never), ladder);
-    const priority = new Map(entries.map((e) => [e.id, e.priority]));
-    expect(priority.get('derived')).toBeGreaterThan(priority.get('seen') ?? 0);
-
-    // The same budget, the same world, one different cause. The turn exists because of the rune;
-    // the line that explains it should not be what the budget eats.
-    const budget = { maxTokens: 130, spentTokens: 0 };
-    const promotedRender = renderer.render(world().snapshot(NOW), ctx({ cause, budget }));
-    const plain = renderer.render(world().snapshot(NOW), ctx({ budget }));
-
-    expect(promotedRender.omitted).not.toContain('derived');
-    expect(promotedRender.omitted).toContain('seen');
-    expect(plain.omitted).toContain('derived');
-    expect(plain.omitted).not.toContain('seen');
-  });
-
-  it('promotes `unseen` along with `seen`, or the promotion causes the drop it prevents', () => {
-    // Promoting `seen` alone leaves `unseen` at the bottom of the ladder; it drops first, and the
-    // `dropsWith` closure then takes `seen` with it.
-    const entries = promoted(SNAPSHOT_LADDER, 'seen', ladder);
-    const priority = new Map(entries.map((e) => [e.id, e.priority]));
-    expect(priority.get('unseen')).toBeGreaterThan(priority.get('derived') ?? 0);
-    expect(priority.get('seen')).toBeGreaterThan(priority.get('unseen') ?? 0);
-  });
-});
-
-describe('elision', () => {
-  it('is off unless a base is supplied', () => {
-    const first = renderer.render(world().snapshot(NOW), ctx());
-    const second = renderer.render(world().snapshot(NOW), ctx());
-    expect(second.text).toBe(first.text);
-    expect(second.text).not.toContain('unchanged');
-  });
-
-  it('carries the base clock in the marker, so a broken chain is a question the model can ask', () => {
-    const base = renderer.render(world().snapshot(NOW), ctx());
-    const elided = renderer.render(
-      world().snapshot(NOW),
-      ctx({ elisionBase: { rendered: base, clock: 872 as GameClock } }),
-    );
-    expect(elided.text).toContain('(unchanged since 14:32)');
-    // Never the header: it carries the clock, which is the one thing a delta must not hide.
-    expect(elided.text).toContain('T 14:32');
-    expect(elided.tokens).toBeLessThan(base.tokens);
-  });
-});
-
-describe('privacy', () => {
-  it('keeps chat out of the `recent:` line with the default policy', () => {
-    // dota2 §7's ⚠ row is other people's words, and this is the second of the two gates.
-    const tape: TapeEvent[] = [
-      { id: 'chat_message' as never, at: 860 as GameClock, text: 'SomePlayer: gg go next' },
-      { id: 'hero_died' as never, at: 850 as GameClock, text: 'tide died top' },
-    ];
-    const rendered = renderer.render(world().snapshot(NOW), ctx({ tape }));
-    expect(rendered.text).not.toContain('gg go next');
-    expect(rendered.text).toContain('tide died top');
   });
 });

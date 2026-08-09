@@ -9,10 +9,8 @@
  *
  * See docs/design/overlay-architecture.md §5.6 and §8.
  *
- * The placeholder handle types this file used to declare are gone: `@riki/realtime` and
- * `@riki/events` both exist now, and the seam is expressed in their vocabulary. `voice.ts` is the
- * `VoiceBridge` implementation; `PolicyBridge` has no implementation and does not need one — see
- * the note on it below.
+ * The placeholder handle types this file used to declare are gone: `@riki/realtime` exists and the
+ * seam is expressed in its vocabulary. `voice.ts` is the `VoiceBridge` implementation.
  */
 
 import type { VoiceCommand as RealtimeVoiceCommand, VoiceEvent } from '@riki/realtime';
@@ -30,17 +28,6 @@ export interface VoiceCommandTarget {
   send(command: RealtimeVoiceCommand): void;
 }
 
-/**
- * What the machine's current phase is, read at the moment an event arrives.
- *
- * The bridge needs it for exactly one decision — `responseStarted` while Idle is *unprompted*
- * speech and takes a different machine input (§9.3) — and giving it a reader rather than the whole
- * runtime keeps that the only thing it can do.
- */
-export interface PhaseReader {
-  phase(): string;
-}
-
 export interface VoiceBridge {
   attach(source: VoiceEventSource, sink: (input: MachineInput) => void): Unsubscribe;
   /** Machine effects become calls on the session. */
@@ -48,22 +35,14 @@ export interface VoiceBridge {
 }
 
 /**
- * ⚠ **No implementation, deliberately.**
+ * The bridge used to take a `PhaseReader` as well, for one decision: `responseStarted` while Idle
+ * was unprompted speech and took a different machine input. ADR-0042 removed the input, and with it
+ * the only reason this file knew what phase the machine was in.
  *
- * overlay-architecture.md §8 has `@riki/events` reaching the overlay through a `PolicyBridge`
- * carrying `unprompted.speechStarted`. Under ADR-0023 that is not how it happens: the trigger
- * policy hands a `CoachEvent` to the composition root, which opens a turn and hands *that* to the
- * session, and the chip appears when the session starts speaking. So the unprompted edge arrives
- * over `VoiceBridge` like every other turn edge, and a second path from `packages/events` straight
- * to the chip would be a way for the chip to claim Riki is speaking when nothing is.
- *
- * The type is kept because the overlay document still names it and a reader who goes looking
- * should find the answer rather than an absence.
+ * `PolicyBridge` went the same way. overlay-architecture.md §8 had `@riki/events` reaching the
+ * overlay through one, carrying `unprompted.speechStarted`; there is no `packages/events` to reach
+ * from and no unprompted edge to carry.
  */
-export interface PolicyBridge {
-  attach(policy: unknown, sink: (input: MachineInput) => void): Unsubscribe;
-}
-
 export interface SettingsBridge {
   current(): MachineEnvironment;
   watch(sink: (env: MachineEnvironment) => void): Unsubscribe;

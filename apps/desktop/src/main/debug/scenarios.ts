@@ -21,19 +21,19 @@
  * Measured, not reasoned: driving the same fixture at 8× on 2026-08-03 produced three
  * `world model reset: clock_discontinuity` rows in the Problems panel.
  *
- * ## What it aims at
+ * ## What it proves
  *
- * The first stack window, at 0:53. Only two detectors are reachable from GSI alone — `stack_now`
- * and `rune_soon` — because both are derived from the match clock. Every combat detector
- * (`low_hp_no_escape`, `enemy_missing`, `ult_ready`, `enemy_core_dead_window`) needs enemy positions
- * from the vision sidecar and returns nothing without them, so a GSI-only scenario aimed at one
- * would prove only that it is silent.
+ * That a POST at the socket reaches the world model: the token check, the payload parser, the
+ * session tracker, the lifecycle edges, fusion, the derived rules and the inspector's own frame.
+ * The run opens a match, walks the clock through the first minute and ends it, so what it exercises
+ * is every part of the chain **upstream of a question** — which is the part with no other way to be
+ * driven without a running Dota client.
  *
- * Between the two, the stack is the one that fits in a button: the first detectable bounty is at
- * 3:00 and the drift rule above forbids skipping ahead to meet it, so a bounty run is three quarters
- * of a minute long. `stack_now` fires within `stackLeadSeconds` (12) and clears `speakThreshold`
- * (0.3) at about 4 s out, since `salience = kindWeight(0.42) × urgency` and
- * `urgency = 15 / (15 + (secondsUntil − 1.5))`.
+ * It used to aim at something narrower: the first stack window at 0:53, chosen because `stack_now`
+ * was one of only two detectors reachable from GSI alone and it cleared `speakThreshold` about four
+ * seconds out. ADR-0042 deleted the detectors and the threshold. The walk is kept as it was rather
+ * than shortened, because the clock it covers is what makes the derived rules — rune timings, the
+ * stack window, day/night — produce anything at all, and those are still read on every turn.
  */
 
 /** One frame of the script. `atMs` is milliseconds from the run's start. */
@@ -64,12 +64,13 @@ const WALK_FROM_SECONDS = -4;
 const WALK_TO_SECONDS = TARGET_STACK_SECONDS + 4;
 
 /**
- * Where the two interesting notes land, mirrored from `@riki/events` rather than imported.
+ * Where the two interesting notes land.
  *
- * Copied on purpose: these decide when a *comment* is printed, and importing `DEFAULT_TRIGGER_CONFIG`
- * to caption a log line would make the script's text change when somebody tunes a threshold — while
- * the frames, which are the thing that matters, stayed identical. `scenarios.test.ts` asserts both
- * notes actually fire, which is the failure mode a hand-copied number has here.
+ * They used to mirror `packages/events`' `stackLeadSeconds` and the lead at which salience crossed
+ * `speakThreshold`. Both are gone (ADR-0042) and the numbers are kept as what they always described
+ * on the *frame* side: the window in which `derived.nextStackAt` is close enough to be worth asking
+ * about, and the last few seconds of it. `scenarios.test.ts` asserts both notes actually fire,
+ * which is the failure mode a hand-written lead has here.
  */
 const DETECT_LEAD_SECONDS = 12;
 const THRESHOLD_LEAD_SECONDS = 5;
@@ -173,8 +174,7 @@ function body(clock: number, state: string): Record<string, unknown> {
  * Continuous, with no jump anywhere in it, because a jump is a `clock_discontinuity` — which is what
  * `scenarios.test.ts` asserts and what an earlier draft of this file got wrong.
  *
- * Pure, so `scenarios.test.ts` can assert the shape of the run — the salience arithmetic above is
- * checkable against the frame list without a socket, a clock or an app.
+ * Pure, so `scenarios.test.ts` can assert the shape of the run without a socket, a clock or an app.
  */
 export function stackWindowScript(): readonly ScenarioFrame[] {
   const frames: ScenarioFrame[] = [];
@@ -191,15 +191,15 @@ export function stackWindowScript(): readonly ScenarioFrame[] {
 
     let note: string | null = null;
     if (clock === WALK_FROM_SECONDS) {
-      note = 'pre-game — opens the match, which builds the coaching root and the session';
+      note = 'pre-game — opens the match, which opens the session';
     } else if (clock === 0) {
-      note = 'horn — the match is in progress and the ladder starts running';
+      note = 'horn — the match is in progress and the derived rules start answering';
     } else if (!notedLead && until > 0 && until <= DETECT_LEAD_SECONDS) {
       notedLead = true;
-      note = `clock ${String(clock)} — stack in ${String(until)}s, stack_now starts detecting`;
+      note = `clock ${String(clock)} — stack in ${String(until)}s, derived.nextStackAt is in range`;
     } else if (!notedThreshold && until > 0 && until <= THRESHOLD_LEAD_SECONDS) {
       notedThreshold = true;
-      note = `clock ${String(clock)} — stack in ${String(until)}s, salience crosses speakThreshold`;
+      note = `clock ${String(clock)} — stack in ${String(until)}s, the window is about to close`;
     }
 
     frames.push({

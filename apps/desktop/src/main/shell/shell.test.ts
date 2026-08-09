@@ -1,23 +1,24 @@
 /**
  * The whole shell, driven by a recorded match, with no Electron.
  *
- * This is the test the step exists for. Everything the composition root wires — the GSI listener,
- * the observation bus, fusion, the event engine's eight detectors and thirteen gates, the context
- * assembler, the coaching brief, the interaction machine, the overlay presenter and the tray —
- * runs here against `fixtures/gsi/laning-phase.jsonl` through `FakeGsiSource`, which satisfies the
- * same interface as `GsiServer`. What it does not exercise is speech, for the reasons in
- * `silent-session.ts`.
+ * This is the test the composition root exists for. Everything it wires — the GSI listener, the
+ * observation bus, fusion, the snapshot renderer, the turn agent, the interaction machine, the
+ * overlay presenter and the tray — runs here against `fixtures/gsi/laning-phase.jsonl` through
+ * `FakeGsiSource`, which satisfies the same interface as `GsiServer`. What it does not exercise is
+ * speech, for the reasons in `silent-session.ts`.
  *
- * `coaching-trigger-architecture.md` §16 step 3 describes exactly this harness as what tuning
- * needs — *"the corpus it needs is `fixtures/gsi/`, driven through `FakeGsiSource` into a real
- * world model, a real engine, and a real `ContextAssembler` — no session and no network"* — so the
- * fixture path, the clock and the drain are deliberately reusable rather than inlined.
+ * **The load-bearing test is `a question, end to end`.** It presses the key, releases it, and
+ * asserts that the session was handed a snapshot rendered from the recorded match. That chain
+ * existed in pieces before ADR-0042 and was never joined: `beginPlayerTurn` and `endPlayerTurn`
+ * were implemented, `voice/session.ts` sent the directives, the voice renderer handled them — and
+ * nothing in the composition root ever called the first two. The chip lit up for a turn that
+ * reached no session, and every layer passed its own tests.
  *
  * **The fixture is synthetic.** Its own header says so: assembled from the component list in
  * `dota2-state-capture-design.md` §2.1, not captured from a running client. So an assertion about
- * *which* advice fires would be an assertion about a fixture somebody wrote, not about Dota. What
- * is asserted instead is that the pipeline is connected end to end and that each stage's output
- * reaches the next — which is the thing that was never true before and is what this step changed.
+ * *what* Riki would answer would be an assertion about a fixture somebody wrote, not about Dota.
+ * What is asserted instead is that the pipeline is connected end to end and that each stage's
+ * output reaches the next.
  */
 
 import { readFileSync } from 'node:fs';
@@ -26,18 +27,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createFakeCoachModel } from '@riki/coach/testing';
-import { ApiKey, type CoachMode, type ConfigLayer } from '@riki/config';
+import type { ConfigLayer } from '@riki/config';
 import type { Timers } from '@riki/context';
-import { GATES, SUPPRESSION_REASONS } from '@riki/events';
 import { createMatchSessionTracker, type MatchLifecycleEvent } from '@riki/gsi';
 import { createFakeGsiSource, parseGsiFixture, type FakeGsiSource } from '@riki/gsi/testing';
-import type { EventEngine } from '@riki/events';
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
 
 import type { Millis } from '../../shared/overlay.js';
-import type { CoachDriver, StaticCoachDriver } from '../agent/index.js';
-import { resetCoachTurnIds } from '../agent/index.js';
 import { createFakeWindow, fakeWindowFactory, type FakeOverlayWindow } from '../testing/fakes.js';
 import type { Clock as UiClock } from '../session/contracts.js';
 import type { TimerId } from '../session/types.js';
@@ -45,7 +41,7 @@ import { NO_RESTART, type SourceRegistration } from '../state/index.js';
 import type { TrayAction, TraySurface } from '../tray/index.js';
 import type { KeySource } from '../trigger/index.js';
 import { HOLD_THRESHOLD_MS } from '../trigger/index.js';
-import { createRikiShell, resolveShellConfig, type RikiShell, type ShellDeps } from './index.js';
+import { createRikiShell, resolveShellConfig, type RikiShell } from './index.js';
 import { createSilentSession, type SilentSession } from './silent-session.js';
 
 const FIXTURE = 'fixtures/gsi/laning-phase.jsonl';
@@ -214,12 +210,7 @@ interface Harness {
 
 let harness: Harness | null = null;
 
-/**
- * @param layer The config layer, defaulting to "unprompted speech on" because almost every test
- *   below exercises that path. The shipped default is the opposite and is asserted in "the privacy
- *   default", which builds its own shell with `{}`.
- */
-function build(layer: ConfigLayer = { 'privacy.unprompted': true }): Harness {
+function build(layer: ConfigLayer = {}): Harness {
   const clock = testClock();
   const timers = testTimers();
   const window = createFakeWindow();
@@ -283,7 +274,6 @@ function build(layer: ConfigLayer = { 'privacy.unprompted': true }): Harness {
 }
 
 beforeEach(async () => {
-  resetCoachTurnIds();
   harness = build();
   await harness.shell.start();
 });
@@ -301,7 +291,7 @@ function use(): Harness {
   return harness;
 }
 
-/** Every line of the fixture, at the timing it records, then the microtasks the coaching path
+/** Every line of the fixture, at the timing it records, then the microtasks the turn path
  * defers on. */
 async function replayInto(harnessed: Harness): Promise<void> {
   const { gsi, clock } = harnessed;
@@ -319,29 +309,19 @@ async function replay(): Promise<void> {
 
 // -------------------------------------------------------------------------------------------
 
-describe('the privacy default', () => {
-  it('says nothing unprompted, because RIKI_UNPROMPTED ships off', async () => {
-    // Not a unit test of `DEFAULTS` — `packages/config` has that. This is the end of the wire:
-    // the default reaches `EventEngine.setQuietMode` and the whole detected-and-gated pipeline
-    // still produces zero turns. The harness above turns it on precisely because it has to.
-    const quiet = build({});
-    try {
-      await quiet.shell.start();
-      await replayInto(quiet);
-
-      expect(quiet.shell.match).not.toBeNull();
-      const counters = engineOf(quiet.shell).counters();
-      // Something *was* detected, so the zero below is quiet mode and not an inert pipeline.
-      const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
-      expect(detected).toBeGreaterThan(0);
-      expect(counters.spoken).toBe(0);
-      expect(quiet.session.turns).toHaveLength(0);
-    } finally {
-      await quiet.shell.stop();
-      rmSync(quiet.dataDir, { recursive: true, force: true });
-    }
-  });
-});
+/** One push-to-talk gesture, and the text the session was handed for it. */
+async function ask(harnessed: Harness): Promise<string | undefined> {
+  const { shell, clock, keys } = harnessed;
+  // A tap latches; the second tap ends the gesture. In between, `capture.firstAudio` is what the
+  // voice renderer would send — there is none here, so it is dispatched by hand, which is the one
+  // thing this harness stands in for.
+  keys.tap(clock.now());
+  shell.runtime.dispatch({ kind: 'capture', event: 'firstAudio' });
+  keys.tap(clock.now());
+  await Promise.resolve();
+  await Promise.resolve();
+  return harnessed.session.turns.at(-1)?.snapshotText;
+}
 
 describe('the shell starts', () => {
   it('warms the overlay window before anything can ask it to show', () => {
@@ -352,11 +332,11 @@ describe('the shell starts', () => {
   });
 
   it('puts a status line on the tray before a single POST arrives', () => {
-    expect(use().tray.statuses[0]).toMatch(/^Riki — /);
+    expect(use().tray.statuses[0]).toMatch(/^Riki — /u);
   });
 
-  it('has no coaching root between matches, because the assembler is per-match', () => {
-    expect(use().shell.match).toBeNull();
+  it('has no session between matches, because the instructions are frozen per match', () => {
+    expect(use().shell.matchId).toBeNull();
   });
 });
 
@@ -371,115 +351,137 @@ describe('a recorded match, end to end', () => {
     expect(shell.state.world.version).toBeGreaterThan(0);
   });
 
-  it('opens a coaching root when the match starts, and closes it when the match ends', async () => {
-    const { shell } = use();
-    await replay();
-
-    const match = shell.match;
-    expect(match).not.toBeNull();
-    expect(match?.matchId).toBe('7891234567');
-    // Real objects, not stubs: this is the first time they have existed outside a unit test.
-    expect(match?.context.ledgerRecord.all()).toBeDefined();
-    // The static coach is the default and the shell built it behind the driver port.
-    expect(match?.driver.mode).toBe('static');
-  });
-
-  it('renders a snapshot the model could actually read', async () => {
-    const { shell, clock } = use();
-    await replay();
-
-    const context = shell.match?.context;
-    expect(context).toBeDefined();
-
-    const turn = context?.openTurn(
-      { turnId: 'probe' as never, cause: { by: 'player', gesture: 'push_to_talk' } },
-      clock.now() as MonoMs,
-    );
-    // The world-view adapter, the projection table and the renderer, over facts that came out of
-    // a recorded POST rather than out of `buildWorld()`.
-    expect(turn?.snapshot.text.length).toBeGreaterThan(0);
-  });
-
-  it('runs the detectors against every version bump', async () => {
-    const { shell } = use();
-    await replay();
-
-    const counters = engineOf(shell).counters();
-    const detected = Object.values(counters.detected).reduce((a, b) => a + b, 0);
-    const suppressed = Object.values(counters.suppressed).reduce((a, b) => a + b, 0);
-    // Both zero would mean the engine never ran, which is exactly the failure this file exists to
-    // catch. Non-zero on both sides means more: detection *and* the gate stack ran, and the
-    // default really is silence — the corpus produces more refusals than utterances.
-    expect(detected).toBeGreaterThan(0);
-    expect(suppressed).toBeGreaterThan(0);
-    expect(detected).toBeGreaterThan(counters.spoken);
-  });
-
-  it('never speaks without a brief behind it', async () => {
+  it('opens the session when the match starts, with instructions frozen for it', async () => {
     const { shell, session } = use();
     await replay();
 
-    // An empty brief is a turn that does not happen (coaching-architecture.md §6.5), so every
-    // turn that reached the session has text in it.
-    expect(session.turns.length).toBeGreaterThan(0);
-    for (const spoken of session.turns) {
-      // The snapshot and the brief, blank-line separated as one injected system message.
-      expect(spoken.turn.snapshotText).toContain('\n\n');
-    }
-    expect(session.turns.length).toBe(engineOf(shell).counters().spoken);
+    expect(shell.matchId).toBe('7891234567');
+    // Assembled once and frozen (ADR-0011). What is in it is the persona and the staleness rule;
+    // the roster comes from the per-turn snapshot, because that is where it is observed.
+    expect(session.opened).toHaveLength(1);
+    expect(session.opened[0]).toContain('must not state an aged value as current');
+  });
+
+  it('closes the session when the match ends', async () => {
+    const { shell } = use();
+    await replay();
+    expect(shell.matchId).not.toBeNull();
+
+    await shell.stop();
+    expect(shell.matchId).toBeNull();
+  });
+
+  it('says nothing at all without a gesture', async () => {
+    const { session } = use();
+    await replay();
+
+    // ADR-0042's headline property, at the only altitude that can assert it: a whole recorded match
+    // through the whole composition root, and not one turn. A coach that never interrupts you
+    // cannot interrupt you wrongly.
+    expect(session.turns).toHaveLength(0);
   });
 });
 
-/**
- * The deterministic coach's counters, from behind the driver port.
- *
- * Narrowing rather than casting: if the shell ever built the LLM coach by default this throws with
- * a message saying so, which is what a silent `as` would not.
- */
-function engineOf(shell: RikiShell): EventEngine {
-  // Typed as the *port*, not as the static adapter: narrowing a value already declared to be
-  // `StaticCoachDriver` proves nothing, and the whole point of this helper is that it fails loudly
-  // if the shell ever defaults to the other coach.
-  const driver: CoachDriver | undefined = shell.match?.driver;
-  if (driver?.mode !== 'static') {
-    throw new Error(`expected the static coach, got ${String(driver?.mode)}`);
-  }
-  return (driver as StaticCoachDriver).engine;
-}
-
-describe('the interaction path', () => {
-  it('speaks unprompted during the recorded match, with no gesture behind it', async () => {
-    const { shell, session, window } = use();
+describe('a question, end to end', () => {
+  it('hands the session a snapshot rendered from the recorded match', async () => {
+    const { shell } = use();
     await replay();
 
-    // The end of the pipeline, reached from a recorded POST: a detection survived thirteen gates,
-    // the assembler rendered a non-empty brief, and the composition root handed it to the session.
-    expect(session.turns.length).toBeGreaterThan(0);
-    expect(session.turns[0]?.reason?.eventId).toBeTypeOf('string');
-    expect(session.turns[0]?.reason?.salience).toBeGreaterThan(0);
+    const text = await ask(use());
 
-    // And the chip followed: Idle → Speaking with no Armed and no earcon (overlay §9.3), which
-    // under ADR-0023 is the primary path rather than one of two.
-    expect(shell.runtime.snapshot().phase).toEqual({ kind: 'speaking', unprompted: true });
-    expect(window.isVisible()).toBe(true);
+    // The acceptance criterion of T1: press the key, ask a question, get an answer with the current
+    // snapshot injected. Every stage is real — `FakeGsiSource` and `createSilentSession` are the
+    // only two stand-ins, and neither is between the world model and the text.
+    expect(text).toBeDefined();
+    expect(text?.length).toBeGreaterThan(0);
+    // Rendered from the fixture rather than from `buildWorld()`: the header carries the clock the
+    // recorded POSTs put in the world model.
+    expect(text).toMatch(/^T \d/u);
+    expect(shell.state.world.version).toBeGreaterThan(0);
   });
 
-  it('returns to idle when the turn ends, so `agent_speaking` does not stay armed', async () => {
+  it('renders on the release, so the world has the time the question took to ask', async () => {
+    const { shell, clock, keys, session } = use();
+    await replay();
+    const versionAtPress = shell.state.world.version;
+
+    keys.tap(clock.now());
+    shell.runtime.dispatch({ kind: 'capture', event: 'firstAudio' });
+    // Nothing has been handed over yet: the player is still talking.
+    expect(session.turns).toHaveLength(0);
+
+    keys.tap(clock.now());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.turns).toHaveLength(1);
+    expect(shell.state.world.version).toBeGreaterThanOrEqual(versionAtPress);
+  });
+
+  it('injects nothing when the gesture is cancelled', async () => {
+    const { shell, clock, keys, session } = use();
+    await replay();
+
+    keys.tap(clock.now());
+    shell.runtime.dispatch({ kind: 'capture', event: 'firstAudio' });
+    shell.runtime.dispatch({ kind: 'trigger', event: { kind: 'cancel' } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A cancelled gesture was not a question, so no snapshot is rendered and nothing is spent
+    // against the conversation window.
+    expect(session.turns).toHaveLength(0);
+    expect(shell.runtime.snapshot().phase.kind).toBe('idle');
+  });
+
+  it('works between matches as well as during one', async () => {
+    // Push-to-talk was never gated on being in a match, and since ADR-0042 the agent has an app
+    // lifetime rather than a match one — so this is the same path rather than a special case.
+    const { shell, session } = use();
+    expect(shell.matchId).toBeNull();
+
+    const text = await ask(use());
+
+    expect(session.turns).toHaveLength(1);
+    // Pre-horn: the header is undroppable, so the model is told it cannot see a game rather than
+    // being handed an empty string.
+    expect(text).toBe('T pre-horn');
+  });
+});
+
+describe('the interaction path', () => {
+  it('arms the chip on a tap from idle, and does not wait on a microphone to do it', async () => {
+    const { shell, clock, window, keys } = use();
+    await replay();
+
+    keys.tap(clock.now());
+
+    // Armed rather than Listening, and that is the design: Listening is entered on
+    // `capture.opened` from the audio graph, and *the chip's appearance never waits on the mic*
+    // (overlay §9.1) — which is the entire reason an Armed state exists.
+    expect(window.isVisible()).toBe(true);
+    expect(shell.runtime.snapshot().phase).toEqual({ kind: 'armed', gesture: 'latch' });
+  });
+
+  it('reaches Speaking on the response, and reopens the mic because the gesture latched', async () => {
     const { shell, timers } = use();
     await replay();
+    await ask(use());
+
+    // The silent session emits `responseStarted` on hand-over and `responseEnded` after a nominal
+    // speaking duration. A port that emitted neither would leave the chip in Processing forever.
     expect(shell.runtime.snapshot().phase.kind).toBe('speaking');
 
-    // The nominal speech duration expiring. A session port that never closed the turn would leave
-    // gate 4 armed forever and every later trigger suppressed — indistinguishable from a broken
-    // trigger policy, which is the one confusion that would make the stand-in worse than useless.
     timers.flush();
-    expect(shell.runtime.snapshot().phase.kind).toBe('idle');
-    expect(engineOf(shell).counters().spoken).toBeGreaterThan(0);
+    // Listening, not Idle: a latched session is still open when Riki stops talking — that is what
+    // latching means, and it is the "session active" affordance ui-design §13.5 asked for. `ask`
+    // taps, and a tap latches.
+    expect(shell.runtime.snapshot().phase.kind).toBe('listening');
   });
 
   it('barges in: one key press during Riki speaking goes straight to Listening', async () => {
     const { shell, clock, keys } = use();
     await replay();
+    await ask(use());
     expect(shell.runtime.snapshot().phase.kind).toBe('speaking');
 
     keys.tap(clock.now());
@@ -494,50 +496,33 @@ describe('the interaction path', () => {
     });
   });
 
-  it('arms the chip on a tap from idle, and does not wait on a microphone to do it', async () => {
-    const { shell, clock, window, timers, keys } = use();
+  it('never enters Speaking without a gesture behind it', async () => {
+    const { shell, window } = use();
     await replay();
-    timers.flush();
+
+    // The unprompted entry is gone (ADR-0042). A whole match produces no chip at all, which is the
+    // overlay half of "invisible until needed".
     expect(shell.runtime.snapshot().phase.kind).toBe('idle');
-
-    keys.tap(clock.now());
-
-    // Armed rather than Listening, and that is the design: Listening is entered on
-    // `capture.opened` from the audio graph, and *the chip's appearance never waits on the mic*
-    // (overlay §9.1) — which is the entire reason an Armed state exists. A shell with no voice
-    // renderer therefore stops exactly here, visibly.
-    expect(window.isVisible()).toBe(true);
-    expect(shell.runtime.snapshot().phase).toEqual({ kind: 'armed', gesture: 'latch' });
+    expect(window.isVisible()).toBe(false);
   });
 });
 
 describe('the inspector (main/debug)', () => {
   it('does not exist unless it was asked for', () => {
     // Off by default, and the default is what every other test in this file runs under. With it off
-    // the shell installs no observing policy, builds no hub, and holds no rendered brief in memory.
+    // the shell installs no decorator, builds no hub, and holds no rendered snapshot in memory.
     expect(use().shell.debug).toBeNull();
   });
 
   it('changes nothing about what Riki does', async () => {
-    /** One full fixture replay, returning the two things the coaching path is judged on. */
-    async function run(debug: boolean): Promise<{ spoken: number; texts: readonly string[] }> {
-      resetCoachTurnIds();
-      const built = build({ 'privacy.unprompted': true, 'debug.enabled': debug });
+    /** One full fixture replay plus one question, returning what the turn path produced. */
+    async function run(debug: boolean): Promise<readonly string[]> {
+      const built = build({ 'debug.enabled': debug });
       await built.shell.start();
       try {
-        for (let index = 0; ; index += 1) {
-          if (!built.gsi.step()) break;
-          built.clock.advance(gapAfter(index));
-          await Promise.resolve();
-        }
-        await Promise.resolve();
-        // `engineOf` rather than an inline cast: it throws if the shell ever defaults to the LLM
-        // coach, which would otherwise make both runs report the same `-1` and let this test pass
-        // while measuring nothing.
-        return {
-          spoken: engineOf(built.shell).counters().spoken,
-          texts: built.session.turns.map((entry) => entry.turn.snapshotText),
-        };
+        await replayInto(built);
+        await ask(built);
+        return built.session.turns.map((turn) => turn.snapshotText);
       } finally {
         await built.shell.stop();
         rmSync(built.dataDir, { recursive: true, force: true });
@@ -547,14 +532,12 @@ describe('the inspector (main/debug)', () => {
     const off = await run(false);
     const on = await run(true);
 
-    // The claim the whole component is built around. `observing-policy.ts` and
-    // `observing-context.ts` both return their delegate's value unchanged, and this is what that
-    // means end to end: the same fixture produces the same utterances either way. If it ever does
-    // not, the inspector is not measuring the app — it is changing it, and in a product whose
-    // failure mode is Riki talking when it should not, that is the bug that matters.
-    expect(on.spoken).toBe(off.spoken);
-    expect(on.texts).toEqual(off.texts);
-    expect(on.spoken).toBeGreaterThan(0);
+    // The claim the whole component is built around. `observing-snapshot.ts` returns its delegate's
+    // value unchanged, and this is what that means end to end: the same fixture and the same
+    // gesture produce the same text either way. If it ever does not, the inspector is not measuring
+    // the app — it is changing it.
+    expect(on).toEqual(off);
+    expect(on.length).toBeGreaterThan(0);
   });
 
   describe('with it on', () => {
@@ -565,8 +548,7 @@ describe('the inspector (main/debug)', () => {
         await current.shell.stop();
         rmSync(current.dataDir, { recursive: true, force: true });
       }
-      resetCoachTurnIds();
-      harness = build({ 'privacy.unprompted': true, 'debug.enabled': true });
+      harness = build({ 'debug.enabled': true });
       await harness.shell.start();
     });
 
@@ -578,13 +560,13 @@ describe('the inspector (main/debug)', () => {
       expect(shell.debug?.isOpen()).toBe(false);
     });
 
-    it('shows the world the judge is actually reading', async () => {
+    it('shows the world the model is actually reading', async () => {
       const { shell, clock } = use();
       await replay();
 
       const frame = shell.debug?.hub.frame(clock.now());
       expect(frame?.session.matchId).toBe('7891234567');
-      expect(frame?.session.coachingRoot).toBe(true);
+      expect(frame?.session.matchSession).toBe(true);
       expect(frame?.world.version).toBeGreaterThan(0);
 
       // Facts that came out of a recorded POST, each with the envelope `packages/world-model` goes
@@ -600,222 +582,53 @@ describe('the inspector (main/debug)', () => {
       expect(facts.map((fact) => fact.path)).toContain('meta.phase');
     });
 
-    it('shows the gate ladder for every candidate, which nothing else can', async () => {
-      const { shell, clock } = use();
-      await replay();
-
-      const frame = shell.debug?.hub.frame(clock.now());
-      const ticks = frame?.ticks ?? [];
-      expect(ticks.length).toBeGreaterThan(0);
-
-      const withCandidates = ticks.filter((tick) => tick.candidates.length > 0);
-      expect(withCandidates.length).toBeGreaterThan(0);
-
-      for (const tick of withCandidates) {
-        for (const candidate of tick.candidates) {
-          // Thirteen verdicts per candidate, every tick — including for the candidates that lost
-          // the ranking and never reached a gate in the shipping path (§5.5).
-          expect(candidate.ladder).toHaveLength(SUPPRESSION_REASONS.length);
-          expect(candidate.ladder.map((gate) => gate.reason)).toEqual(GATES.map((g) => g.reason));
-        }
-      }
-
-      // And at least one refusal is attributable to a named gate, rather than the whole corpus
-      // being "nothing was detected".
-      const refused = ticks.filter((tick) => !tick.decision.speak && tick.decision.key !== null);
-      expect(refused.length).toBeGreaterThan(0);
-    });
-
-    it('shows what the coach was given', async () => {
-      const { shell, clock } = use();
-      await replay();
-
-      const turns = shell.debug?.hub.frame(clock.now()).turns ?? [];
-      expect(turns.length).toBeGreaterThan(0);
-
-      for (const turn of turns) {
-        // The snapshot and the brief as they were rendered — the pair that exists nowhere else a
-        // person can read, and the whole reason the assembler is decorated rather than the agent.
-        expect(turn.snapshotText.length).toBeGreaterThan(0);
-        expect(turn.snapshotTokens).toBeGreaterThan(0);
-        expect(turn.cause).toBe('trigger');
-        expect(turn.eventId).not.toBeNull();
-        // An empty brief would have been closed `silent` without reaching the session; every turn
-        // here got past that, so all of them have text behind them.
-        expect(turn.briefEmpty).toBe(false);
-        expect(turn.briefText.length).toBeGreaterThan(0);
-      }
-    });
-
-    it('shows what became of a turn once it closes', async () => {
+    it('shows what the model was given, and what became of it', async () => {
       const { shell, clock, timers } = use();
       await replay();
+      await ask(use());
 
-      // A turn is `open` until `closeTurn`, which for the silent session is the nominal speech
-      // duration expiring. Asserting the outcome without flushing would be asserting that the
-      // fixture happens to run long enough, which is a fact about the fixture.
-      expect(shell.debug?.hub.frame(clock.now()).turns.every((t) => t.outcome === 'open')).toBe(
-        true,
-      );
+      const open = shell.debug?.hub.frame(clock.now()).turns ?? [];
+      expect(open).toHaveLength(1);
+      // The rendered text, which exists nowhere else a person can read — and the whole reason the
+      // snapshot source is decorated rather than the agent (ADR-0032).
+      expect(open[0]?.snapshotText.length).toBeGreaterThan(0);
+      expect(open[0]?.snapshotTokens).toBeGreaterThan(0);
+      expect(open[0]?.cause).toBe('player');
+      expect(open[0]?.outcome).toBe('open');
+
+      // A turn is `open` until the session says the response ended, which for the silent session is
+      // the nominal speaking duration expiring.
       timers.flush();
-
-      const closed = shell.debug?.hub.frame(clock.now()).turns.filter((t) => t.outcome !== 'open');
-      expect(closed?.length).toBeGreaterThan(0);
-      expect(closed?.map((turn) => turn.outcome)).toContain('spoke');
+      const closed = shell.debug?.hub.frame(clock.now()).turns ?? [];
+      expect(closed[0]?.outcome).toBe('spoke');
     });
 
-    it('carries the engine state behind a refusal', async () => {
+    it('traces the chain a question takes, in order', async () => {
       const { shell, clock } = use();
       await replay();
+      await ask(use());
 
-      const gates = shell.debug?.hub.frame(clock.now()).session.gates;
-      // None of this is reachable through `EventEngine`'s public surface; it arrives on the
-      // `GateContext` the policy decorator sees.
-      expect(gates?.asOfMs).not.toBeNull();
-      expect(gates?.speakThreshold).toBeGreaterThan(0);
-      expect(gates?.unprompted).toBe(true);
-      expect(gates?.latched).toBeInstanceOf(Array);
-    });
-
-    it('counts what was detected against what was spoken', async () => {
-      const { shell, clock } = use();
-      await replay();
-
-      const counters = shell.debug?.hub.frame(clock.now()).counters;
-      const detected = (counters?.detected ?? []).reduce((sum, row) => sum + row.count, 0);
-      const suppressed = (counters?.suppressed ?? []).reduce((sum, row) => sum + row.count, 0);
-
-      // §5.4's tuning signal, per reason rather than as one number — which is the difference
-      // between "Riki said nothing" and "Riki noticed nothing".
-      expect(detected).toBeGreaterThan(0);
-      expect(suppressed).toBeGreaterThan(0);
-      expect(counters?.ticks).toBeGreaterThan(0);
+      const stages = (shell.debug?.hub.frame(clock.now()).trace ?? []).map((step) => step.stage);
+      // The panel exists because a chain that stops halfway produces no fault anywhere: the absence
+      // of the next step is the finding (ADR-0039).
+      expect(stages).toContain('session');
+      expect(stages).toContain('turn');
+      expect(stages).toContain('snapshot');
     });
 
     it('offers the tray row it now has somewhere to send', () => {
       const { tray } = use();
       expect(tray.labels).toContain('Open Inspector…');
     });
-  });
 
-  /**
-   * ADR-0037's acceptance criterion, at the only altitude that can answer it.
-   *
-   * "Changing a setting visibly affects live judge/coach behaviour" is not a claim about
-   * `controls.ts` — that file's own test proves a getter returns a different number. It is a claim
-   * about the whole wire: a control moves a value, the value reaches the object `createEventEngine`
-   * captured at the start of the match, and the utterances at the far end of a real fixture replay
-   * are different because of it.
-   *
-   * The pair with "changes nothing about what Riki does" above is the point. Untouched, the
-   * inspector is inert; touched, it is not. Either half alone would be the wrong feature.
-   */
-  describe('and a control moved (ADR-0037)', () => {
-    /** One full replay, with the inspector on and whatever the caller does to it first. */
-    async function tuned(change: (shell: RikiShell) => void): Promise<{
-      spoken: number;
-      detected: number;
-      byKind: Readonly<Record<string, number>>;
-      quiet: boolean;
-    }> {
-      resetCoachTurnIds();
-      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
-      change(built.shell);
-      await built.shell.start();
-      try {
-        await replayInto(built);
-        const counters = engineOf(built.shell).counters();
-        return {
-          spoken: counters.spoken,
-          detected: Object.values(counters.detected).reduce((sum, n) => sum + n, 0),
-          byKind: { ...counters.detected },
-          quiet: built.shell.debug?.hub.frame(built.clock.now()).session.gates.quietMode ?? false,
-        };
-      } finally {
-        await built.shell.stop();
-        rmSync(built.dataDir, { recursive: true, force: true });
-      }
-    }
+    it('offers the scenarios, and says why one cannot run', () => {
+      const { shell } = use();
+      const rows = shell.debug?.actions?.list() ?? [];
 
-    it('silences the coach when the speak threshold is raised past every candidate', async () => {
-      const stock = await tuned(() => undefined);
-      const raised = await tuned((shell) => {
-        shell.debug?.controls?.apply('trigger.speakThreshold', 1);
-      });
-
-      expect(stock.spoken).toBeGreaterThan(0);
-      expect(raised.spoken).toBe(0);
-      // Still detecting. The difference is the gate, not the pipeline falling over — which is the
-      // distinction §5.4 exists for and the one a control this blunt could easily blur.
-      expect(raised.detected).toBe(stock.detected);
-    });
-
-    it('stops one detector without touching the others', async () => {
-      const stock = await tuned(() => undefined);
-
-      // Chosen from the run rather than named: which kinds fire is a fact about
-      // `fixtures/gsi/laning-phase.jsonl`, which is synthetic and is allowed to change. Two kinds
-      // have to fire for the assertion below to mean anything, and the file's header is explicit
-      // that asserting *which* advice fires would be asserting about the fixture.
-      const firing = Object.entries(stock.byKind)
-        .filter(([, count]) => count > 0)
-        .sort((a, b) => b[1] - a[1]);
-      const [busiest] = firing;
-      expect(firing.length).toBeGreaterThan(1);
-      if (busiest === undefined) throw new Error('the fixture detected nothing');
-
-      const off = await tuned((shell) => {
-        shell.debug?.controls?.apply(`detector.${busiest[0]}`, false);
-      });
-
-      expect(off.byKind[busiest[0]]).toBe(0);
-      // The other seven are untouched, which is what makes this a control rather than an off switch
-      // for the engine.
-      expect(off.detected).toBe(stock.detected - busiest[1]);
-      expect(off.detected).toBeGreaterThan(0);
-    });
-
-    it('turns unprompted speech off mid-flight, and the gate state says so', async () => {
-      const quiet = await tuned((shell) => {
-        shell.debug?.controls?.apply('coach.unprompted', false);
-      });
-
-      // The same switch the tray and `settings.json` reach, applied to a driver that is rebuilt on
-      // every match — which is why the shell holds it as state rather than re-reading the config.
-      expect(quiet.spoken).toBe(0);
-      expect(quiet.quiet).toBe(true);
-    });
-
-    it('will not let the window override the player, whatever it sends', async () => {
-      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
-      try {
-        const outcome = built.shell.debug?.controls?.apply('gate.muted', false);
-        expect(outcome?.ok).toBe(false);
-        expect(outcome?.reason).toContain('ADR-0028');
-      } finally {
-        await built.shell.stop();
-        rmSync(built.dataDir, { recursive: true, force: true });
-      }
-    });
-
-    it('switches the coach through the same call the tray row makes', async () => {
-      const built = build({ 'privacy.unprompted': true, 'debug.enabled': true });
-      try {
-        built.shell.debug?.controls?.apply('coach.mode', 'llm');
-
-        // `static`, because this harness has no API key and no model factory. The point is that the
-        // panel got the resolved answer rather than the one it asked for, and that the tray was
-        // re-rendered from it — a checkbox and a panel that disagree about which coach is running
-        // would be worse than either being wrong alone.
-        expect(built.shell.coachMode).toBe('static');
-        expect(built.tray.labels).toContain('LLM coach — needs RIKI_OPENAI_API_KEY');
-        expect(
-          built.shell.debug?.controls?.list().find((control) => control.id === 'coach.mode')?.value,
-        ).toBe('static');
-      } finally {
-        await built.shell.stop();
-        rmSync(built.dataDir, { recursive: true, force: true });
-      }
+      expect(rows.map((row) => row.id)).toEqual(['scenario.match', 'scenario.speak']);
+      // Between matches there is no session to speak into, and the panel says so rather than
+      // rendering a button that does nothing.
+      expect(rows.find((row) => row.id === 'scenario.speak')?.note).toContain('unavailable');
     });
   });
 });
@@ -837,133 +650,5 @@ describe('shutdown', () => {
 
     expect(current.window.destroyed).toBe(true);
     expect(current.timers.depth).toBe(0);
-  });
-});
-
-/**
- * The toggle, which is the whole of "the mode switch is a UI control".
- *
- * These build their own shell rather than using the shared harness, because the thing under test is
- * a *construction* choice — whether a model factory was supplied — and the harness deliberately
- * supplies none.
- */
-describe('the coach toggle', () => {
-  function shellWith(options: {
-    readonly coachModel?: ShellDeps['coachModel'];
-    readonly onCoachModeChanged?: (mode: CoachMode) => void;
-    readonly mode?: CoachMode;
-    /** Both halves are required for `llm` to be reachable; a test names the one it is about. */
-    readonly key?: boolean;
-  }): { shell: RikiShell; dataDir: string } {
-    const clock = testClock();
-    const timers = testTimers();
-    const dataDir = mkdtempSync(join(tmpdir(), 'riki-toggle-'));
-    const worldClock = { now: (): MonoMs => clock.now() as MonoMs };
-    const gsi = createFakeGsiSource({
-      lines: parseGsiFixture(readFileSync(FIXTURE, 'utf8')),
-      clock: worldClock,
-    });
-
-    const shell = createRikiShell({
-      config: resolveShellConfig({
-        dataDir,
-        gsiToken: 'test-token',
-        ...(options.key === true ? { apiKey: new ApiKey('sk-test-aaaa-bbbb-cccc-dddd') } : {}),
-        // The mode's one source is `settings.json` (ADR-0031), which in `@riki/config`'s terms is
-        // the layer beneath the environment. There is no environment variable and no flag for it,
-        // so a layer entry is how a test asks for it — the same way the app's own file does.
-        layer: {
-          'privacy.unprompted': true,
-          ...(options.mode === undefined ? {} : { 'coach.mode': options.mode }),
-        },
-      }),
-      clock,
-      timers,
-      platform: 'darwin',
-      sources: {
-        gsi: (): SourceRegistration => ({
-          policy: NO_RESTART,
-          source: {
-            id: gsi.id,
-            start: () => gsi.start(),
-            stop: () => gsi.stop(),
-            subscribe: (listener: (o: Observation) => void) => gsi.subscribe(listener),
-            health: (now): SourceHealth => gsi.health(now),
-          },
-        }),
-      },
-      windowFactory: fakeWindowFactory(createFakeWindow()),
-      tray: silentTray(),
-      keys: testKeys(),
-      session: createSilentSession({ clock: worldClock, timers }),
-      ...(options.coachModel === undefined ? {} : { coachModel: options.coachModel }),
-      ...(options.onCoachModeChanged === undefined
-        ? {}
-        : { onCoachModeChanged: options.onCoachModeChanged }),
-    });
-
-    return { shell, dataDir };
-  }
-
-  it('refuses the LLM coach with a model factory but no key', () => {
-    const { shell, dataDir } = shellWith({ coachModel: () => createFakeCoachModel() });
-    // Both halves are needed. Asking for `llm` must come back `static`: a toggle that ticked anyway
-    // would leave a match running in a mode that says nothing all game, with the UI claiming
-    // otherwise.
-    expect(shell.setCoachMode('llm')).toBe('static');
-    expect(shell.coachMode).toBe('static');
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('switches to the LLM coach when one can be built, and announces it for persistence', () => {
-    const changes: CoachMode[] = [];
-    const { shell, dataDir } = shellWith({
-      key: true,
-      coachModel: () => createFakeCoachModel(),
-      onCoachModeChanged: (mode) => changes.push(mode),
-    });
-
-    expect(shell.setCoachMode('llm')).toBe('llm');
-    expect(shell.coachMode).toBe('llm');
-    expect(changes).toEqual(['llm']);
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('announces nothing when the mode did not actually change', () => {
-    const changes: CoachMode[] = [];
-    const { shell, dataDir } = shellWith({
-      key: true,
-      coachModel: () => createFakeCoachModel(),
-      onCoachModeChanged: (mode) => changes.push(mode),
-    });
-
-    expect(shell.setCoachMode('static')).toBe('static');
-    // Already static. Writing `settings.json` on every no-op click would be a file write per tray
-    // open, and a changed-at timestamp that means nothing.
-    expect(changes).toEqual([]);
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('announces the resolved mode, not the requested one', () => {
-    const changes: CoachMode[] = [];
-    const { shell, dataDir } = shellWith({ onCoachModeChanged: (mode) => changes.push(mode) });
-
-    // Asking for `llm` with nothing to build it resolves to `static`, which is already the mode —
-    // so there is no change and nothing is persisted. A settings file saying `llm` here would send
-    // the player back into the same dead end on every restart.
-    expect(shell.setCoachMode('llm')).toBe('static');
-    expect(changes).toEqual([]);
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('starts in the mode the settings file asked for', () => {
-    const { shell, dataDir } = shellWith({
-      mode: 'llm',
-      key: true,
-      coachModel: () => createFakeCoachModel(),
-    });
-
-    expect(shell.coachMode).toBe('llm');
-    rmSync(dataDir, { recursive: true, force: true });
   });
 });

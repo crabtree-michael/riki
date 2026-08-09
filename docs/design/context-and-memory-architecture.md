@@ -1,5 +1,21 @@
 # Context & Memory — Module & Class Architecture
 
+> ## ⚠ Partly superseded
+>
+> **[ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09**
+> deleted three of the four things this document specifies. Tier 1 (the session preamble, §4), the
+> conversation ledger and the coaching memory (§6), and the retention policy (§7) are all gone, with
+> the coach that needed them. `createContextAssembler` is gone with them.
+>
+> **§5 is current and is the whole of what `packages/context` now is**: the per-turn snapshot
+> renderer, its section ladder, and the rendering primitives of §5.1 that every future rendering of
+> an `Observed<T>` must go through. Two things inside §5 also went — cause-driven promotion, whose
+> causes were trigger events, and the `recent:` line, whose event tape came from `packages/events`.
+> §3's vocabulary and §11's transitional notes still hold.
+>
+> The window arithmetic in §7.1 is not deleted so much as unmeasured again: a turn now costs a
+> snapshot and a question rather than a snapshot, a brief and an utterance.
+
 **Status:** Implemented, except §16 step 7. `packages/context` holds Tier 1, Tier 2, Tier 3 and the
 memory layer, with `createContextAssembler()` (§9.4) as the runtime surface and the golden corpus in
 `fixtures/golden/snapshot/`. What has not landed is the `ContextWindowPort` adapter and the session

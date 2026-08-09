@@ -1,5 +1,5 @@
 /**
- * The ten section sources, in output order.
+ * The nine section sources, in output order.
  *
  * Adding a line to the snapshot is one file here, one entry in `../ladder.ts`, and one golden diff
  * (§14). The ladder entry is the part not to skip: a section with no declared priority truncates in
@@ -16,7 +16,6 @@ import { seen } from './seen.js';
 import { unseen } from './unseen.js';
 import { derived } from './derived.js';
 import { map } from './map.js';
-import { recent } from './recent.js';
 
 export const ALL_SECTIONS: readonly SectionSource[] = [
   header,
@@ -28,20 +27,7 @@ export const ALL_SECTIONS: readonly SectionSource[] = [
   unseen,
   derived,
   map,
-  recent,
 ];
 
-export {
-  header,
-  selfEconomy,
-  selfAbilities,
-  selfItems,
-  enemies,
-  seen,
-  unseen,
-  derived,
-  map,
-  recent,
-};
+export { header, selfEconomy, selfAbilities, selfItems, enemies, seen, unseen, derived, map };
 export { UNSEEN_AFTER_SECONDS } from './seen.js';
-export { MAX_TAPE_EVENTS } from './recent.js';

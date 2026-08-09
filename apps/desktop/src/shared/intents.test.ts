@@ -60,17 +60,14 @@ describe('parseDebugIntent — what the inspector is allowed to say', () => {
       kind: 'fault',
       message: 'boom',
     });
-    expect(parseDebugIntent({ kind: 'reset-controls' })).toEqual({ kind: 'reset-controls' });
-    for (const value of [0.05, true, 'llm']) {
-      expect(parseDebugIntent({ kind: 'control', id: 'x', value })).toEqual({
-        kind: 'control',
-        id: 'x',
-        value,
-      });
-    }
+    expect(parseDebugIntent({ kind: 'clear-trace' })).toEqual({ kind: 'clear-trace' });
+    expect(parseDebugIntent({ kind: 'action', id: 'scenario.speak' })).toEqual({
+      kind: 'action',
+      id: 'scenario.speak',
+    });
   });
 
-  it('cannot reach anything outside the control registry', () => {
+  it('cannot reach anything outside the action registry', () => {
     for (const payload of [
       null,
       undefined,
@@ -78,41 +75,38 @@ describe('parseDebugIntent — what the inspector is allowed to say', () => {
       'ready',
       [],
       {},
-      // The window can move a registered setting (ADR-0037) and nothing else. None of these is a
+      // The window can start a registered scenario (ADR-0039) and nothing else. None of these is a
       // thing the inspector may say: `cancel` belongs to the overlay's machine, and the rest would
-      // be the window driving the app rather than configuring it.
+      // be the window driving the app rather than asking it to run something.
       { kind: 'cancel' },
       { kind: 'evaluate' },
       { kind: 'speak', text: 'gank mid' },
       { kind: 'dispatch', input: { kind: 'mute', muted: true } },
       { kind: 'paint', revision: 1 },
       { kind: 'fault', message: 42 },
-      // Shaped wrong for a control: no id, an empty id, a value of a kind no control has, and the
-      // two non-numbers that would reach a threshold comparison as neither above nor below it.
-      { kind: 'control', value: 1 },
-      { kind: 'control', id: '', value: 1 },
-      { kind: 'control', id: 'x' },
-      { kind: 'control', id: 'x', value: { nested: true } },
-      { kind: 'control', id: 'x', value: Number.NaN },
-      { kind: 'control', id: 'x', value: Number.POSITIVE_INFINITY },
+      // ADR-0037's settings and ADR-0038's rehearsal both went with the trigger engine (ADR-0042).
+      // Listed here rather than deleted: a renderer built before that change must not be able to
+      // move anything by speaking a verb this build no longer implements.
+      { kind: 'control', id: 'trigger.speakThreshold', value: 0.05 },
+      { kind: 'reset-controls' },
+      { kind: 'rehearse', stateId: 'mid-game' },
+      // Shaped wrong for an action: no id, and an empty one.
+      { kind: 'action' },
+      { kind: 'action', id: '' },
     ]) {
       expect(parseDebugIntent(payload)).toBeNull();
     }
   });
 
-  it('bounds a control id and an enum value, and keeps nothing else', () => {
+  it('bounds an action id, and keeps nothing else', () => {
     const parsed = parseDebugIntent({
-      kind: 'control',
+      kind: 'action',
       id: 'i'.repeat(500),
-      value: 'v'.repeat(500),
       extra: 'payload',
     });
 
-    expect(Object.keys(parsed ?? {})).toEqual(['kind', 'id', 'value']);
-    if (parsed?.kind === 'control') {
-      expect(parsed.id.length).toBe(64);
-      expect(String(parsed.value).length).toBe(64);
-    }
+    expect(Object.keys(parsed ?? {})).toEqual(['kind', 'id']);
+    if (parsed?.kind === 'action') expect(parsed.id.length).toBe(64);
   });
 
   it('rebuilds the intent and caps the fault message, like the overlay bridge', () => {

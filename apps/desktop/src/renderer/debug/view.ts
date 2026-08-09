@@ -8,96 +8,35 @@
  *
  * ## Three rules the whole file follows
  *
- * **`textContent`, never `innerHTML`.** Everything on this screen came from a Dota client, a
- * detector's phrasing, or a rendered brief — none of it is ours, and the document's CSP would stop
- * a script running but not a layout being wrecked by a stray angle bracket in a hero name.
+ * **`textContent`, never `innerHTML`.** Everything on this screen came from a Dota client or a
+ * rendered snapshot — none of it is ours, and the document's CSP would stop a script running but
+ * not a layout being wrecked by a stray angle bracket in a hero name.
  *
  * **Nothing is inferred.** Where the frame says a value is null, the panel says so rather than
  * showing a plausible zero: "never observed" and "observed to be zero" are different claims, and
  * `packages/world-model` goes to some trouble to keep them apart. Undoing that in the one view
  * built to inspect it would be the worst place to undo it.
  *
- * **Anything repeated carries a `data-ins-key`.** A tick, a turn, a fact, a row — each is stamped
+ * **Anything repeated carries a `data-ins-key`.** A turn, a fact, a trace step — each is stamped
  * with an identity that survives the next frame, which is the whole of what `scroll.ts` needs to
  * put the reader back where they were after the document is rebuilt underneath them. The key is
  * derived from the frame (a `seq`, a `turnId`, a fact path), never from render order, because
- * render order is exactly what a new tick changes.
+ * render order is exactly what a new frame changes.
+ *
+ * ⚠ **Mid-migration.** The Triggers, Gate state, Counters, Controls and Rehearsal panels are gone
+ * with the trigger engine they rendered (ADR-0042). Their replacement is a per-turn tool trace,
+ * which is T9 of the conversational migration.
  */
 
 import type {
   DebugAction,
-  DebugCandidate,
-  DebugControl,
-  DebugControlValue,
   DebugCount,
   DebugFrame,
-  DebugGateState,
-  DebugMockState,
   DebugProblem,
-  DebugTick,
   DebugTraceStep,
   DebugTurn,
   DebugWorld,
 } from '../../shared/debug.js';
-
-export interface ViewOptions {
-  /**
-   * Hide ticks whose every candidate was refused by gate 1.
-   *
-   * On by default, and it is the difference between a usable panel and a wall. `not_in_match`
-   * covers the draft, the post-game screen, and every Turbo or Ability Draft game — during which
-   * the detectors keep producing candidates on every version bump and the ladder refuses all of
-   * them at the first question. Those ticks are correct and there are thousands of them.
-   */
-  readonly hideNotInMatch: boolean;
-  /**
-   * Which Controls groups are expanded.
-   *
-   * Sixty-odd settings is a scrollable column on its own, and all but two groups are things you go
-   * looking for rather than watch. Which are open is view state and lives in `app.ts` for the same
-   * reason `frozen` does: the document is rebuilt whole on every frame, so anything the DOM would
-   * normally remember has to be held outside it.
-   */
-  readonly openGroups: readonly string[];
-  /**
-   * Which mock game state a rehearsal would run against, or null to mean *the first one offered*.
-   *
-   * Null rather than an eager copy of `mocks[0].id`, because the library is a directory read four
-   * times a second: a default resolved here would be a guess about a list this file has not been
-   * handed yet, and one resolved once at mount would be wrong the moment somebody drops a fixture
-   * in. `renderRehearsal` resolves it against the list in the frame it is rendering.
-   */
-  readonly selectedMock: string | null;
-  /** Whether the mock-state dropdown is expanded. View state, for the reason `openGroups` is. */
-  readonly mockOpen: boolean;
-}
-
-export const DEFAULT_VIEW_OPTIONS: ViewOptions = {
-  hideNotInMatch: true,
-  openGroups: ['Coach', 'Thresholds'],
-  selectedMock: null,
-  mockOpen: false,
-};
-
-/**
- * The order the Controls groups are drawn in, which is roughly how often they are wanted.
- *
- * A group the registry adds and this list does not name still renders — sorted after these, by
- * name. A hard-coded list that silently dropped a group would defeat the point of making the
- * registry self-describing.
- */
-const GROUP_ORDER: readonly string[] = [
-  'Coach',
-  'Thresholds',
-  'Cooldowns',
-  'Gates',
-  'Detectors',
-  'Kind weights',
-  'Kind cooldowns',
-  'Detector thresholds',
-  'Intensity',
-  'Reference data',
-];
 
 // -----------------------------------------------------------------------------------------------
 // Element helpers
@@ -194,34 +133,24 @@ function plural(count: number, noun: string): string {
 
 export function renderHeader(frame: DebugFrame): HTMLElement {
   const head = el('header', 'ins-header');
-  const { session, world, counters } = frame;
+  const { session, world } = frame;
 
   head.append(
     stat('match', session.matchId ?? 'none'),
     stat('clock', formatClock(world.clock)),
     stat('version', `${String(world.version)} @ ${world.versionsPerSecond.toFixed(1)}/s`),
     stat('chip', session.chipPhase),
-    // Before the counters, because it says what the counters *can* contain: under `llm` there is no
-    // gate ladder and no `packages/events`, so a Triggers panel of bare decisions and an empty
-    // Counters panel are correct rather than broken.
-    stat('coach', session.coachMode),
     stat('health', `${session.health.level} · ${session.health.summary}`),
-    stat('triggers', `${String(counters.spoken)} spoken / ${plural(counters.ticks, 'tick')}`),
+    stat('turns', plural(frame.turns.length, 'turn')),
   );
 
-  // The disagreement worth surfacing at the top: a live match with no coaching root means
+  // The disagreement worth surfacing at the top: a live match with no session means
   // `match_started` reached the state subsystem and never reached the shell, and every panel below
   // would look plausibly empty.
-  if (session.matchId !== null && !session.coachingRoot) {
-    head.append(pill('no coaching root', 'bad'));
+  if (session.matchId !== null && !session.matchSession) {
+    head.append(pill('no session', 'bad'));
   }
 
-  // At the top, in the loudest tone the stylesheet has, because everything below it is then a
-  // reading of a tuned app rather than of the shipped one. The realistic failure this window
-  // introduced is somebody moving `speakThreshold` to 0.05, forgetting, and reporting that Riki
-  // will not stop talking.
-  const overridden = frame.controls.filter((control) => control.overridden).length;
-  if (overridden > 0) head.append(pill(plural(overridden, 'override'), 'bad'));
   if (world.paused) head.append(pill('paused', 'on'));
   if (session.muted) head.append(pill('muted', 'on'));
   if (session.chipVisible) head.append(pill('chip visible', 'off'));
@@ -230,390 +159,8 @@ export function renderHeader(frame: DebugFrame): HTMLElement {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Controls — the one panel that writes (ADR-0037)
+// Rows
 // -----------------------------------------------------------------------------------------------
-
-/**
- * Every element that does something carries `data-control`, and nothing here has a listener.
- *
- * The panel is the only interactive surface in a document that is rebuilt whole four times a
- * second, so per-node listeners would be attached and thrown away at 4 Hz for as long as the window
- * is open. `app.ts` puts one delegated listener on the root instead and reads these attributes,
- * which also keeps this file what its header says it is: pure, total, and testable by asserting on
- * a returned element rather than by driving a bridge.
- *
- * `data-focus` is the other half. A click inside a panel that is about to be replaced loses the
- * focus ring, and a keyboard user tabbing to `speakThreshold`'s `+` would be returned to the top of
- * the document 250 ms later. `app.ts` reads the key back after every draw and restores it.
- */
-function action(
-  control: DebugControl,
-  value: DebugControlValue,
-  text: string,
-  className: string,
-  focusSuffix: string,
-): HTMLElement {
-  const button = el('button', className, text);
-  button.setAttribute('type', 'button');
-  button.dataset.control = control.id;
-  button.dataset.kind = control.kind;
-  button.dataset.value = String(value);
-  button.dataset.focus = `${control.id}:${focusSuffix}`;
-  return button;
-}
-
-/** Integers plainly; everything else to three decimals with the trailing zeros taken off. */
-export function formatControlNumber(value: number): string {
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-}
-
-export function formatControlValue(value: DebugControlValue, unit: string | null): string {
-  if (typeof value === 'boolean') return value ? 'on' : 'off';
-  const text = typeof value === 'number' ? formatControlNumber(value) : value;
-  return unit === null ? text : `${text} ${unit}`;
-}
-
-function controlWidget(control: DebugControl): HTMLElement {
-  const wrap = el('span', 'ins-value ins-control-value');
-
-  // Locked controls are rendered, not hidden. "Why can I not turn off the muted gate" is a question
-  // the window should answer where it is asked; a control that is simply absent invites somebody to
-  // add it, which is the outcome `LOCKED_GATES` exists to prevent.
-  if (control.locked !== null) {
-    wrap.append(el('span', 'ins-control-locked', formatControlValue(control.value, control.unit)));
-    wrap.append(pill('locked', 'off'));
-    return wrap;
-  }
-
-  if (control.kind === 'boolean') {
-    const on = control.value === true;
-    const button = action(
-      control,
-      !on,
-      on ? 'on' : 'off',
-      `ins-switch ins-switch--${on ? 'on' : 'off'}`,
-      'toggle',
-    );
-    button.setAttribute('role', 'switch');
-    button.setAttribute('aria-checked', String(on));
-    wrap.append(button);
-    return wrap;
-  }
-
-  if (control.kind === 'enum') {
-    for (const option of control.options) {
-      const chosen = option === control.value;
-      const button = action(
-        control,
-        option,
-        option,
-        chosen ? 'ins-choice ins-choice--on' : 'ins-choice',
-        option,
-      );
-      button.setAttribute('aria-pressed', String(chosen));
-      wrap.append(button);
-    }
-    return wrap;
-  }
-
-  // A stepper rather than a text field, and that is a consequence of the redraw rather than a
-  // preference: an `<input>` being typed into would have its value replaced four times a second.
-  // A click is atomic, so it cannot be interrupted by a frame.
-  const value = typeof control.value === 'number' ? control.value : 0;
-  const step = control.step ?? 1;
-  const min = control.min;
-  const max = control.max;
-
-  const down = action(control, value - step, '−', 'ins-step', 'down');
-  down.setAttribute('aria-label', `${control.label} down`);
-  if (min !== null && value <= min) down.setAttribute('disabled', '');
-
-  const up = action(control, value + step, '+', 'ins-step', 'up');
-  up.setAttribute('aria-label', `${control.label} up`);
-  if (max !== null && value >= max) up.setAttribute('disabled', '');
-
-  wrap.append(down, el('span', 'ins-control-number', formatControlValue(value, control.unit)), up);
-  return wrap;
-}
-
-function renderControlRow(control: DebugControl, noteShownAbove: boolean): HTMLElement {
-  const row = el('div', control.overridden ? 'ins-control ins-control--set' : 'ins-control');
-
-  const label = el('span', 'ins-key', control.label);
-  row.append(label, controlWidget(control));
-
-  const meta = el('span', 'ins-meta');
-  meta.textContent = [
-    // Only when it differs, and always as "config": the value the app would use on its own is the
-    // thing a reading has to be interpreted against, and it is what Reset restores.
-    control.overridden ? `config ${formatControlValue(control.base, control.unit)}` : '',
-    control.locked ?? (noteShownAbove ? '' : (control.note ?? '')),
-  ]
-    .filter((part) => part !== '')
-    .join(' · ');
-  // Clipped to one line by the stylesheet — sixty four-line rows is a panel nobody reads to the
-  // bottom of — so the full text goes on the row as a tooltip rather than being lost.
-  if (meta.textContent !== '') row.setAttribute('title', meta.textContent);
-  row.append(meta);
-
-  if (control.overridden) {
-    const undo = action(control, control.base, '↺', 'ins-step ins-step--undo', 'reset');
-    undo.setAttribute('aria-label', `reset ${control.label}`);
-    row.append(undo);
-  }
-
-  return keyed(row, `control:${control.id}`);
-}
-
-/**
- * The note every member of a group shares, or null when they do not share one.
- *
- * The thirteen gates all carry the same sentence — *off means the gate is still evaluated and
- * displayed, and no longer refuses* — because it is a property of the control kind rather than of
- * any one gate, and thirteen copies of it is a wall. Shown once under the group header instead.
- */
-function sharedNote(members: readonly DebugControl[]): string | null {
-  const first = members[0]?.note ?? null;
-  if (first === null || members.length < 2) return null;
-  return members.every((control) => control.note === first) ? first : null;
-}
-
-/** Named groups first in `GROUP_ORDER`, then anything the registry added, alphabetically. */
-function orderGroups(names: Iterable<string>): readonly string[] {
-  return [...names].sort((a, b) => {
-    const left = GROUP_ORDER.indexOf(a);
-    const right = GROUP_ORDER.indexOf(b);
-    if (left === right) return a < b ? -1 : a > b ? 1 : 0;
-    if (left === -1) return 1;
-    if (right === -1) return -1;
-    return left - right;
-  });
-}
-
-export function renderControls(
-  controls: readonly DebugControl[],
-  options: ViewOptions,
-): HTMLElement {
-  const body = el('div');
-
-  if (controls.length === 0) {
-    // The shape a headless replay runs in: frames are collected, and there is no control port
-    // behind them. Saying so is the difference between that and a panel that failed to render.
-    body.append(empty('this inspector can display but not change — no control port is wired'));
-    return panel('Controls', null, body);
-  }
-
-  const groups = new Map<string, DebugControl[]>();
-  for (const control of controls) {
-    const bucket = groups.get(control.group);
-    if (bucket === undefined) groups.set(control.group, [control]);
-    else bucket.push(control);
-  }
-
-  for (const name of orderGroups(groups.keys())) {
-    const members = groups.get(name) ?? [];
-    const open = options.openGroups.includes(name);
-    const changed = members.filter((control) => control.overridden).length;
-
-    const header = el('button', 'ins-group', `${open ? '▾' : '▸'} ${name}`);
-    header.setAttribute('type', 'button');
-    header.setAttribute('aria-expanded', String(open));
-    header.dataset.group = name;
-    header.dataset.focus = `group:${name}`;
-    if (changed > 0) header.append(pill(String(changed), 'bad'));
-    // Keyed for `scroll.ts` as well as for focus: expanding a group inserts rows above everything
-    // below it, which is the prepend case the anchor exists for.
-    body.append(keyed(header, `group:${name}`));
-
-    if (!open) continue;
-
-    const shared = sharedNote(members);
-    if (shared !== null) body.append(el('div', 'ins-group-note', shared));
-    for (const control of members) body.append(renderControlRow(control, shared !== null));
-  }
-
-  const overridden = controls.filter((control) => control.overridden).length;
-
-  const reset = el('button', 'ins-button', 'Reset all');
-  reset.setAttribute('type', 'button');
-  reset.dataset.reset = 'all';
-  reset.dataset.focus = 'reset:all';
-  if (overridden === 0) reset.setAttribute('disabled', '');
-  body.append(reset);
-
-  // The two facts somebody reading this panel three hours into a session needs: how far it is from
-  // the config, and that none of it will still be there tomorrow.
-  const note =
-    overridden === 0
-      ? 'session only — nothing here is written to settings.json'
-      : `${plural(overridden, 'override')} · session only, except the coach`;
-
-  return panel('Controls', note, body);
-}
-
-// -----------------------------------------------------------------------------------------------
-// Rehearsal — the one panel that *acts* (ADR-0038)
-// -----------------------------------------------------------------------------------------------
-
-/**
- * Which state a rehearsal would run against: the reader's choice, or the first one offered.
- *
- * Exported because `app.ts` needs the same answer this panel drew — a selection that resolved to a
- * default here and to `null` there would be a button whose label and effect disagreed. It reads it
- * off the button's `data-rehearse` instead, and this is the function that puts it there.
- */
-export function selectedMockOf(
-  mocks: readonly DebugMockState[],
-  options: ViewOptions,
-): DebugMockState | null {
-  const chosen = mocks.find((mock) => mock.id === options.selectedMock);
-  // Falling back rather than holding a selection that is no longer on offer: the library is re-read
-  // every frame, so a fixture can be renamed or deleted while the window is open, and a dropdown
-  // still naming it would rehearse nothing and say only that it could not find it.
-  return chosen ?? mocks[0] ?? null;
-}
-
-/**
- * Pick a game state, run one coach turn against it, read the answer in Coach turns.
- *
- * **Why this is a disclosure and not a `<select>`.** The document is rebuilt four times a second, so
- * a native dropdown would be destroyed while its list was open — the same fact that makes every
- * control on this screen a button (ADR-0037). A `<select>` also carries a popup this renderer cannot
- * see or restore. So the list is buttons and its expansion is view state in `app.ts`, which is the
- * one shape that survives a redraw and the one the Controls groups already use.
- *
- * The panel is deliberately first in the column. It is the only thing here that *does* something,
- * and the turn it produces lands two columns over — so having to scroll past sixty settings to
- * reach the button would be the whole feature's cost paid on every use.
- */
-export function renderRehearsal(
-  mocks: readonly DebugMockState[],
-  options: ViewOptions,
-): HTMLElement {
-  const body = el('div');
-
-  if (mocks.length === 0) {
-    // Said as an instruction rather than an absence: an empty `fixtures/gsi/` and a packaged build
-    // with no fixtures at all are the same picture, and one of them is fixed by adding a file.
-    body.append(
-      empty('no mock game states — add a .jsonl to fixtures/gsi/ and it appears here, no restart'),
-    );
-    return panel('Rehearsal', null, body);
-  }
-
-  const selected = selectedMockOf(mocks, options);
-
-  const selectedLabel = selected === null ? 'none' : selected.label;
-  const toggle = el('button', 'ins-group', `${options.mockOpen ? '▾' : '▸'} ${selectedLabel}`);
-  toggle.setAttribute('type', 'button');
-  toggle.setAttribute('aria-expanded', String(options.mockOpen));
-  toggle.setAttribute('aria-label', `game state: ${selectedLabel}`);
-  toggle.dataset.mockToggle = 'toggle';
-  toggle.dataset.focus = 'mock:toggle';
-  if (selected !== null) toggle.append(pill(plural(selected.observations, 'observation'), 'off'));
-  body.append(keyed(toggle, 'mock:toggle'));
-
-  if (options.mockOpen) {
-    for (const mock of mocks) {
-      const chosen = mock.id === selected?.id;
-      const row = el('div', 'ins-mock-option');
-
-      const option = el('button', chosen ? 'ins-choice ins-choice--on' : 'ins-choice', mock.label);
-      option.setAttribute('type', 'button');
-      option.setAttribute('aria-pressed', String(chosen));
-      option.dataset.mock = mock.id;
-      option.dataset.focus = `mock:${mock.id}`;
-      row.append(option, el('span', 'ins-meta', plural(mock.observations, 'observation')));
-
-      // The recording's own header, which is where `fixtures/gsi/` says whether somebody captured
-      // the state or made it up — the one fact worth having beside a scenario name when you are
-      // deciding what a rehearsal against it proves. On the row, clipped to one line, for the
-      // reason a control's note is: a column this narrow turns every sentence into four lines.
-      if (mock.note !== null) row.setAttribute('title', mock.note);
-
-      body.append(keyed(row, `mock:${mock.id}`));
-    }
-  }
-
-  const run = el('button', 'ins-button ins-button--go', 'Rehearse a coach turn');
-  run.setAttribute('type', 'button');
-  run.dataset.focus = 'rehearse';
-  if (selected === null) run.setAttribute('disabled', '');
-  else run.dataset.rehearse = selected.id;
-
-  const runRow = el('div', 'ins-mock-run');
-  runRow.append(run);
-  body.append(keyed(runRow, 'mock:run'));
-
-  // What the button does and, more usefully, what it cannot do. A window that can make the app act
-  // has to say where the effect goes and where it stops.
-  const note =
-    'one turn, against a scratch world — nothing is spoken and the live match is untouched';
-
-  return panel('Rehearsal', note, body);
-}
-
-// -----------------------------------------------------------------------------------------------
-// Switches
-// -----------------------------------------------------------------------------------------------
-
-export function renderGates(gates: DebugGateState, now: number): HTMLElement {
-  const body = el('div');
-
-  const row = el('div', 'ins-row');
-  const flags = el('div', 'ins-value');
-  flags.append(
-    pill('quiet mode', gates.quietMode ? 'on' : 'off'),
-    pill('agent speaking', gates.agentSpeaking ? 'on' : 'off'),
-    pill('player speaking', gates.playerSpeaking ? 'on' : 'off'),
-    pill(
-      gates.mutedUntilMs === null
-        ? 'not muted'
-        : `muted ${formatAge(Math.max(0, gates.mutedUntilMs - now))}`,
-      gates.mutedUntilMs !== null && gates.mutedUntilMs > now ? 'on' : 'off',
-    ),
-    pill(gates.unprompted ? 'unprompted on' : 'unprompted off', gates.unprompted ? 'good' : 'on'),
-  );
-  row.append(el('span', 'ins-key', 'switches'), flags, el('span', 'ins-meta', ''));
-  body.append(keyed(row, 'row:switches'));
-
-  body.append(
-    plainRow(
-      'intensity',
-      `${formatScore(gates.intensity)} / ${formatScore(gates.intensityThreshold)}`,
-      gates.intensity >= gates.intensityThreshold ? 'refuses high_intensity' : '',
-    ),
-    plainRow('speak threshold', formatScore(gates.speakThreshold), ''),
-    plainRow(
-      'global cooldown',
-      gates.lastSpokeAtMs === null
-        ? 'never spoken'
-        : `${formatAge(Math.max(0, gates.globalCooldownMs - (now - gates.lastSpokeAtMs)))} left`,
-      gates.lastSpokeAtMs === null ? '' : `last ${formatAge(now - gates.lastSpokeAtMs)} ago`,
-    ),
-    plainRow('latched', gates.latched.length === 0 ? 'none' : gates.latched.join(', '), ''),
-    plainRow(
-      'kind cooldowns',
-      gates.kindCooldowns.length === 0
-        ? 'none running'
-        : gates.kindCooldowns
-            .map((cooldown) => `${cooldown.kind} ${formatAge(cooldown.remainingMs)}`)
-            .join(', '),
-      '',
-    ),
-  );
-
-  // Said rather than implied. These numbers come off the last `GateContext`, which is assembled on
-  // a world-model version bump — so between bumps they are a still frame, and a cooldown that reads
-  // "2.1s left" has stopped counting down.
-  const note =
-    gates.asOfMs === null
-      ? 'no tick yet — the engine has not run'
-      : `as of the last tick, ${formatAge(now - gates.asOfMs)} ago`;
-
-  return panel('Gate state', note, body);
-}
 
 function plainRow(key: string, value: string, meta: string): HTMLElement {
   const row = el('div', 'ins-row');
@@ -705,125 +252,7 @@ export function renderDerived(world: DebugWorld): HTMLElement {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Ticks — the gate ladder
-// -----------------------------------------------------------------------------------------------
-
-/** True when every candidate in the tick died at gate 1. See `ViewOptions.hideNotInMatch`. */
-export function isNotInMatchTick(tick: DebugTick): boolean {
-  return (
-    tick.candidates.length > 0 &&
-    tick.candidates.every((candidate) =>
-      candidate.ladder.some((gate) => gate.reason === 'not_in_match' && gate.refuses),
-    )
-  );
-}
-
-export function renderTicks(frame: DebugFrame, options: ViewOptions): HTMLElement {
-  const shown = options.hideNotInMatch
-    ? frame.ticks.filter((tick) => !isNotInMatchTick(tick))
-    : frame.ticks;
-
-  const body = el('div');
-  if (shown.length === 0) {
-    body.append(
-      empty(
-        frame.counters.ticks === 0
-          ? 'the engine has not ticked — no match, or no world-model versions'
-          : `${String(frame.counters.ticks)} ticks, none with a candidate past gate 1`,
-      ),
-    );
-  } else {
-    // Newest first here, unlike the buffer: the question is always about what just happened.
-    for (const tick of [...shown].reverse()) body.append(renderTick(tick));
-  }
-
-  const hidden = frame.ticks.length - shown.length;
-  return panel(
-    'Triggers',
-    hidden > 0 ? `${plural(hidden, 'not_in_match tick')} hidden` : null,
-    body,
-  );
-}
-
-function renderTick(tick: DebugTick): HTMLElement {
-  const wrap = el('div', tick.decision.speak ? 'ins-tick ins-tick--spoke' : 'ins-tick');
-
-  const head = el('div', 'ins-tick-head');
-  head.append(
-    el('span', undefined, `#${String(tick.seq)}`),
-    el('span', undefined, formatClock(tick.clock)),
-    el('span', 'ins-meta', `v${String(tick.worldVersion)}`),
-    tick.decision.speak
-      ? pill(`spoke: ${tick.decision.key}`, 'good')
-      : // `key === null` is the LLM coach declining, and its reason is a sentence worth reading on
-        // its own. The deterministic coach's "nothing was detected" tick never reaches this buffer
-        // — `hub.recordTick` drops a tick with no candidates — so there is no third case here.
-        pill(
-          tick.decision.key === null ? tick.decision.reason : `refused: ${tick.decision.reason}`,
-          'bad',
-        ),
-  );
-  wrap.append(head);
-
-  // Empty under the LLM coach, where the decision in the head above is the whole of what that coach
-  // has to say about a moment — no detectors, no salience, no ladder to grid.
-  for (const candidate of tick.candidates) wrap.append(renderCandidate(candidate));
-  // `seq` is the hub's own counter and never repeats within a session, which is what lets a reader
-  // stay on one tick while several more are prepended above it.
-  return keyed(wrap, `tick:${String(tick.seq)}`);
-}
-
-function renderCandidate(candidate: DebugCandidate): HTMLElement {
-  const wrap = el(
-    'div',
-    candidate.rank === 'winner' ? 'ins-candidate ins-candidate--winner' : 'ins-candidate',
-  );
-
-  const head = el('div', 'ins-candidate-head');
-  head.append(
-    el('span', undefined, candidate.key),
-    el('span', 'ins-meta', `salience ${formatScore(candidate.salience)}`),
-    el(
-      'span',
-      'ins-meta',
-      `mag ${formatScore(candidate.magnitude)} · conf ${formatScore(candidate.confidence)}`,
-    ),
-    el(
-      'span',
-      'ins-meta',
-      candidate.actWithinSeconds === null
-        ? 'no deadline'
-        : `act within ${String(candidate.actWithinSeconds)}s`,
-    ),
-  );
-  if (candidate.rank === 'winner') head.append(pill('winner', 'off'));
-  if (candidate.taped) head.append(pill('taped', 'off'));
-  wrap.append(head, el('div', 'ins-candidate-text', candidate.text));
-
-  // The ladder in full, including the gates that passed. The first refusal is the one that decided
-  // it and is styled as such; later refusals are shadowed, because "would also have refused" is a
-  // different fact from "refused" and tuning the first one is wasted if the second is still there.
-  const ladder = el('div', 'ins-ladder');
-  let decided = false;
-  for (const gate of candidate.ladder) {
-    let tone: string;
-    if (!gate.refuses) {
-      tone = 'pass';
-    } else if (decided) {
-      tone = 'shadowed';
-    } else {
-      tone = 'refuse';
-      decided = true;
-    }
-    ladder.append(el('span', `ins-gate ins-gate--${tone}`, gate.reason));
-  }
-  wrap.append(ladder);
-
-  return wrap;
-}
-
-// -----------------------------------------------------------------------------------------------
-// Turns — what the coach was given and what it said
+// Turns — what the model was given and what it said
 // -----------------------------------------------------------------------------------------------
 
 export function renderTurns(frame: DebugFrame): HTMLElement {
@@ -833,7 +262,7 @@ export function renderTurns(frame: DebugFrame): HTMLElement {
   } else {
     for (const turn of [...frame.turns].reverse()) body.append(renderTurn(turn));
   }
-  return panel('Coach turns', null, body);
+  return panel('Turns', null, body);
 }
 
 function renderTurn(turn: DebugTurn): HTMLElement {
@@ -843,57 +272,24 @@ function renderTurn(turn: DebugTurn): HTMLElement {
   head.append(
     el('span', undefined, turn.turnId),
     el('span', 'ins-meta', formatClock(turn.clock)),
-    pill(
-      turn.eventId === null ? turn.cause : `${turn.cause}: ${turn.eventId}`,
-      turn.cause === 'trigger' ? 'off' : 'good',
-    ),
+    // `system` is the inspector's own `scenario.speak`; `player` is a key press. Distinguishing
+    // them is load-bearing: a button press rendered as a question would make the one window built
+    // to be believed lie about who asked.
+    pill(turn.cause, turn.cause === 'player' ? 'good' : 'on'),
     pill(turn.outcome, turn.outcome === 'spoke' ? 'good' : turn.outcome === 'open' ? 'off' : 'on'),
-  );
-  if (turn.mockState !== null) {
-    // The load-bearing pill on this screen. A rehearsed turn renders exactly like a real one and
-    // lands in the same buffer, so without this the panel would offer a fabricated moment and a
-    // played one as the same claim — which is the one thing this window must never do (ADR-0038).
-    head.append(pill(`mock: ${turn.mockState}`, 'on'));
-  }
-  if (turn.salience !== null) {
-    head.append(el('span', 'ins-meta', `salience ${formatScore(turn.salience)}`));
-  }
-  head.append(
-    el('span', 'ins-meta', `${String(turn.snapshotTokens)} + ${String(turn.briefTokens)} tokens`),
+    el('span', 'ins-meta', `${String(turn.snapshotTokens)} tokens`),
   );
   wrap.append(head);
 
-  wrap.append(el('div', 'ins-text-label', 'snapshot'), el('pre', 'ins-text', turn.snapshotText));
+  wrap.append(
+    el(
+      'div',
+      'ins-text-label',
+      `snapshot${turn.snapshotOmitted.length > 0 ? ` · omitted: ${turn.snapshotOmitted.join(', ')}` : ''}`,
+    ),
+    el('pre', 'ins-text', turn.snapshotText),
+  );
 
-  if (turn.briefEmpty) {
-    // The whole point of recording this: the trigger cleared thirteen gates and then produced
-    // nothing to say, which is a defect in `BRIEF_PLAN` and reads as ordinary silence everywhere
-    // else (coaching-architecture.md §6.5).
-    wrap.append(
-      el('div', 'ins-text-label', 'brief'),
-      el('div', 'ins-empty', 'empty — the turn was admitted and closed silent'),
-    );
-  } else {
-    wrap.append(
-      el(
-        'div',
-        'ins-text-label',
-        `brief · ${turn.briefSections.join(', ')}${turn.briefOmitted.length > 0 ? ` · omitted: ${turn.briefOmitted.join(', ')}` : ''}`,
-      ),
-      el('pre', 'ins-text ins-text--brief', turn.briefText),
-    );
-  }
-
-  if (turn.guidance !== null) {
-    // The coach's output, which is a different claim from `riki said` below it: this is the line the
-    // LLM coach drafted, before any voice model saw it. On a rehearsal nothing speaks, so this is
-    // the whole of the answer — and it is the reason the Coach turns panel is where a rehearsal is
-    // read rather than somewhere new (ADR-0038).
-    wrap.append(
-      el('div', 'ins-text-label', 'coach drafted'),
-      el('pre', 'ins-text ins-text--guidance', turn.guidance),
-    );
-  }
   if (turn.agentSaid !== null) {
     wrap.append(
       el('div', 'ins-text-label', 'riki said'),
@@ -916,20 +312,12 @@ function renderTurn(turn: DebugTurn): HTMLElement {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Counters and problems
+// Sources and problems
 // -----------------------------------------------------------------------------------------------
 
-export function renderCounters(frame: DebugFrame): HTMLElement {
+export function renderSources(frame: DebugFrame): HTMLElement {
   const body = el('div');
   body.append(
-    plainRow('detected', counts(frame.counters.detected), ''),
-    plainRow('suppressed', counts(frame.counters.suppressed), ''),
-    plainRow('spoken', String(frame.counters.spoken), ''),
-    plainRow(
-      'empty briefs',
-      String(frame.counters.emptyBriefs),
-      frame.counters.emptyBriefs > 0 ? 'admitted and dropped' : '',
-    ),
     plainRow('bus depth', String(frame.session.health.bus.depth), ''),
     plainRow('dropped', counts(frame.session.health.bus.dropped), ''),
     plainRow('seq gaps', counts(frame.session.health.bus.gaps), ''),
@@ -952,7 +340,7 @@ export function renderCounters(frame: DebugFrame): HTMLElement {
     );
   }
 
-  return panel('Counters and sources', null, body);
+  return panel('Sources', null, body);
 }
 
 // -----------------------------------------------------------------------------------------------

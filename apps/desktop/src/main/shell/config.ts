@@ -13,20 +13,22 @@
  * root wires somewhere, and a second type listing a subset would be one more thing to update when
  * a setting is added.
  *
- * ## Three things that changed shape when the stand-in went
+ * **One credential.** `openai.apiKey` is it, and the Realtime session (ADR-0006) is now the only
+ * thing that takes one. Two fields for one key would be two places to forget to redact, and
+ * `ApiKey` exists precisely because that kind of forgetting is the realistic failure.
  *
- * **`coach.apiKey` is gone as a separate field.** There is one credential — `openai.apiKey` — and
- * both the LLM coach (ADR-0031) and the Realtime session (ADR-0006) take it from there. Two fields
- * for one key is two places to forget to redact, and `ApiKey` exists precisely because that kind of
- * forgetting is the realistic failure. `shell/index.ts` reads it for the driver exactly as before.
+ * ## ⚠ Three settings this shell no longer reads
  *
- * **`unprompted` is now `privacy.unprompted`, and it defaults off.** REPO_SKELETON.md §7.2 rule 2
- * requires it; the stand-in had it on, which disagreed with the document and with `.env.example`.
+ * `coach.mode`, `coach.model` and `privacy.unprompted` are all still resolved by `@riki/config` and
+ * all three now reach **nothing**: ADR-0042 deleted both coaches and the unprompted speech path.
+ * `privacy.unprompted` is the one that matters, because it is a row in REPO_SKELETON.md §7.2's
+ * defaults-off table and `.env.example` still documents `RIKI_UNPROMPTED` — a privacy toggle that
+ * does nothing is worse than an absent one.
  *
- * **`coach.mode` still has exactly one source and it is still not the environment.** That rule moved
- * into `packages/config`'s `keys.ts`, where the row's environment variable is `null` — which also
- * removes the CLI flag, because a flag is the same hazard at a different volume. A `RIKI_COACH` in a
- * shell profile silently undoing the tray's Coach row on every restart is what both halves prevent.
+ * They are left in place deliberately rather than removed here: `packages/config` is T10's to own
+ * in the conversational migration, and two agents editing one schema is exactly what the ownership
+ * map exists to prevent. **T10 removes all three**, along with their `.env.example` rows and the
+ * `RIKI_UNPROMPTED` entry in `test/repo-hygiene.test.ts`.
  */
 
 import { resolveConfig } from '@riki/config';

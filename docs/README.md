@@ -31,46 +31,53 @@ Docs are split by kind, because "design doc" was covering four different things:
   memory and a test fixture. Deletes the trigger engine and the coach.
   [ADR-0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), with the
   execution plan in
-  [conversational-migration-tickets.md](design/conversational-migration-tickets.md). **Designed, not
-  built** — the three documents below describe what is built today and is being replaced.
+  [conversational-migration-tickets.md](design/conversational-migration-tickets.md). **Wave 1 of
+  the migration has landed**: the trigger engine and both coaches are deleted and Riki answers a
+  question with the current snapshot. The tools, the recorder and the timeline are waves 2–4. The
+  three documents below carry ⚠ Superseded banners and describe code that no longer exists.
 - [**coaching-architecture.md**](design/coaching-architecture.md) — how Riki decides a moment is
   worth speaking about and what the model is shown for it: the coaching brief, `BRIEF_PLAN`, where
   voice intents and the overlay route, and the revised budgets. It is also the record of what was
   deleted to get here — `agent-command-execution-architecture.md` described a command execution
   system that no longer exists, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md)
-  removed both. **Built**, and its trigger half has a sibling document below; §6.6 records where
-  the two designs meet, and every row of it is now closed.
+  removed both. **⚠ Superseded** by the conversational architecture above — the brief, `BRIEF_PLAN`
+  and the coaching ledger are all deleted (ADR-0042). It stays readable because it is still the only
+  record of what the *first* deletion removed, and because §3.2 is where the pull surface a tool
+  layer restores was argued away.
 - [**coaching-trigger-architecture.md**](design/coaching-trigger-architecture.md) — the other half
   of coaching: what makes Riki decide a moment is worth speaking about. Detection over the world
   model, the salience score, the thirteen gates that refuse and how each one is counted, the
   mid-fight intensity signal, and the composition root where the two halves finally meet.
-  **Built**, except the tuning — every coefficient in it is a starting point with no measurement
-  behind it, which is open questions 19 and 20.
+  **⚠ Superseded** (ADR-0042) and kept for two things: §4's staleness reasoning, which T8's prompt
+  is lifted from, and §5.4's account of why the ladder failed in a live match.
 - [**llm-coach-architecture.md**](design/llm-coach-architecture.md) — the second coach: an OpenAI
   Agents SDK model that decides for itself whether Riki should speak and drafts the line, as a
   runtime alternative to the thirteen gates rather than a stage inside them
-  ([ADR-0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md)). **Built.** Read §4.3 before
-  adding anything to the skip list — the six mechanical skips are the whole of what is allowed to
-  refuse, and §14 is what is still open.
+  ([ADR-0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md)). **⚠ Superseded** (ADR-0042)
+  along with ADR-0031: there is one model now, and it answers questions. Kept for §1, which is the
+  clearest statement of why two mechanisms were answering one question, and for §5's prompt.
 - [**hero-library.md**](design/hero-library.md) — the coaching knowledge the world model does not
   have: twenty top-tier heroes, six topics each, one line per note, surfaced as the `library` brief
   section and refreshed by nothing ([ADR-0027](adr/0027-the-hero-library-is-static.md)). **Built.**
   Read §3 before editing content — the policy is what keeps a static library from ageing into being
   wrong rather than merely old.
 - [**debug-inspector.md**](design/debug-inspector.md) — the dev-only window that answers *what does
-  Riki believe, what did it nearly say, why did it stay quiet*, and *what happens if I move this
-  number*: the world model with every fact's provenance, every candidate against all thirteen gates,
-  the snapshot and brief as composed for each turn, every fault the app reports and currently cannot
-  log, and a live control for every number in `packages/events/src/config.ts`. **Built**, off by
-  default ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md),
-  [ADR-0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md)). Read it before
-  adding a hook or a setter to `packages/events` or `packages/context` — the reason it needed
-  neither is §3 and §4.2.
+  Riki believe* and *what was it given for a turn*: the world model with every fact's provenance,
+  the snapshot as composed for each turn, every fault the app reports and currently cannot log, and
+  the two scenarios it can run. **Built**, off by default
+  ([ADR-0032](adr/0032-the-inspector-observes-by-decoration.md),
+  [ADR-0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md)).
+  **⚠ Partly superseded**: the gate, trigger, counter, control and rehearsal panels went with the
+  engine they observed (ADR-0042), and their replacement is a per-turn tool trace — T9 of the
+  migration. Read §3 and §4.2 before adding a hook or a setter to a package: the reason it needed
+  neither is the whole design.
 - [**context-and-memory-architecture.md**](design/context-and-memory-architecture.md) — what the
   agent is given and what Riki remembers: the frozen session preamble, the per-turn snapshot
   renderer, the shared rendering primitives, and the memory layer underneath — the conversation
   ledger, coaching memory, the context-window retention policy, and durable cross-match player
-  memory. The other half of `packages/context`, alongside the command architecture above.
+  memory. **⚠ Partly superseded**: §5, the per-turn snapshot, is the whole of what `packages/context`
+  still is; everything else in it — Tier 1, the ledger, the memory layer — was deleted by ADR-0042
+  along with the coach that needed them.
 - [**voice-input-architecture.md**](design/voice-input-architecture.md) — the voice path end to
   end: microphone capture and gating, the real-time audio pipeline, the Realtime session and its
   turn-taking, transcription and local command parsing, and the class structure of
@@ -128,15 +135,15 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0028](adr/0028-mute-has-one-producer-the-menu-row.md)    | Mute has one producer, and it is the menu row | Accepted — amends ui-design §2.3's click gesture |
 | [0029](adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md) | Newline-delimited JSON over stdio, hello/ready handshake | Accepted — the sidecar wire format |
 | [0030](adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) | The capture seam returns cropped regions, never frames | Accepted — window-only and crop-first, structurally |
-| [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | Accepted — the deterministic coach stays the default |
+| [0031](adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) | The LLM coach is an alternative to the gates, not a stage inside them | **Superseded by [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md)** — both coaches deleted; there is one model and it answers questions |
 | [0032](adr/0032-the-inspector-observes-by-decoration.md) | The inspector observes by decoration, and can change nothing | Accepted — dev-only, off by default; the read-only half is amended by ADR-0037 |
 | [0033](adr/0033-screencapturekit-is-the-shipping-backend.md) | `ScreenCaptureKit` is the shipping backend, and it is cross-compiled rather than run | Accepted — macOS captures; six things still need a Mac |
 | [0034](adr/0034-the-voice-renderer-is-bundled-the-overlay-is-not.md) | The voice renderer is bundled; the overlay is not | Accepted — and the preloads are bundled to CommonJS, which is why the overlay's had never loaded |
 | [0035](adr/0035-the-vision-leg-is-testable-because-a-fake-speaks-the-protocol.md) | The vision leg is testable because a fake speaks the protocol, not because the app has a second wiring | Accepted — `FakeVisionSidecar` at the `ChildProcessPort` seam; the codec's wire→world-model translation was missing entirely |
 | [0036](adr/0036-the-inspector-anchors-on-content-not-on-offset.md) | The inspector anchors on content, not on an offset | Accepted — the three columns survive the redraw; a prepending list makes a saved `scrollTop` wrong |
-| [0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md) | The inspector is a control surface, within a registry | Accepted — amends ADR-0032's read-only half; inert unless clicked, and `packages/events` still has no setter |
-| [0038](adr/0038-a-rehearsal-is-a-turn-against-a-world-nobody-is-playing.md) | A rehearsal is a coach turn against a world nobody is playing | Accepted — extends ADR-0037 to one action; a scratch coaching root, and no session is reachable from it |
-| [0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md) | A scenario drives the real chain, and the trace shows where it stopped | Accepted — ordered trace of the coaching chain, two scenario rows, and the voice telemetry made real; amends ADR-0038 on whether a debug window may make Riki speak |
+| [0037](adr/0037-the-inspector-is-a-control-surface-within-a-registry.md) | The inspector is a control surface, within a registry | **Superseded by [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md)** — every row in the registry was a threshold or a gate in `packages/events` |
+| [0038](adr/0038-a-rehearsal-is-a-turn-against-a-world-nobody-is-playing.md) | A rehearsal is a coach turn against a world nobody is playing | **Superseded by [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md)** — there is no coach to rehearse |
+| [0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md) | A scenario drives the real chain, and the trace shows where it stopped | Accepted — ordered trace, two scenario rows, and the voice telemetry made real. Now the inspector's only write surface: ADR-0042 removed ADR-0037's controls and ADR-0038's rehearsal |
 
 | [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) | Riki answers questions instead of deciding when to speak | Accepted — deletes `packages/events` and `packages/coach`; five narrow tools over the world model, every answer a `Fact`, the match recorded to disk. Reverses ADR-0023 and closes open question 18 |
 

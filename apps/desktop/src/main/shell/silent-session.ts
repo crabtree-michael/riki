@@ -1,5 +1,5 @@
 /**
- * **A `CoachingSessionPort` that never speaks — now the no-key path rather than the only path.**
+ * **A `VoiceSessionPort` that never speaks — the no-key path rather than the only path.**
  *
  * `main/voice/session.ts` is the real one and `main/index.ts` chooses between them on whether
  * `packages/config` found an API key. This is not dead code and is not a stand-in any more: ADR-0006
@@ -24,39 +24,37 @@
  *
  * *(Both of those have since landed — this file's remaining job is the keyless path.)*
  *
- * So this exists to make the shell's remaining seven eighths real. Everything upstream of speech —
- * GSI, fusion, detection, salience, the thirteen gates, the brief — runs against a live game and
- * is observable through the ledger and the counters, which is exactly what
- * `coaching-trigger-architecture.md` §16 step 3 needs for tuning. What is missing is the audio.
+ * So this exists to make the rest of the shell real. Everything upstream of speech — GSI, fusion,
+ * the world model, the snapshot — runs against a live game and is observable through the inspector.
+ * What is missing is the audio.
  *
  * ## The one behaviour it must get right
  *
- * **Closing the turn.** `agent_speaking` is gate 4, and the composition root arms it before
- * calling `speakUnprompted` and disarms it on `turn.responseEnded`. A port that accepted the turn
- * and emitted nothing would leave the gate armed forever, and every later trigger would be
- * suppressed — a silent session would look identical to a broken trigger policy, which is the one
- * confusion that would make this stand-in worse than useless.
+ * **Closing the turn.** The interaction machine enters Speaking on `turn.responseStarted` and
+ * leaves it on `turn.responseEnded`. A port that accepted a turn and emitted nothing would leave
+ * the chip Speaking forever, and a silent session would look identical to a session that hung —
+ * which is the one confusion that would make this stand-in worse than useless.
  *
- * So it emits `responseStarted` and `responseEnded` around a nominal speaking duration. The
- * duration is not cosmetic: it is what keeps the overlay chip's Speaking state, the cooldown
- * timers and the intensity gate exercised on the same rough timescale as a real utterance.
+ * So it emits both edges around a nominal speaking duration. The duration is not cosmetic: it keeps
+ * the chip's Speaking state exercised on the same rough timescale as a real utterance.
  */
 
 import type { TurnId } from '@riki/context';
 import type { CaptureMode, TurnEndReason, VoiceEvent } from '@riki/realtime';
 import type { MonoMs } from '@riki/world-model';
 import type { Timers } from '@riki/context';
-import type { CoachingSessionPort, SessionTurn, SpeakReason } from '../agent/index.js';
+import type { SessionTurn, VoiceSessionPort } from '../agent/index.js';
 
-/** About as long as one piece of advice. `coaching-architecture.md` §3.2 wants two short sentences. */
+/** About as long as one spoken answer — two short sentences. */
 export const NOMINAL_SPEECH_MS = 4_000;
 
 export interface SilentSessionTelemetry {
   /**
-   * What Riki *would* have said, as its inputs. The rendered text is deliberately not passed: the
-   * golden corpora are where output is inspected, and a transcript in a log is a privacy surface.
+   * What Riki *would* have said, as its input size. The rendered text is deliberately not passed:
+   * the golden corpora are where output is inspected, and a transcript in a log is a privacy
+   * surface.
    */
-  wouldSpeak(turnId: TurnId, reason: SpeakReason, chars: number): void;
+  wouldSpeak(turnId: TurnId, chars: number): void;
 }
 
 export interface SilentSessionDeps {
@@ -66,18 +64,21 @@ export interface SilentSessionDeps {
   readonly telemetry?: SilentSessionTelemetry;
 }
 
-export interface SilentSession extends CoachingSessionPort {
-  openMatch(preambleText: string): Promise<void>;
+export interface SilentSession extends VoiceSessionPort {
+  openMatch(instructions: string): Promise<void>;
   closeMatch(reason: string): Promise<void>;
-  /** Every turn this port was handed, in order. The Tier 4 assertion for the whole coaching path. */
-  readonly turns: readonly { readonly turn: SessionTurn; readonly reason: SpeakReason | null }[];
+  /** Every turn this port was handed, in order. The Tier 4 assertion for the whole turn path. */
+  readonly turns: readonly SessionTurn[];
+  /** The instructions each `openMatch` was given, so a test can assert the prefix without a session. */
+  readonly opened: readonly string[];
   dispose(): void;
 }
 
 export function createSilentSession(deps: SilentSessionDeps): SilentSession {
   const speechMs = deps.speechMs ?? NOMINAL_SPEECH_MS;
   const listeners = new Set<(event: VoiceEvent) => void>();
-  const turns: { turn: SessionTurn; reason: SpeakReason | null }[] = [];
+  const turns: SessionTurn[] = [];
+  const opened: string[] = [];
   const pending = new Map<TurnId, () => void>();
   let ids = 0;
   let disposed = false;
@@ -89,10 +90,10 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
   /**
    * The two edges a turn must produce, separated in time.
    *
-   * Emitted rather than resolved-through: `CoachingSessionPort.speakUnprompted` returns a promise
-   * that means *handed over*, not *finished speaking*, and the agent closes the turn from the
-   * event stream. Collapsing the two would make the stand-in disagree with the real session about
-   * what an awaited `speakUnprompted` means.
+   * Emitted rather than resolved-through: `VoiceSessionPort.endTurn` returns a promise that means
+   * *handed over*, not *finished speaking*, and the chip leaves Speaking on the event stream.
+   * Collapsing the two would make the stand-in disagree with the real session about what an awaited
+   * `endTurn` means.
    */
   function speak(turnId: TurnId): void {
     emit({ kind: 'turn', event: 'responseStarted', turnId });
@@ -113,6 +114,7 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
 
   return {
     turns,
+    opened,
 
     /**
      * There is no session to open, and that is the point.
@@ -121,8 +123,8 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
      * upstream of speech is identical whether or not there is an API key, and a shell that had to
      * ask which session it was holding would eventually ask in one place and forget in another.
      */
-    openMatch(preambleText: string): Promise<void> {
-      void preambleText;
+    openMatch(instructions: string): Promise<void> {
+      opened.push(instructions);
       return Promise.resolve();
     },
 
@@ -131,17 +133,17 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
       return Promise.resolve();
     },
 
-    speakUnprompted(turn: SessionTurn, reason: SpeakReason): Promise<void> {
+    speakNow(turn: SessionTurn): Promise<void> {
       if (disposed) return Promise.resolve();
-      turns.push({ turn, reason });
-      deps.telemetry?.wouldSpeak(turn.turnId, reason, turn.snapshotText.length);
+      turns.push(turn);
+      deps.telemetry?.wouldSpeak(turn.turnId, turn.snapshotText.length);
       speak(turn.turnId);
       return Promise.resolve();
     },
 
     beginTurn(mode: CaptureMode, now: MonoMs): TurnId {
       // Neither is consulted: a turn id is a join key, and the real session allocates one from its
-      // own counter for the same reason (`agent/index.ts`'s `nextCoachTurnId`).
+      // own counter for the same reason (`voice/session.ts`'s `nextTurnId`).
       void mode;
       void now;
       ids += 1;
@@ -154,7 +156,8 @@ export function createSilentSession(deps: SilentSessionDeps): SilentSession {
         endPending(turnId);
         return Promise.resolve();
       }
-      turns.push({ turn, reason: null });
+      turns.push(turn);
+      deps.telemetry?.wouldSpeak(turnId, turn.snapshotText.length);
       speak(turnId);
       return Promise.resolve();
     },

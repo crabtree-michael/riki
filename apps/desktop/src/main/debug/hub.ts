@@ -7,15 +7,15 @@
  *
  * ## Push for edges, pull for state
  *
- * Ticks, turns and problems are **pushed**: they are events, they happen whether or not anyone is
- * looking, and missing one is missing the thing you opened the window to see. The world model, the
- * engine's switches, health and the counters are **pulled** at frame time through `DebugSources`,
- * because they are current-value questions that would otherwise be answered thirty times a second
- * into a buffer nobody reads.
+ * Turns, problems and trace steps are **pushed**: they are events, they happen whether or not
+ * anyone is looking, and missing one is missing the thing you opened the window to see. The world
+ * model, the session and health are **pulled** at frame time through `DebugSources`, because they
+ * are current-value questions that would otherwise be answered several times a second into a buffer
+ * nobody reads.
  *
- * The consequence worth knowing: ticks accumulate as soon as the hub exists, so the last two
- * hundred are already there when the window opens. That is deliberate — the most useful moment to
- * open an inspector is just after something looked wrong.
+ * The consequence worth knowing: turns accumulate as soon as the hub exists, so the last forty are
+ * already there when the window opens. That is deliberate — the most useful moment to open an
+ * inspector is just after something looked wrong.
  *
  * ## Everything is bounded
  *
@@ -29,18 +29,11 @@ import type {
   DebugCount,
   DebugFrame,
   DebugProblem,
-  DebugTick,
   DebugTraceStep,
   DebugTurn,
 } from '../../shared/debug.js';
 import { DEBUG_LIMITS } from '../../shared/debug.js';
-import type {
-  DebugGateInput,
-  DebugHub,
-  DebugSources,
-  DebugTickInput,
-  DebugTurnOpenedInput,
-} from './contracts.js';
+import type { DebugHub, DebugSources, DebugTurnOpenedInput } from './contracts.js';
 
 /** How long a window the version-rate estimate covers. Short enough to react, long enough to settle. */
 const RATE_WINDOW_MS = 3_000;
@@ -74,7 +67,6 @@ function push<T>(list: T[], item: T, cap: number): void {
 export function createDebugHub(): DebugHub {
   let sources: DebugSources = {};
 
-  const ticks: DebugTick[] = [];
   const turns: DebugTurn[] = [];
   const problems: DebugProblem[] = [];
   /** ADR-0039. Survives `resetMatch` — a scenario that ends the match must not erase its own trace. */
@@ -84,20 +76,7 @@ export function createDebugHub(): DebugHub {
   /** Non-null while a scenario run is in flight; every step in it carries `sinceRunMs`. */
   let traceRunStartedAt: number | null = null;
 
-  let tickSeq = 0;
   let revision = 0;
-  let emptyBriefs = 0;
-  let totalTicks = 0;
-
-  /**
-   * The engine's state as of the most recent tick, of any kind.
-   *
-   * Held separately from `ticks` because it is updated by *every* tick and `ticks` deliberately
-   * keeps only the ones with candidates in them: a match spends most of its time producing empty
-   * ticks, and those are exactly the ones that carry the news that a cooldown expired.
-   */
-  let gateState: DebugGateInput | null = null;
-  let gateStateAt: number | null = null;
 
   /** For the version rate: (at, version) pairs inside `RATE_WINDOW_MS`. */
   let versionMarks: { at: number; version: number }[] = [];
@@ -106,15 +85,9 @@ export function createDebugHub(): DebugHub {
   const turnIndex = new Map<string, { -readonly [K in keyof DebugTurn]: DebugTurn[K] }>();
 
   function resetMatch(): void {
-    ticks.length = 0;
     turns.length = 0;
     turnIndex.clear();
     versionMarks = [];
-    tickSeq = 0;
-    emptyBriefs = 0;
-    totalTicks = 0;
-    gateState = null;
-    gateStateAt = null;
   }
 
   function versionsPerSecond(now: number, version: number): number {
@@ -133,8 +106,6 @@ export function createDebugHub(): DebugHub {
 
       const session = sources.session?.();
       const world = sources.world?.(now);
-      const gates = gateState;
-      const counters = sources.counters?.();
 
       return {
         revision,
@@ -142,26 +113,10 @@ export function createDebugHub(): DebugHub {
 
         session: {
           matchId: session?.matchId ?? null,
-          coachingRoot: session?.coachingRoot ?? false,
+          matchSession: session?.matchSession ?? false,
           chipPhase: session?.chipPhase ?? 'unknown',
           chipVisible: session?.chipVisible ?? false,
           muted: session?.muted ?? false,
-          coachMode: session?.coachMode ?? 'none',
-          gates: {
-            asOfMs: gateStateAt,
-            quietMode: gates?.quietMode ?? false,
-            agentSpeaking: gates?.agentSpeaking ?? false,
-            playerSpeaking: gates?.playerSpeaking ?? false,
-            mutedUntilMs: gates?.mutedUntilMs ?? null,
-            unprompted: session?.unprompted ?? false,
-            intensity: gates?.intensity ?? 0,
-            intensityThreshold: gates?.intensityThreshold ?? 0,
-            speakThreshold: gates?.speakThreshold ?? 0,
-            lastSpokeAtMs: gates?.lastSpokeAtMs ?? null,
-            globalCooldownMs: gates?.globalCooldownMs ?? 0,
-            latched: gates?.latched ?? [],
-            kindCooldowns: gates?.kindCooldowns ?? [],
-          },
           health: {
             level: session?.healthLevel ?? 'unknown',
             summary: session?.healthSummary ?? 'no state subsystem',
@@ -188,85 +143,11 @@ export function createDebugHub(): DebugHub {
           derived: world?.derived ?? [],
         },
 
-        ticks: [...ticks],
         turns: [...turns],
-
-        counters: {
-          detected: counters?.detected ?? [],
-          suppressed: counters?.suppressed ?? [],
-          spoken: counters?.spoken ?? 0,
-          emptyBriefs,
-          ticks: totalTicks,
-        },
-
         problems: [...problems],
-
-        // A directory listing, read at frame time so a fixture dropped in while the window is open
-        // reaches the dropdown without a restart (`mock-states.ts`). Empty is the ordinary answer
-        // in a packaged build and in `shell.test.ts`.
-        mocks: (sources.mocks?.() ?? []).slice(0, DEBUG_LIMITS.mockStates),
-
-        // Not reset with the match, deliberately: an override is a property of the tuning session,
-        // and a threshold that silently snapped back to the config at the horn would be the most
-        // confusing thing this window could do to somebody halfway through measuring something.
-        controls: sources.controls?.() ?? [],
         actions: sources.actions?.() ?? [],
         trace: [...trace],
       };
-    },
-
-    recordTick(input: DebugTickInput): void {
-      totalTicks += 1;
-      // Before the early return: an empty tick is the only thing that reports a cooldown expiring
-      // or a latch clearing, and those are two of the four things this panel exists to show.
-      gateState = input.gates;
-      gateStateAt = input.at;
-
-      // A tick with no candidates is the overwhelmingly common case — eight detectors that all
-      // answered "nothing is true right now" — and keeping them would push every interesting tick
-      // out of a two-hundred-entry buffer within seconds. The count survives in `counters.ticks`,
-      // which is what distinguishes "the engine is not running" from "the engine found nothing".
-      if (input.candidates.length === 0) return;
-
-      tickSeq += 1;
-      push(
-        ticks,
-        {
-          seq: tickSeq,
-          at: input.at,
-          clock: input.clock,
-          worldVersion: input.worldVersion,
-          candidates: input.candidates,
-          decision: input.decision,
-        },
-        DEBUG_LIMITS.ticks,
-      );
-    },
-
-    /**
-     * The LLM coach's half of the Triggers panel.
-     *
-     * Not routed through `recordTick`, which drops a tick with no candidates — that rule exists
-     * because the deterministic coach produces thousands of empty ticks a match and none of them
-     * says anything. A decline from `packages/coach` is the opposite: it is the only thing that
-     * coach ever says about a moment it passed on, so dropping it would leave the panel empty in
-     * `llm` mode and look exactly like a coach that never ran.
-     */
-    recordDecline(reason: string, at: number, clock: number | null): void {
-      totalTicks += 1;
-      tickSeq += 1;
-      push(
-        ticks,
-        {
-          seq: tickSeq,
-          at,
-          clock,
-          worldVersion: 0,
-          candidates: [],
-          decision: { speak: false, reason, key: null },
-        },
-        DEBUG_LIMITS.ticks,
-      );
     },
 
     recordTurnOpened(input: DebugTurnOpenedInput): void {
@@ -275,19 +156,9 @@ export function createDebugHub(): DebugHub {
         at: input.at,
         clock: input.clock,
         cause: input.cause,
-        eventId: input.eventId,
-        salience: input.salience,
         snapshotText: clip(input.snapshotText, DEBUG_LIMITS.textChars),
         snapshotTokens: input.snapshotTokens,
-        briefText: clip(input.briefText, DEBUG_LIMITS.textChars),
-        briefTokens: input.briefTokens,
-        briefSections: input.briefSections,
-        briefOmitted: input.briefOmitted,
-        briefEmpty: input.briefEmpty,
-        // Clipped like the other two long fields: a drafted line is bounded by the coach's
-        // `maxSayChars`, but this buffer's bounds are not somebody else's config to trust.
-        guidance: input.guidance === null ? null : clip(input.guidance, DEBUG_LIMITS.textChars),
-        mockState: input.mockState,
+        snapshotOmitted: input.snapshotOmitted,
         outcome: 'open',
         agentSaid: null as string | null,
         playerSaidChars: null as number | null,
@@ -323,10 +194,6 @@ export function createDebugHub(): DebugHub {
       push(problems, { at, origin, message }, DEBUG_LIMITS.problems);
     },
 
-    recordEmptyBrief(): void {
-      emptyBriefs += 1;
-    },
-
     recordTrace(stage: string, message: string, at: number): void {
       traceSeq += 1;
       push(
@@ -357,8 +224,9 @@ export function createDebugHub(): DebugHub {
     /**
      * A new match, so everything keyed to the old one goes.
      *
-     * `problems` survives deliberately: a sidecar that panicked during the last match is exactly
-     * the thing somebody is still trying to read when the next one starts.
+     * `problems` and `trace` survive deliberately: a sidecar that panicked during the last match is
+     * exactly the thing somebody is still trying to read when the next one starts, and a scenario
+     * that ends the match must not erase its own trace.
      */
     resetMatch,
 

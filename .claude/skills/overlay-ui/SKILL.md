@@ -46,18 +46,24 @@ Hidden must render **no window at all** — idle costs nothing, and a test asser
   execution, and with them `ActingVerb`, `ConfirmPrompt`, the amber `confirm` accent, the `confirm`
   affordance and intent, the `confirm-timeout` timer, and the `keys` effect and its scoped
   `Y`/`N`/`Esc` grab. **Riki now has no state that needs the keyboard for anything but the
-  push-to-talk binding, and no permission prompt anywhere.** A coaching turn is `Speaking` with
-  `unprompted: true`, which is the most common thing the chip does. If you find a reference to
-  either state in a doc, it predates ADR-0023 — fix it.
+  push-to-talk binding, and no permission prompt anywhere.** If you find a reference to either
+  state in a doc, it predates ADR-0023 — fix it.
+- **Every phase is reached from a key press.** ADR-0042 removed the `unprompted` machine input —
+  Idle → Speaking with no gesture behind it — and `Phase.speaking` lost the boolean that
+  distinguished the two. `turn.responseStarted` while Idle is now *ignored*, deliberately: a
+  response with no phase behind it means something created one the gesture did not, and inventing a
+  chip for it would have the overlay claim the player asked something they did not. The one thing
+  that can still do that is the inspector's `scenario.speak`, which plays with the chip hidden.
 - The overlay is a click-through layered window with per-pixel alpha. Always-on-top plus a
   global hook is exactly the combination anti-cheat systems scrutinise — the anti-cheat
   spike is a blocking risk and must precede real depth here.
 - **Renderer code may not import from `main/`.** The preload bridge is the only path,
   `contextIsolation` stays on, and no Node reaches the renderer. A lint boundary enforces it.
-- **The inspector is the one renderer that can change the app** (ADR-0037), and it does it through a
-  registry in `main/debug/controls.ts` rather than through a wider bridge. If you need a new setting
+- **The inspector is the one renderer that can change the app** (ADR-0039), and it does it through a
+  registry in `main/debug/actions.ts` rather than through a wider bridge. If you need a new scenario
   exposed there, add a row — do not add an intent. `parseDebugIntent` checks *shape*; main checks
-  whether the id is registered and unlocked, and the two are deliberately not the same check.
+  whether the id is registered and not already running, and the two are deliberately not the same
+  check. ADR-0037's settings registry is gone with the thresholds it moved (ADR-0042).
 - Push-to-talk is the default trigger, with a tap/hold gesture. Detect hotkey conflicts at
   bind time rather than failing silently in-game.
 - Multi-monitor and non-default HUD scales are normal cases here, not edge cases.
@@ -150,7 +156,7 @@ fixed — so the obvious first move is to go looking in `scroll.ts`, where nothi
 Electron loads a preload as **CommonJS**; `apps/desktop/package.json` is `"type": "module"` and
 `tsc` emits ESM, so `dist/preload/index.js` failed with `SyntaxError: Cannot use import statement
 outside a module`. The error goes to the *renderer's* console, which nothing reads — main starts,
-binds its socket and runs the whole coaching pipeline, and `window.rikiOverlay` is simply
+binds its socket and runs the whole state pipeline, and `window.rikiOverlay` is simply
 `undefined`. Every unit test passed throughout, because they test the bridge's *modules*, never its
 installation.
 
@@ -364,7 +370,7 @@ up a security property overlay-architecture.md §6.2 requires — not acceptable
 
 *Why:* this is invisible from every direction. `pnpm dev` starts cleanly, the window warms, the
 tray works, `pnpm check` is green, and the only symptom is a chip that never appears — which reads
-as "the coaching path did not fire" rather than "the renderer has no bridge". Do not spend the time
+as "the turn path did not fire" rather than "the renderer has no bridge". Do not spend the time
 twice: reproduce it in ten seconds with a `preload-error` listener before assuming your feature is
 what broke.
 
@@ -396,6 +402,17 @@ perfect, and the drift only named itself at 240.
 
 *Why:* the renderer tests here are worth having and they are not sufficient for anything geometric.
 Budget the ten minutes; the alternative is shipping a fix for a jump that turns it into a crawl.
+
+**2026-08-09 — the chip and the turn are two halves of a gesture, and only one of them was wired.**
+The trigger pump dispatched into the machine and the machine drove the chip; nothing translated the
+resulting phase transitions into `beginPlayerTurn`/`endPlayerTurn`, so the overlay showed a turn
+that reached no session. It is `shell/index.ts`'s `runtime.subscribe` block now, and the shape to
+keep is that **the machine's phase is the source of truth, not the key events** — push ends on
+release, latch ends on the next tap, server VAD can end a turn with the key still held (ADR-0017),
+and a barge-in enters Listening with no Armed. Reading key events there is a second copy of all
+four rules. *Why:* the one edge that is easy to get wrong is `armed → listening`, which is the
+microphone opening rather than the gesture ending — treating it as an end cancels every turn a
+millisecond after it starts, and the chip still looks perfect.
 
 ## See also
 

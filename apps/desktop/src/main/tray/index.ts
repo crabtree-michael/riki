@@ -21,7 +21,7 @@
 
 import type { TrayGlyph, Unsubscribe } from '../../shared/overlay.js';
 import type { TrayEffectSink } from '../session/contracts.js';
-import type { CoachMode, TrayAction, TrayMenuItem, TrayModel } from './menu.js';
+import type { TrayAction, TrayMenuItem, TrayModel } from './menu.js';
 import { projectMenu, projectTooltip } from './menu.js';
 
 export * from './menu.js';
@@ -42,8 +42,6 @@ export interface TraySurface {
 export interface TrayController extends TrayEffectSink {
   setStatus(status: string): void;
   setMuted(muted: boolean): void;
-  /** `available: false` renders the row disabled with its reason, rather than hiding it. */
-  setCoach(mode: CoachMode, available: boolean): void;
   onAction(listener: (action: TrayAction) => void): Unsubscribe;
   onToggleMute(listener: () => void): Unsubscribe;
   dispose(): void;
@@ -62,7 +60,6 @@ export function createTrayController(
     glyph: 'idle',
     muted: false,
     status: 'starting',
-    coach: { mode: 'static', available: false },
     debug: options.debug ?? false,
   };
   let disposed = false;
@@ -96,12 +93,6 @@ export function createTrayController(
     setMuted(muted: boolean): void {
       if (model.muted === muted) return;
       model = { ...model, muted };
-      render();
-    },
-
-    setCoach(mode: CoachMode, available: boolean): void {
-      if (model.coach.mode === mode && model.coach.available === available) return;
-      model = { ...model, coach: { mode, available } };
       render();
     },
 

@@ -21,12 +21,12 @@
  *
  * `derived.threats` ("can that hero reach me" — two positions, a movement speed and a set of
  * blinks) and `derived.pace*` ("am I behind" — farm against a benchmark) do invent one. They are
- * **left unsatisfied**, the sections that read them are omitted and recorded, and
- * `coaching-trigger-architecture.md` §15 names them as `packages/world-model`'s work. That is the
- * designed degradation, not a shortcut: a number with no provenance sitting next to numbers that
- * have some is the failure the whole fact envelope exists to prevent.
+ * **left unsatisfied**, the sections that read them are omitted and recorded. That is the designed
+ * degradation, not a shortcut: a number with no provenance sitting next to numbers that have some
+ * is the failure the whole fact envelope exists to prevent.
  *
- * See docs/design/coaching-trigger-architecture.md §9.2.
+ * See docs/design/conversational-architecture.md §5, which makes the same rule the tool layer's
+ * whole correctness obligation.
  */
 
 import type {
@@ -315,11 +315,11 @@ function sourcePathFor(key: string): string {
 }
 
 /**
- * The reader `ContextAssembler` takes.
+ * The reader `createSnapshotSource` takes.
  *
  * `onVersion` and `history` are declared by the port and **not used by `packages/context`** — the
- * assembler only ever calls `snapshot()`. They are wired anyway rather than thrown from, because a
- * port that throws on a method nobody calls is a trap for whoever calls it first.
+ * snapshot renderer only ever needs `snapshot()`. They are wired anyway rather than thrown from,
+ * because a port that throws on a method nobody calls is a trap for whoever calls it first.
  */
 export function toContextReader(
   world: WorldModelReader,

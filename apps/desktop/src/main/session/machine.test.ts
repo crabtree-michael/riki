@@ -222,40 +222,16 @@ describe('reduce — barge-in', () => {
     expect(has(effects, { kind: 'levels', running: true, source: 'input' })).toBe(true);
     expect(has(effects, { kind: 'earcon', sound: 'capture-start' })).toBe(true);
   });
-
-  it('works identically out of unprompted speech', () => {
-    const { state, effects } = drive([
-      [{ kind: 'unprompted', event: 'speechStarted' }, 100],
-      down(1_200),
-    ]);
-    expect(state.phase.kind).toBe('listening');
-    expect(has(effects, { kind: 'voice' })).toBe(true);
-  });
 });
 
-describe('reduce — unprompted speech', () => {
-  it('enters Speaking from Idle with no earcon and no Armed', () => {
-    const { state, effects } = drive([[{ kind: 'unprompted', event: 'speechStarted' }, 100]]);
-    expect(state.phase).toEqual({ kind: 'speaking', unprompted: true });
-    expect(effects[0]).toEqual({ kind: 'window', visible: true });
-    expect(has(effects, { kind: 'earcon' })).toBe(false);
-    expect(has(effects, { kind: 'duck', on: true })).toBe(true);
-  });
-
-  it('never interrupts an interaction already in progress', () => {
-    const { state } = drive([
-      ...REACH.listening,
-      [{ kind: 'unprompted', event: 'speechStarted' }, 50],
-    ]);
-    expect(state.phase.kind).toBe('listening');
-  });
-
-  it('is suppressed while muted', () => {
-    const { state } = drive([
-      [{ kind: 'mute', muted: true }, 0],
-      [{ kind: 'unprompted', event: 'speechStarted' }, 100],
-    ]);
+describe('reduce — a response with no gesture behind it', () => {
+  it('is ignored from Idle, so the chip never claims a turn the player did not start', () => {
+    // ADR-0042 removed the `unprompted` input that used to make this a chip. What is left is the
+    // refusal, and it is worth asserting rather than assuming: the session is shared with the
+    // inspector's `scenario.speak`, which can still create a response out of nowhere.
+    const { state, effects } = drive([[{ kind: 'turn', event: 'responseStarted' }, 100]]);
     expect(state.phase.kind).toBe('idle');
+    expect(has(effects, { kind: 'window', visible: true })).toBe(false);
   });
 });
 
@@ -450,7 +426,6 @@ describe('reduce — the deleted states stay deleted', () => {
       { kind: 'turn', event: 'submitted' },
       { kind: 'turn', event: 'responseStarted' },
       { kind: 'turn', event: 'responseEnded' },
-      { kind: 'unprompted', event: 'speechStarted' },
       { kind: 'fault', fault: OFFLINE },
       { kind: 'mute', muted: true },
       { kind: 'mute', muted: false },

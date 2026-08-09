@@ -64,7 +64,6 @@ function model(overrides: Partial<TrayModel> = {}): TrayModel {
     glyph: 'idle',
     muted: false,
     status: 'ready',
-    coach: { mode: 'static', available: true },
     debug: false,
     ...overrides,
   };
@@ -88,28 +87,10 @@ describe('the menu projection (ui-design.md §2.3)', () => {
     const ids = projectMenu(model({ status: 'ready' }))
       .filter((item) => item.kind === 'action')
       .map((item) => item.id);
-    // A menu item that opens nothing reads as a bug on first click; the four deferred rows come
-    // back with the surfaces they need. `toggle-coach` is here because it goes somewhere — see the
-    // next two cases for the one state in which it is present but disabled.
-    expect(ids).toEqual(['toggle-mute', 'toggle-coach', 'quit']);
-  });
-
-  it('checks the coach row when the LLM coach is the one running', () => {
-    const row = projectMenu(model({ coach: { mode: 'llm', available: true } })).find(
-      (item) => item.id === 'toggle-coach',
-    );
-    expect(row?.checked).toBe(true);
-    expect(row?.enabled).toBe(true);
-  });
-
-  it('disables the coach row and says why when there is no key', () => {
-    const row = projectMenu(model({ coach: { mode: 'static', available: false } })).find(
-      (item) => item.id === 'toggle-coach',
-    );
-    // Present, disabled, and carrying its reason. A hidden row would leave a player who clicked it
-    // with no way to find out why nothing changed.
-    expect(row?.enabled).toBe(false);
-    expect(row?.label).toContain('RIKI_OPENAI_API_KEY');
+    // A menu item that opens nothing reads as a bug on first click; the deferred rows come back
+    // with the surfaces they need. The LLM-coach checkbox is not among them — ADR-0042 deleted
+    // both coaches, so it is gone rather than pending.
+    expect(ids).toEqual(['toggle-mute', 'quit']);
   });
 
   it('hides the inspector row unless debug is on, and offers it when it is', () => {
@@ -118,11 +99,11 @@ describe('the menu projection (ui-design.md §2.3)', () => {
         .filter((item) => item.kind === 'action')
         .map((item) => item.id);
 
-    // The second deferred row to come back, and it comes back because it now opens something
+    // The first deferred row to come back, and it comes back because it now opens something
     // (main/debug/). It stays conditional: a debug row in a shipped build is the same mistake in
-    // the other direction. It sits last, below the coach row, because that one is the product.
-    expect(idsOf(false)).toEqual(['toggle-mute', 'toggle-coach', 'quit']);
-    expect(idsOf(true)).toEqual(['toggle-mute', 'toggle-coach', 'open-debug', 'quit']);
+    // the other direction. It sits last, because the row above it is the product.
+    expect(idsOf(false)).toEqual(['toggle-mute', 'quit']);
+    expect(idsOf(true)).toEqual(['toggle-mute', 'open-debug', 'quit']);
   });
 
   it('says what is wrong in the tooltip when the glyph is `attention`', () => {

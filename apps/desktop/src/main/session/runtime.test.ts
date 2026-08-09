@@ -45,6 +45,20 @@ function harness(): Harness {
   return { runtime, clock, overlay, tray, voice, audio, telemetry };
 }
 
+/**
+ * Drive the runtime into Speaking.
+ *
+ * Four inputs where one used to do: the machine reached Speaking from Idle on an `unprompted`
+ * input until ADR-0042 removed it, and the only way there now is the way a player gets there — a
+ * press, audio, a release, and a response.
+ */
+function speak(runtime: SessionRuntime): void {
+  runtime.dispatch({ kind: 'trigger', event: { kind: 'down' } });
+  runtime.dispatch({ kind: 'capture', event: 'firstAudio' });
+  runtime.dispatch({ kind: 'trigger', event: { kind: 'up' } });
+  runtime.dispatch({ kind: 'turn', event: 'responseStarted' });
+}
+
 describe('createSessionRuntime', () => {
   it('projects one model at construction, so a reload has something to re-send', () => {
     const { overlay, tray } = harness();
@@ -130,7 +144,7 @@ describe('createSessionRuntime', () => {
 
   it('sends voice commands out through the voice sink and nowhere else', () => {
     const { runtime, voice } = harness();
-    runtime.dispatch({ kind: 'unprompted', event: 'speechStarted' });
+    speak(runtime);
     runtime.dispatch({ kind: 'trigger', event: { kind: 'down' } });
 
     expect(voice.commands).toEqual([{ kind: 'interrupt', at: 1_000 }]);
@@ -138,7 +152,7 @@ describe('createSessionRuntime', () => {
 
   it('ducks on the way into Speaking and off on the way out', () => {
     const { runtime, audio } = harness();
-    runtime.dispatch({ kind: 'unprompted', event: 'speechStarted' });
+    speak(runtime);
     expect(audio.ducking).toEqual([true]);
 
     runtime.dispatch({ kind: 'turn', event: 'responseEnded' });

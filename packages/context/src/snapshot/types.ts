@@ -8,55 +8,31 @@
  * See docs/design/context-and-memory-architecture.md §5. Declarations only.
  */
 
-import type { EventId, GameClock, MonoMs, PrivacyPolicy, TurnId } from '../common/types.js';
+import type { MonoMs, PrivacyPolicy, TurnId } from '../common/types.js';
 import type { Budget, RenderedText, Section, SectionId } from '../render/types.js';
-import type { AdviceTopic } from '../memory/types.js';
 
 // -----------------------------------------------------------------------------------------------
 // Why this turn exists (§3.3, §5.2)
 // -----------------------------------------------------------------------------------------------
 
 /**
- * The turn's cause is an input to the renderer, not just a label: it promotes exactly one section
- * (§5.2). A turn that exists because of `rune_soon` should not have the timings truncated out of it.
+ * The turn's cause.
+ *
+ * It used to have a third arm — `{ by: 'trigger', event, salience }` — and the renderer used it to
+ * promote exactly one section up the ladder, on the argument that a turn which exists because of
+ * `rune_soon` should not have the timings truncated out of it. ADR-0042 deleted the thing that
+ * produced it: with no trigger there is no event to promote for, and every turn now exists because
+ * somebody pressed the key. The ladder is therefore fixed, which is one fewer thing that can make
+ * two identical worlds render differently.
  */
 export type TurnCause =
   | { readonly by: 'player'; readonly gesture: 'push_to_talk' | 'wake' }
-  | { readonly by: 'trigger'; readonly event: EventId; readonly salience: number }
   | { readonly by: 'system'; readonly reason: 'match_started' | 'rehydrate' };
 
-/**
- * What `packages/events` hands over when it decides a turn should happen.
- *
- * `topic` closes coaching-architecture.md §6.6 row 4, which was the one open seam between the two
- * halves of coaching. `CoachEvent` carries an `AdviceTopic`; `TurnCause` does not, because it
- * predates coaching. The composition root holds the whole `CoachEvent`, so the fix is a field here
- * rather than a change to `TurnCause` — and the alternative, deriving a topic from an `EventId`
- * through a second lookup table, is two tables that must agree about what "the same advice" means,
- * which is precisely what `AdviceTopic` being a closed union exists to prevent (ADR-0013).
- *
- * **One value, one origin, three consumers**: the brief planner, the novelty gate, and
- * `agent_said.topics`.
- */
+/** What the composition root hands over when a turn begins. */
 export interface TurnBrief {
   readonly turnId: TurnId;
   readonly cause: TurnCause;
-  /** From the `CoachEvent`. Absent for a player or system turn. */
-  readonly topic?: AdviceTopic;
-}
-
-// -----------------------------------------------------------------------------------------------
-// The event tape (§8.2)
-// -----------------------------------------------------------------------------------------------
-
-/**
- * Already natural language, from `packages/events` (dota2 §6.4). This package does not phrase
- * events — it places them, under a budget, and drops them first.
- */
-export interface TapeEvent {
-  readonly id: EventId;
-  readonly at: GameClock;
-  readonly text: string;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -68,10 +44,18 @@ export interface SnapshotContext {
   readonly now: MonoMs;
   readonly cause: TurnCause;
   readonly budget: Budget;
+  /**
+   * Carried even though **no section currently consults it**, and that is deliberate.
+   *
+   * The `recent:` line was the one place other players' words could reach a third-party API, and it
+   * went with the event tape that fed it (ADR-0042); every field the nine remaining sections render
+   * classifies as `game_state`, so the gate has nothing to refuse. It stays on the context rather
+   * than being removed because the gate is the *second* of the two independent defences
+   * REPO_SKELETON.md §7.2 requires — the first is at the source — and the next section anybody adds
+   * that renders a name or a line of chat must go through `render/privacy.ts` rather than
+   * reintroducing the policy alongside it.
+   */
   readonly privacy: PrivacyPolicy;
-  readonly tape: readonly TapeEvent[];
-  /** The elision base and what has already been said. Null disables elision for this turn (§5.3). */
-  readonly elisionBase: ElisionBase | null;
 }
 
 export interface RenderedSnapshot extends RenderedText {
@@ -80,23 +64,6 @@ export interface RenderedSnapshot extends RenderedText {
   readonly truncated: boolean;
   /** What the budget or the confidence gate dropped. Telemetry, and asserted by golden tests. */
   readonly omitted: readonly SectionId[];
-}
-
-/**
- * The base an elided snapshot is a delta against — **specified, and off by default** (§5.3).
- *
- * A delta is only meaningful while its base is still in the model's context window, so elision is a
- * coupling to the retention policy rather than a formatting choice. It saves an estimated ~120
- * tokens on a ~300-token snapshot and costs a correctness dependency on our *estimate* of window
- * occupancy, which §12 lists as unverified. Turn it on when that estimate has been measured.
- *
- * `clock` is rendered into the marker — `(unchanged since 14:12)` rather than a bare
- * `(unchanged)` — so that a model whose base was truncated sees a reference to a time it has no
- * record of, which is a question it can ask, instead of a claim it cannot check.
- */
-export interface ElisionBase {
-  readonly rendered: RenderedSnapshot;
-  readonly clock: GameClock | null;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -113,8 +80,7 @@ export type SnapshotSectionId =
   | 'seen'
   | 'unseen'
   | 'derived'
-  | 'map'
-  | 'recent';
+  | 'map';
 
 /**
  * Declared data, not the order of statements in a function. A section with no entry here is a

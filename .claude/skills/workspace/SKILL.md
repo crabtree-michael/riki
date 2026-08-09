@@ -272,6 +272,26 @@ form, and a default derived from `package.json`. Under a headless sandbox that i
 `xvfb-run -a pnpm dev`, then curl the GSI listener (see the `game-state` skill). *Why:* "all tests
 pass" and "it starts" are different claims, and only one of them is what the step promised.
 
+**2026-08-09 — the last mile is still running the thing, and it now costs four minutes rather than
+twenty.** The recipe the 2026-08-02 note below works out is worth stating as a procedure, because
+ADR-0042's deletion was signed off green — `pnpm check`, 1081 tests — while the composition root had
+never once been booted against the new wiring. Booting it found two defects no test reached: the
+push-to-talk chain was not connected at all, and the session instructions were assembled from a
+world model that is empty by design at `match_started`.
+
+```sh
+pnpm exec tsc --build --force && (cd apps/desktop && pnpm run assets && pnpm run bundle)
+# a throwaway probe.mjs that imports dist/main/shell/index.js, builds the shell, POSTs one GSI
+# frame at its own listener, drives a turn, and writes every step to a file
+xvfb-run -a node_modules/.pnpm/electron@*/node_modules/electron/dist/electron apps/desktop/probe.mjs
+```
+
+Three details, all of which cost time the first time: build the **preloads and renderer assets** as
+well as `tsc`, or the app starts and every window is inert; write results to a **file**, because
+Electron main's stdout does not survive the `xvfb-run` pipe; and delete the probe before committing
+— it is a measurement, not a fixture. *Why:* "all tests pass" and "it works" are different claims,
+and the gap between them is exactly the wiring a composition root exists to hold.
+
 ## See also
 
 `REPO_SKELETON.md` §2 (layout), §8 (scripts), §9 (working agreements), §13 (skills).

@@ -1,6 +1,6 @@
 # ADR-0031: The LLM coach is an alternative to the gates, not a stage inside them
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0042](0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09 — `packages/coach` and `packages/events` are both deleted, so there is no toggle and nothing to toggle between. The reasoning survives in the other direction: two mechanisms answering *should Riki speak* was one too many, and the answer turned out to be neither.
 **Date:** 2026-08-02
 
 ## Context

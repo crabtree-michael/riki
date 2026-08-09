@@ -1,5 +1,25 @@
 # The inspector — a live view of what Riki believes, and a way to argue with it
 
+> ## ⚠ Partly superseded
+>
+> **[ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09**
+> deleted the trigger engine, and with it the five panels that were this window's centre of gravity:
+> **Triggers, Gate state, Counters, Controls and Rehearsal**. Every one observed something that no
+> longer exists, so all five are gone rather than empty — a panel rendering "0 of 13 gates" against
+> no engine is worse than an absent one. ADR-0037 and ADR-0038 are superseded with them.
+>
+> **What is current:** §3 and §4 — the decoration rule, the push/pull split, the frame's bounds and
+> the "costs nothing when off" property — which are why the World, Turns, Sources, Trace and
+> Problems panels needed no hook in any package. ADR-0039's scenarios are now the window's only
+> write surface.
+>
+> **What replaces the deleted half** is a per-turn tool trace: the question, the tool calls with
+> their arguments and results, the answer, and the latency of each leg — with a turn that answered a
+> factual question and called *no* tool visibly flagged. That is T9 of
+> [conversational-migration-tickets.md](conversational-migration-tickets.md), and §1's problem
+> statement below is the right one to re-read first: the failure it describes is still exactly the
+> failure a tool trace has to make visible.
+
 **Status:** Built. `apps/desktop/src/main/debug/`, `src/preload/debug.ts`,
 `src/renderer/debug/`, off by default behind `config.debug.enabled`.
 **Scope:** A dev-only window showing the judge's and the coach's real-time internal state, and

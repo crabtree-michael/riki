@@ -1,9 +1,0 @@
-threat: hp 84% | mp 61% | nevermore bot ~3s · zuus mid ~7s (0.78)
-positions: seen nevermore bot ~4s ago(0.91) · tidehunter top unseen >20s(0.86) | unseen >20s: windranger, zuus
-economy: gold 1840 (rel 320) | nw 7.2k | next diffusal2 in ~40s | buyback 1.6k
-cooldowns: you blink_strike UP, tricks_of_trade 4s, smoke_screen UP, invis UP | them nevermore UP ~9s ago(0.82) · tidehunter 41s
-windows: rune 15:00 | rosh 16:50 | stack 14:53 | night
-pace: nw +1.2k vs typical | lvl -1 vs typical | lh 96 | gpm 512
-
---- 189 tokens
---- omitted: library, history

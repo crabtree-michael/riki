@@ -1,6 +1,6 @@
 # ADR-0038: A rehearsal is a coach turn against a world nobody is playing
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0042](0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09 — a rehearsal ran one **coach** turn against a mock world, and there is no coach. The mock-state library went with it. What the ADR argued — that an action may build a scratch copy of the thing under test rather than reaching the live one — is the shape a replay harness should take when T11 needs one.
 **Date:** 2026-08-04
 
 **Extends:** [ADR-0037](0037-the-inspector-is-a-control-surface-within-a-registry.md), whose last

@@ -1,9 +1,0 @@
-T 14:32 | night | you: riki, lvl 11, 84% hp, 61% mp, alive, top jungle
-gold 1840 (rel 320) | nw 7.2k | 4/1/3 | lh 96/12 | gpm 512
-abils: blink_strike UP, tricks_of_trade 4s, smoke_screen UP, invis UP
-items: diffusal(1), phase, wraith_band, tp(1) | stash -- | slots 2 free
-enemies: nevermore lvl 12 alive · tidehunter lvl 11 DEAD 22s · crystal_maiden lvl 10 alive · windranger lvl 10 alive · zuus lvl 11 alive
-buy diffusal2 in ~40s | rosh window 16:50 | rune 15:00 | nw lead us +3.1k
-
---- 179 tokens
---- omitted: seen, unseen, map, recent

@@ -21,11 +21,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildWorld } from '@riki/events/testing';
+import { buildWorld } from '../testing/world.js';
 import type { FieldPath } from '@riki/world-model';
 import { createStalenessPolicy } from '@riki/world-model';
 
-import { projectCounters, projectWorld, renderValue } from './projections.js';
+import { projectWorld, renderValue } from './projections.js';
 
 const NOW = 60_000;
 
@@ -198,37 +198,5 @@ describe('projectWorld', () => {
 
     expect(paths).toContain('meta.mode');
     expect(paths).toContain('map.daytime');
-  });
-});
-
-describe('projectCounters', () => {
-  it('flattens both halves and sorts by count, then by key', () => {
-    const projected = projectCounters({
-      detected: { rune_soon: 3, ult_ready: 7, gank_risk: 3 },
-      suppressed: { kind_cooldown: 5 },
-      spoken: 2,
-    });
-
-    expect(projected.detected).toEqual([
-      { key: 'ult_ready', count: 7 },
-      // Ties break alphabetically so the display does not jitter between frames.
-      { key: 'gank_risk', count: 3 },
-      { key: 'rune_soon', count: 3 },
-    ]);
-    expect(projected.suppressed).toEqual([{ key: 'kind_cooldown', count: 5 }]);
-    expect(projected.spoken).toBe(2);
-  });
-
-  it('keeps both halves when one is empty', () => {
-    // §5.4's distinction: nothing detected and everything suppressed are different failures, and a
-    // projection that dropped an empty half would make them look the same.
-    const projected = projectCounters({
-      detected: {},
-      suppressed: { not_in_match: 900 },
-      spoken: 0,
-    });
-
-    expect(projected.detected).toEqual([]);
-    expect(projected.suppressed).toHaveLength(1);
   });
 });

@@ -1,5 +1,20 @@
 # Proactive Coaching — Deletion Plan & Module Architecture
 
+> ## ⚠ Superseded
+>
+> **Superseded by [`conversational-architecture.md`](conversational-architecture.md) /
+> [ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09.**
+> The coaching brief, `BRIEF_PLAN`, the conversation ledger and the coaching memory are **deleted**
+> along with the trigger engine that chose the topic for them. What the model is shown per turn is
+> now the ~300-token snapshot alone, and soon the five tools of §4 of the new document.
+>
+> **It is kept, not archived, because it is the record of the *first* deletion** — the command
+> execution pipeline of [ADR-0023](../adr/0023-coaching-replaces-command-execution.md) — and §3.2 is
+> where the pull surface that ADR-0042 restores was argued away. Reading the two arguments together
+> is the most useful thing in this file.
+>
+> Read it as history. Nothing below describes code that exists.
+
 **Status:** Accepted ([ADR-0023](../adr/0023-coaching-replaces-command-execution.md)), and
 **§16 steps 1–7 are built**. The deletion is done: `packages/context/src/tools/`, the
 `packages/realtime` seam, and the overlay's `Acting` and `Confirming` states are gone;

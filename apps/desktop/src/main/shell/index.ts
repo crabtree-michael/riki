@@ -11,31 +11,32 @@
  * ## What is wired
  *
  * ```
- *   GsiServer ──► ObservationBus ──► WorldModelStore ──onVersion──► EventEngine
- *                                          │                            │ CoachEvent
- *                                          │ WorldModelReader           ▼
- *                                          └──► toContextReader ──► ContextAssembler
- *                                                                       │ snapshot + brief
- *                                                                       ▼
- *                                                              CoachingSessionPort
- *                                                                       │ VoiceEvent
- *                                                                       ▼
- *                                          SessionRuntime ──► OverlayPresenter, Tray
- *                                                 ▲
- *                                          TriggerPump (hotkey)
+ *   GsiServer ──► ObservationBus ──► WorldModelStore ──► SnapshotSource
+ *                                                              │ snapshot text
+ *                                                              ▼
+ *   TriggerPump (hotkey) ──► SessionRuntime ──► TurnAgent ──► VoiceSessionPort
+ *                                   │                              │ VoiceEvent
+ *                                   └──► OverlayPresenter, Tray ◄──┘
  * ```
+ *
+ * Read the top row right to left and it is the whole product: the player presses a key, the world
+ * model is rendered as ~300 tokens of text, and the question and the text go to the model together.
+ * ADR-0042 deleted what used to sit in the middle — detectors, salience, thirteen gates, a coaching
+ * brief, a conversation ledger and a second language model deciding whether to interrupt — on the
+ * grounds that a coach who never interrupts you cannot interrupt you wrongly.
  *
  * ## Two lifetimes, not one
  *
- * The state subsystem, the overlay, the tray and the hotkey live as long as the app. The coaching
- * root does **not**: `ContextAssembler` takes a `MatchId` at construction, the conversation ledger
- * and the coaching memory are per-match by ADR-0012 and ADR-0013, and the Tier 1 preamble is
- * assembled once on `match_started` and frozen (ADR-0011). So a `MatchRuntime` is built on
- * `match_started` and disposed on `match_ended`, and between matches there is no coaching root at
- * all — which is also what gate 1, `not_in_match`, would say anyway.
+ * The state subsystem, the overlay, the tray, the hotkey and the turn agent live as long as the app.
+ * **The Realtime session does not**: its instructions are frozen at `match_started` (ADR-0011) and
+ * the API caps a session at 60 minutes, so it is opened on `match_started` and closed on
+ * `match_ended`.
  *
- * Building it per match rather than resetting one is deliberate. A reset has to remember every
- * piece of state that exists; a fresh object cannot forget one.
+ * The agent moved out of that second lifetime and into the first, which is the shape ADR-0042 made
+ * possible: rendering a snapshot needs a world and nothing else — no ledger, no coaching memory, no
+ * per-match preamble — so there is no per-match object left for it to belong to. It also fixes
+ * something that was previously a rough edge: push-to-talk between matches now takes exactly the
+ * same path as push-to-talk in one.
  *
  * ## Speech
  *
@@ -48,71 +49,39 @@
  * ## The inspector
  *
  * When `config.debug.enabled`, one more thing is wired: `main/debug/`, which observes every stage of
- * the diagram above and pushes it to a dev-only window. It is composed rather than injected —
- * `TriggerPolicy` and `RikiContext` are decorated on their way into the engine and the agent, and
- * both decorators return their delegate's value unchanged. With the flag off nothing above changes
- * in any way, which is the property the whole component is built around.
+ * the diagram above and pushes it to a dev-only window. It is composed rather than injected — the
+ * `SnapshotSource` is decorated on its way into the agent, and the decorator returns its delegate's
+ * value unchanged. With the flag off nothing above changes in any way, which is the property the
+ * whole component is built around (ADR-0032).
  *
- * Since ADR-0038 it can also *rehearse*: `buildRehearsalStack` assembles a second, throwaway copy of
- * the coaching root above — its own world, tape, assembler and coach — so the inspector can run one
- * coach turn against a mock game state with no match running. Nothing in the diagram is shared with
- * it except the code that builds it, which is the point: it measures the coach the app runs, and it
- * cannot reach the world, the latches, the ledger or the session the app is using.
+ * It can also run a scenario (ADR-0039): `scenario.match` pushes a scripted GSI sequence through our
+ * own server, and `scenario.speak` renders the current snapshot straight at the session port to
+ * isolate the voice leg. The gate, trigger, counter, control and rehearsal panels are gone with the
+ * engine they observed; their replacement is a per-turn tool trace, which is T9 of the migration.
  */
 
-import type { CoachModel, CoachTelemetry, LlmCoachConfig } from '@riki/coach';
-import { createLlmCoach, withCoachConfig } from '@riki/coach';
-import type { MatchId, RikiContext, Timers, TurnId } from '@riki/context';
-import {
-  createContextAssembler,
-  createPlayerMemoryStore,
-  createPreambleAssembler,
-} from '@riki/context';
-import type { EventTape, TriggerCounters, TriggerPolicy } from '@riki/events';
-import { createEventEngine, createEventTape, createTriggerPolicy } from '@riki/events';
+import type { MatchId, Timers, TurnId } from '@riki/context';
 import type { MatchLifecycleEvent } from '@riki/gsi';
-import type { Clock as WorldClock, MonoMs, WorldModelStore } from '@riki/world-model';
-import { createStalenessPolicy, createWorldModelStore } from '@riki/world-model';
+import type { Clock as WorldClock, MonoMs } from '@riki/world-model';
+import { createStalenessPolicy } from '@riki/world-model';
 
 import type { Millis, Unsubscribe } from '../../shared/overlay.js';
-import type {
-  CoachDriver,
-  CoachMode,
-  CoachingAgent,
-  CoachingSessionPort,
-  StaticCoachDriver,
-} from '../agent/index.js';
-import {
-  createCoachingAgent,
-  createSnapshotNarrator,
-  llmCoachDriver,
-  staticCoachDriver,
-  toContextReader,
-  toEventTapeReader,
-} from '../agent/index.js';
+import type { SnapshotSource, TurnAgent, VoiceSessionPort } from '../agent/index.js';
+import { createSnapshotSource, createTurnAgent, toContextReader } from '../agent/index.js';
 import { createVoiceBridge } from '../adapters/voice.js';
 import type {
   DebugActionPort,
-  DebugControls,
-  DebugRehearsalPort,
   DebugSessionInput,
   DebugSurface,
-  DebugTickInput,
   DebugWindowFactory,
-  MockStateLibrary,
-  RehearsalStack,
 } from '../debug/index.js';
 import {
   createDebugActions,
-  createDebugControls,
   createDebugHub,
-  createDebugRehearsal,
   createDebugSurface,
-  runMatchScenario,
-  createObservingPolicy,
-  observeContext,
-  projectCounters,
+  observeSnapshots,
   projectWorld,
+  runMatchScenario,
   withDebugTelemetry,
 } from '../debug/index.js';
 import type { OverlaySurface } from '../overlay/index.js';
@@ -135,30 +104,19 @@ import { createTrayController } from '../tray/index.js';
 import type { KeySource } from '../trigger/index.js';
 import { createGestureRecognizer, createTriggerPump } from '../trigger/index.js';
 import type { ShellConfig } from './config.js';
-import { createFileMemoryStore } from './memory-store.js';
-import { buildPreambleInput } from './preamble.js';
+import { buildSessionPrompt } from './prompt.js';
 import { createSilentSession } from './silent-session.js';
-import { NULL_REFERENCE_DATA, nullTelemetry, type ShellTelemetry } from './telemetry.js';
+import { nullTelemetry, type ShellTelemetry } from './telemetry.js';
 
 export * from './config.js';
-export { createFileMemoryStore } from './memory-store.js';
-export { buildPreambleInput } from './preamble.js';
+export { buildSessionPrompt } from './prompt.js';
 export { createSilentSession, NOMINAL_SPEECH_MS } from './silent-session.js';
 export type { SilentSession, SilentSessionDeps } from './silent-session.js';
-export { nullTelemetry, NULL_REFERENCE_DATA } from './telemetry.js';
+export { nullTelemetry } from './telemetry.js';
 export type { ShellTelemetry } from './telemetry.js';
 
 /** How often health is polled and pushed to the tray. §8.1 wants a timer, not a subscription. */
 export const HEALTH_POLL_MS = 2_000;
-
-/**
- * How long preamble enrichment may take before the session opens without it.
- *
- * `packages/context` drops enrichment priority-first when this expires, so a slow lookup costs the
- * fifth enemy's matchup note rather than the whole preamble. Generous, because this runs once per
- * match while the draft is still on screen and nothing is waiting on it.
- */
-export const PREAMBLE_DEADLINE_MS = 3_000;
 
 /**
  * Sources arrive as a factory rather than as values so the shell can decide *whether* to build
@@ -197,81 +155,27 @@ export interface ShellDeps {
   readonly session?: MatchScopedSession;
   readonly environment?: MachineEnvironment;
   /**
-   * How the LLM coach reaches OpenAI, as a factory rather than a value.
-   *
-   * A factory because a `CoachModel` owns a pooled transport and is disposed with the coach, so one
-   * per match — and because a test substitutes `FakeCoachModel` here without the shell learning what
-   * an `Agent` is. `undefined` means the mode cannot be `llm`: `apps/desktop/src/main/index.ts`
-   * supplies one only when `config.openai.apiKey` is non-null, which is where the no-key degradation
-   * is decided and reported.
-   */
-  readonly coachModel?: (config: LlmCoachConfig) => CoachModel;
-  /**
-   * Called when the coach mode actually changed, so the caller can persist it.
-   *
-   * A callback rather than a write, because this file does no I/O — that is what lets
-   * `shell.test.ts` drive the whole composition root with no filesystem. `main/index.ts` wires it to
-   * `saveSettings`, and that pairing is the whole of what makes the tray's Coach row survive a
-   * restart. Absent means the choice is runtime-only, which is what every test wants.
-   */
-  readonly onCoachModeChanged?: (mode: CoachMode) => void;
-  /**
    * Only consulted when `config.debug.enabled`.
    *
    * Absent in `shell.test.ts` even with the flag on, which is deliberate: everything the inspector
    * *collects* is testable with no window, and the window itself is Tier 5's business.
    */
   readonly debugWindows?: DebugWindowFactory;
-  /**
-   * The mock game states the inspector may rehearse against (ADR-0038). Only consulted when
-   * `config.debug.enabled`.
-   *
-   * Injected rather than read, because it is a directory on disk and this file does no I/O — the
-   * same rule that keeps `onCoachModeChanged` a callback. `main/index.ts` points it at
-   * `fixtures/gsi/`; absent means the dropdown is empty and the rehearse button is dark, which is
-   * what a packaged build and most tests want.
-   */
-  readonly mockStates?: MockStateLibrary;
 }
 
 /**
- * A `CoachingSessionPort` with a match lifetime.
+ * A `VoiceSessionPort` with a match lifetime.
  *
- * The agent's port is deliberately narrower — open a turn, speak, abort, hear the events — and it
+ * The agent's port is deliberately narrower — open a turn, end it, abort, hear the events — and it
  * has no business knowing that a Realtime session exists, let alone when one opens. But *something*
- * has to open one, and the shell is what knows when a match starts: `SessionContext` is frozen at
- * `match_started` (ADR-0011) and the ledger and the coaching memory are per-match (ADR-0012,
- * ADR-0013). So the two extra methods live here rather than in `agent/contracts.ts`.
+ * has to open one, and the shell is what knows when a match starts: the instructions are frozen at
+ * `match_started` (ADR-0011). So the two extra methods live here rather than in
+ * `agent/contracts.ts`.
  */
-export interface MatchScopedSession extends CoachingSessionPort {
-  /** The preamble, already rendered. Opening is best-effort: a failure is a fault, not a throw. */
-  openMatch(preambleText: string): Promise<void>;
+export interface MatchScopedSession extends VoiceSessionPort {
+  /** The session instructions, already assembled. Opening is best-effort: a failure is a fault. */
+  openMatch(instructions: string): Promise<void>;
   closeMatch(reason: string): Promise<void>;
-}
-
-/** The coaching root, which lives for one match. */
-export interface MatchRuntime {
-  readonly matchId: MatchId;
-  readonly context: RikiContext;
-  /** Whichever coach is switched on. `driver.mode` says which, and it can change mid-match. */
-  readonly driver: CoachDriver;
-  readonly agent: CoachingAgent;
-  /**
-   * The match's event tape, shared by the engine and the narrator.
-   *
-   * Exposed for `scenario.speak` (ADR-0039), which narrates the current world the way the LLM coach
-   * does. Per-match like everything else here — a tape that outlived its match would narrate the
-   * previous one's events into the next one's first turn.
-   */
-  readonly tape: EventTape;
-  /**
-   * Replace the coach in place. Driven by `RikiShell.setCoachMode`, never called directly.
-   *
-   * On the runtime rather than on the shell because the two objects own different halves of the
-   * answer: the shell owns *which mode*, and only a live coaching root can act on it.
-   */
-  swap(next: CoachMode): void;
-  dispose(): void;
 }
 
 export interface RikiShell {
@@ -280,18 +184,10 @@ export interface RikiShell {
   readonly overlay: OverlaySurface;
   readonly trayController: TrayController;
   readonly session: MatchScopedSession;
-  /** Null between matches. See "Two lifetimes" above. */
-  readonly match: MatchRuntime | null;
-  /** Which coach is running, or would run at the next match. */
-  readonly coachMode: CoachMode;
-  /**
-   * Switch coaches, now.
-   *
-   * Returns the mode actually in force, which is not always the one asked for: `llm` with no key
-   * and no `coachModel` factory degrades to `static` and says so through telemetry. Requirement 1's
-   * "runtime-switchable" is this method — see `swapCoach` for what it does and does not preserve.
-   */
-  setCoachMode(mode: CoachMode): CoachMode;
+  /** App-lifetime. See "Two lifetimes" above for why this is no longer per match. */
+  readonly agent: TurnAgent;
+  /** The match a session has been opened for, or null between games. */
+  readonly matchId: MatchId | null;
   /** Null unless `config.debug.enabled`. The inspector, and the hub behind it. */
   readonly debug: DebugSurface | null;
   start(): Promise<void>;
@@ -313,14 +209,8 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   // ---------------------------------------------------------------------------------------------
   //
   // Built first, because two of the things below are *decorated* by it rather than merely watched:
-  // the telemetry sink every subsystem is handed, and the trigger policy the per-match engine takes.
+  // the telemetry sink every subsystem is handed, and the snapshot source the agent takes.
   // Everything else it sees, it subscribes to.
-
-  // The hub, the controls and the surface are built in three steps rather than through
-  // `createDebugComponent`, because the middle one needs things this function has not declared yet:
-  // `createDebugControls` closes over the coach mode, the quiet-mode flag and the live match. The
-  // closures do not run until somebody clicks, so referring forward is safe — and it is the only
-  // ordering that keeps the telemetry decorator above the controls and the surface below them.
 
   const debugHub = config.debug.enabled ? createDebugHub() : null;
 
@@ -333,101 +223,17 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
           now: () => clock.now(),
         });
 
-  /**
-   * The settings the inspector may move (ADR-0037), or null when there is no inspector.
-   *
-   * Null is what keeps "costs nothing when off" true of this half as well: with the flag off the
-   * engine is handed no `config` and no `detectors` and `createTriggerPolicy()` builds its own
-   * ladder, so not one of the wrappers in `controls.ts` is on the trigger path.
-   */
-  const debugControls: DebugControls | null =
-    debugHub === null
-      ? null
-      : createDebugControls({
-          coach: {
-            configured: config.coach.mode,
-            current: () => coachMode,
-            // The same call the tray row makes, so the checkbox and the panel cannot disagree and
-            // so a mode the inspector chose is persisted exactly as one the tray chose would be.
-            set: (mode) => void applyCoachMode(mode as CoachMode),
-            available: () => llmAvailable(),
-          },
-          unprompted: {
-            configured: config.privacy.unprompted,
-            current: () => unprompted,
-            set: (on) => {
-              unprompted = on;
-              // Applied to the live driver as well as remembered, so the change takes effect on the
-              // next tick rather than at the next match. Both coaches honour it identically.
-              match?.driver.setQuietMode(!on);
-            },
-          },
-          onChanged: (id, value) => {
-            telemetry.debugOverride(id, String(value));
-          },
-        });
-
-  /**
-   * The mock-state rehearsal (ADR-0038), or null when there is nothing to rehearse against.
-   *
-   * Two closures reach forward into things this function has not declared yet, exactly as
-   * `debugControls` does and for the same reason: neither runs until somebody clicks. `stack` is the
-   * interesting one — it hands the rehearsal the *same* `buildDriver` the live match is built from,
-   * pointed at a world it owns, so a rehearsal measures the coach the app actually runs rather than
-   * a second assembly of one.
-   */
-  const debugRehearsal: DebugRehearsalPort | null =
-    debugHub === null || deps.mockStates === undefined
-      ? null
-      : createDebugRehearsal({
-          library: deps.mockStates,
-          hub: debugHub,
-          now: () => clock.now(),
-          // The live store takes these same policies by default (`buildStateSubsystem`); naming
-          // them keeps the two from diverging silently if either side ever passes options.
-          world: () => createWorldModelStore({ staleness }),
-          stack: buildRehearsalStack,
-        });
-
   /** Every trace line goes through here, so `debug.enabled` off costs one null check (ADR-0039). */
   function trace(stage: string, message: string): void {
     debugHub?.recordTrace(stage, message, clock.now());
   }
 
   /**
-   * One tick, as the three trace lines it is worth (ADR-0039).
-   *
-   * Only ticks that produced a candidate, and only the winner's arithmetic. A match spends most of
-   * its time producing empty ticks at 2–8 Hz, and tracing those would push the interesting six lines
-   * out of a 200-row ring buffer within a minute — the Triggers panel already shows every tick, and
-   * this panel exists to show a *sequence* somebody can read.
-   */
-  function traceTick(tick: DebugTickInput): void {
-    if (debugHub === null) return;
-    const winner = tick.candidates.find((candidate) => candidate.rank === 'winner');
-    if (winner === undefined) return;
-
-    trace(
-      'detect',
-      `${winner.kind} — ${winner.text} (mag ${winner.magnitude.toFixed(2)}, conf ${winner.confidence.toFixed(2)})`,
-    );
-    trace(
-      'salience',
-      `${winner.salience.toFixed(3)} against threshold ${tick.gates.speakThreshold.toFixed(3)}`,
-    );
-
-    if (tick.decision.speak) {
-      trace('gates', `all passed — speaking on ${tick.decision.key}`);
-      return;
-    }
-    trace('gates', `refused: ${tick.decision.reason}`);
-  }
-
-  /**
    * The scenarios the inspector may run (ADR-0039), or null when there is no inspector.
    *
    * Both seams are asked for their availability on every frame, so the panel says *why* a row cannot
-   * run rather than rendering a button that does nothing.
+   * run rather than rendering a button that does nothing. Two closures reach forward into things
+   * this function has not declared yet; neither runs until somebody clicks.
    */
   const debugActions: DebugActionPort | null =
     debugHub === null
@@ -449,7 +255,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
               }),
           },
           speak: {
-            unavailable: () => (match === null ? 'no coaching root — start a match first' : null),
+            unavailable: () => (matchId === null ? 'no session — start a match first' : null),
             run: () => speakCurrentSnapshot(),
           },
           trace,
@@ -478,28 +284,26 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   /**
    * `scenario.speak` — the current snapshot, straight to the session port.
    *
-   * The narrator rather than `context.openTurn`, deliberately: this must not append to the ledger or
-   * spend the conversation window, because a debug button that changed what the model remembers
-   * would make the next real turn different for having pressed it.
+   * The one thing in the product that reaches `speakNow`, and it is behind `config.debug.enabled`.
+   * The chip stays hidden while it plays, because the interaction machine has no entry for a
+   * response with no gesture behind it (ADR-0042) — a debug button must not be able to make the
+   * overlay claim the player asked something.
+   *
+   * It renders through the same `SnapshotSource` the agent uses, so what it sends is exactly what a
+   * real turn would be given, and the inspector's Turns panel labels it `system` rather than
+   * `player`.
    */
   let scenarioTurns = 0;
   async function speakCurrentSnapshot(): Promise<void> {
-    const live = match;
-    if (live === null) throw new Error('no coaching root');
-
     scenarioTurns += 1;
     const turnId = `scenario_${String(scenarioTurns)}` as TurnId;
-    const text = createSnapshotNarrator({
-      world: toContextReader(state.world, { staleness }),
-      tape: toEventTapeReader(live.tape),
-    }).narrate(worldClock.now());
+    scenarioCause = true;
+    const text = snapshots.render(turnId, worldClock.now()).text;
+    scenarioCause = false;
 
-    trace('coach', `scenario turn ${turnId}, ${String(text.length)} chars of snapshot`);
-    await session.speakUnprompted(
-      { turnId, snapshotText: text },
-      { eventId: 'scenario.speak', salience: 1 },
-    );
-    trace('session', `speakUnprompted handed over for ${turnId}`);
+    trace('turn', `scenario turn ${turnId}, ${String(text.length)} chars of snapshot`);
+    await session.speakNow({ turnId, snapshotText: text });
+    trace('session', `speakNow handed over for ${turnId}`);
   }
 
   const debug: DebugSurface | null =
@@ -508,8 +312,6 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       : createDebugSurface({
           hub: debugHub,
           ...(deps.debugWindows === undefined ? {} : { windows: deps.debugWindows }),
-          ...(debugControls === null ? {} : { controls: debugControls }),
-          ...(debugRehearsal === null ? {} : { rehearsal: debugRehearsal }),
           ...(debugActions === null ? {} : { actions: debugActions }),
           timers,
           now: () => clock.now(),
@@ -592,9 +394,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   const session: MatchScopedSession =
     deps.session ?? createSilentSession({ clock: worldClock, timers });
 
-  const voiceCommands = createVoiceBridge({
-    phase: { phase: () => runtime.snapshot().phase.kind },
-  });
+  const voiceCommands = createVoiceBridge();
 
   const runtime = createSessionRuntime(
     {
@@ -659,10 +459,8 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     }),
   );
 
-  // App lifetime, not match lifetime. The session outlives any one match and the chip has to react
-  // to it in the menu as well as in a game: push-to-talk is not gated on being in a match, only
-  // *unprompted* speech is (gate 1, `not_in_match`). Attaching this per match would mean a turn the
-  // player asked for produced no chip between games.
+  // App lifetime. The session outlives any one match and the chip has to react to it in the menu as
+  // well as in a game: push-to-talk is not gated on being in a match, and never was.
   disposers.push(
     voiceCommands.attach(session, (input) => {
       runtime.dispatch(input);
@@ -670,391 +468,166 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
   );
 
   // ---------------------------------------------------------------------------------------------
-  // The coaching root, per match
+  // The turn agent — app lifetime, not match lifetime
   // ---------------------------------------------------------------------------------------------
 
-  const memoryStore = createPlayerMemoryStore({
-    store: createFileMemoryStore({ dir: config.dataDir }),
+  /**
+   * True only for the duration of a `scenario.speak` render.
+   *
+   * The inspector's Turns panel has to be able to tell a button press from a question somebody
+   * asked, and both go through the one `SnapshotSource`. A flag rather than a second source,
+   * because a second source is a second set of options that would eventually disagree with the
+   * first about what a turn is given — which is exactly what `scenario.speak` exists to rule out.
+   */
+  let scenarioCause = false;
+
+  const rendered: SnapshotSource = createSnapshotSource({
+    world: toContextReader(state.world, { staleness }),
+    // `PrivacyConfig` is the app's settings and `PrivacyPolicy` is what a renderer takes; the two
+    // are deliberately different shapes, and this is the one place they meet. Player names have no
+    // setting because nothing renders one — a policy field with no producer would read as a
+    // decision somebody made, and REPO_SKELETON.md §7.2 wants both defaults off either way.
+    privacy: { allowChatText: config.privacy.chatEgress, allowPlayerNames: false },
   });
 
-  let match: MatchRuntime | null = null;
+  /**
+   * Decoration, not instrumentation: `observeSnapshots` returns the renderer's own answer and the
+   * agent cannot tell the difference (ADR-0032). Everything downstream is handed this one either
+   * way, so the scenario path is covered as well as the player-turn path.
+   */
+  const snapshots: SnapshotSource =
+    debug === null
+      ? rendered
+      : observeSnapshots({
+          delegate: rendered,
+          clock: () => state.world.snapshot(worldClock.now()).clock,
+          cause: () => (scenarioCause ? 'system' : 'player'),
+          onRendered: (turn) => {
+            debug.hub.recordTurnOpened(turn);
+            trace(
+              'snapshot',
+              `turn ${turn.turnId} — ${String(turn.snapshotTokens)} tokens, omitted: ${
+                turn.snapshotOmitted.length === 0 ? 'none' : turn.snapshotOmitted.join(', ')
+              }`,
+            );
+          },
+        });
+
+  const agent = createTurnAgent({ snapshot: snapshots, session, clock: worldClock, telemetry });
 
   /**
-   * The mode in force, which is `config.coach.mode` until somebody moves it.
+   * Push-to-talk, both edges — and **this is the wire that was missing**.
    *
-   * Shell state rather than match state, because it has to survive between games — a player who
-   * switches coaches at the end of one match expects the next one to start that way, and the
-   * coaching root does not exist in between (ADR-0026).
+   * `beginPlayerTurn` and `endPlayerTurn` existed, `voice/session.ts` implemented the directives
+   * behind them, and the voice renderer handled those directives; nothing in between ever called
+   * them. The trigger pump dispatched into the interaction machine, the machine drove the chip, and
+   * the chip lit up for a turn that never reached a session. It was invisible because every layer
+   * was individually tested and the composition root is the only place the gap existed.
+   *
+   * The machine's *phase* is the source of truth rather than the key events, because the machine is
+   * what resolves the gesture: push ends on release and latch ends on the next tap
+   * (`endsGesture`), server VAD can end a turn with the key still held (ADR-0017), and a barge-in
+   * goes from Speaking straight to Listening with no Armed in between. Reading key events here
+   * would be a second copy of all three rules.
+   *
+   * It is in the shell rather than in `main/session/` because that directory is the pure
+   * interaction machine and may not import `@riki/*` at all (eslint.config.js) — it has heard of
+   * `turn.responseEnded` and never of a snapshot.
    */
-  let coachMode: CoachMode = config.coach.mode;
+  const capturePhases = new Set(['armed', 'listening']);
+  let capturing: TurnId | null = null;
+  let lastPhase = runtime.snapshot().phase.kind;
 
-  /**
-   * dota2 §6.4's off switch, as shell state rather than as a read of `config.privacy.unprompted`.
-   *
-   * It is a variable for one reason: the inspector's Controls panel can move it (ADR-0037), and a
-   * driver rebuilt for the next match or for a coach swap has to be given the value in force rather
-   * than the one on disk. With the inspector off nothing ever assigns to it, so every call below
-   * behaves exactly as the direct config read it replaced.
-   *
-   * It is deliberately **not** persisted. REPO_SKELETON.md §7.2 requires unprompted speech to ship
-   * off, and a debug window that could make "on" sticky is how that default would quietly drift.
-   */
-  let unprompted: boolean = config.privacy.unprompted;
+  disposers.push(
+    runtime.subscribe((next) => {
+      const was = lastPhase;
+      const is = next.phase.kind;
+      lastPhase = is;
+      if (was === is) return;
 
-  /**
-   * Can `llm` actually run?
-   *
-   * Two things have to be true and neither is a setting: a key resolved from the environment
-   * (`@riki/config`), and a factory that knows how to build a model from it. `apps/desktop/src/main/
-   * index.ts` supplies the second only when it has the first, so this one check covers both — and it
-   * is checked here rather than at the call site so the degradation is reported once, by name,
-   * instead of being discovered as a coach that never speaks.
-   */
-  function llmAvailable(): boolean {
-    return config.openai.apiKey !== null && deps.coachModel !== undefined;
-  }
+      // Still capturing. `armed → listening` is the microphone opening, not the gesture ending —
+      // conflating the two would cancel every turn a millisecond after it began, which is what the
+      // first version of this block did.
+      if (capturePhases.has(is)) {
+        // Entering the set from outside it is the press. Synchronous all the way down: the
+        // overlay's ≤100 ms budget forbids an await between the key press and the window being
+        // shown, which is why `beginPlayerTurn` returns an id rather than a promise.
+        if (!capturePhases.has(was)) {
+          const gesture = next.phase.kind === 'armed' ? next.phase.gesture : 'push';
+          capturing = agent.beginPlayerTurn(gesture);
+          trace('turn', `push-to-talk ${String(capturing)} (${gesture})`);
+        }
+        return;
+      }
 
-  function resolveMode(wanted: CoachMode): CoachMode {
-    if (wanted !== 'llm') return wanted;
-    if (llmAvailable()) return 'llm';
-    telemetry.coachUnavailable('RIKI_OPENAI_API_KEY is not set');
-    return 'static';
-  }
+      if (!capturePhases.has(was) || capturing === null) return;
+      const turnId = capturing;
+      capturing = null;
 
-  /**
-   * Build the coach the current mode asks for.
-   *
-   * Both branches end in a `CoachDriver` and the caller cannot tell them apart, which is the whole
-   * point of `agent/driver.ts`. What differs is what each needs to be handed: the deterministic coach
-   * wants the shared tape and the novelty gate's memory, and the LLM coach wants a narrator and a
-   * model. Neither wants a timer — the LLM coach is push-only.
-   */
-  function buildDriver(
-    mode: CoachMode,
-    context: RikiContext,
-    tape: EventTape,
-    /**
-     * Which world this coach reads, and whether its ticks are worth reporting.
-     *
-     * Defaults to the live pair, so every call that predates ADR-0038 is unchanged. The inspector's
-     * rehearsal passes a scratch store and `observe: false`: a tick in the Triggers panel claims
-     * *this is what the engine decided against the world at that moment*, and a rehearsal's is a
-     * decision about a state nobody is playing. Reporting one would put a fabricated ladder next to
-     * real ones with nothing to tell them apart.
-     */
-    over: { readonly world: WorldModelStore; readonly observe: boolean } = {
-      world: state.world,
-      observe: true,
-    },
-  ): CoachDriver {
-    const world = over.world;
-
-    if (mode === 'llm' && deps.coachModel !== undefined) {
-      const coachConfig: LlmCoachConfig = withCoachConfig(
-        config.coach.model === null ? {} : { model: config.coach.model },
-      );
-      return llmCoachDriver(
-        createLlmCoach({
-          world,
-          // The same renderer the voice model reads, with a wider budget — `narrator.ts` says why
-          // that is sound and why it changes none of the conversation window's arithmetic.
-          narrator: createSnapshotNarrator({
-            world: toContextReader(world, { staleness }),
-            tape: toEventTapeReader(tape),
-          }),
-          model: deps.coachModel(coachConfig),
-          clock: worldClock,
-          config: coachConfig,
-          telemetry: telemetry satisfies CoachTelemetry,
-        }),
-      );
-    }
-
-    // `createTriggerPolicy()` is what `createEventEngine` would have built for itself; naming it
-    // here is what lets the inspector's observer sit in front of it. The gate ladder is the one
-    // thing in the app that is otherwise unreachable — the engine keeps the latch set, the per-kind
-    // cooldowns and the intensity score private, and `GateContext` is where they surface.
-    //
-    // Only the deterministic coach has a ladder to watch: the LLM coach decides inside a model, so
-    // under `llm` the Triggers panel is legitimately empty. debug-inspector.md §2.
-    //
-    // `debugControls?.gates` is the second half of the same idea, pointed at behaviour rather than
-    // at observation (ADR-0037): thirteen wrappers over the same `GATES`, each of which refuses
-    // exactly what the real gate refuses until somebody switches it off in the Controls panel.
-    // `undefined` — the flag off — takes `createTriggerPolicy`'s own default, so nothing is wrapped.
-    const policy: TriggerPolicy = createTriggerPolicy(debugControls?.gates);
-
-    const engine = createEventEngine({
-      world,
-      clock: worldClock,
-      memory: context.coaching,
-      tape,
-      // Both spread away when there is no inspector, leaving the engine to build
-      // `DEFAULT_TRIGGER_CONFIG` and `defaultDetectors()` for itself exactly as before.
-      ...(debugControls === null
-        ? {}
-        : { config: debugControls.config, detectors: debugControls.detectors }),
-      policy:
-        debug === null || !over.observe
-          ? policy
-          : createObservingPolicy({
-              delegate: policy,
-              worldVersion: () => world.version,
-              report: (tick) => {
-                debug.hub.recordTick(tick);
-                traceTick(tick);
-              },
-            }),
-    });
-
-    return staticCoachDriver(engine);
-  }
-
-  /**
-   * A coaching root for one rehearsal, over a world the inspector fed by hand (ADR-0038).
-   *
-   * Everything the live match gets, built the same way and thrown away afterwards: its own tape, its
-   * own assembler and therefore its own ledger and coaching memory, and whichever coach the mode in
-   * force asks for. That last part is the point — `buildDriver` is shared rather than reimplemented,
-   * so a rehearsal reads the same detectors, the same `TriggerConfig` (including whatever the
-   * Controls panel has it overridden to) and the same model as the match would.
-   *
-   * **The rehearsed coach is not put in quiet mode, and that is a decision rather than an
-   * oversight.** `unprompted` ships off (REPO_SKELETON.md §7.2), so applying it here would make
-   * every rehearsal decline `quiet_mode` on a default install and the feature would be dead on
-   * arrival. What quiet mode protects is unprompted *speech*, and a rehearsal has no path to a
-   * session: it produces text into a debug window because somebody clicked a button, which is the
-   * definition of asking. The consequence to know while reading a ladder: the Gate state panel is
-   * about the live engine, and gate 2 will not agree with it.
-   *
-   * `durable` is the real memory store, read-only on this path — `openTurn` never writes it, and
-   * `openSession` is not called, so no preamble is assembled and nothing reaches the network for it.
-   */
-  function buildRehearsalStack(world: WorldModelStore, matchId: MatchId): RehearsalStack {
-    const tape = createEventTape();
-    const context = createContextAssembler({
-      matchId,
-      world: toContextReader(world, { staleness }),
-      preamble: createPreambleAssembler({ reference: NULL_REFERENCE_DATA }),
-      tape: toEventTapeReader(tape),
-      durable: memoryStore,
-    });
-
-    // `coachMode` rather than `resolveMode(coachMode)`: the resolver reports the no-key degradation
-    // through telemetry, and doing that once per button press would turn one condition into a log
-    // flood. `buildDriver` falls back to the deterministic coach on exactly the same test.
-    const driver = buildDriver(coachMode, context, tape, { world, observe: false });
-
-    return {
-      context,
-      driver,
-      tape,
-      dispose: () => {
-        driver.dispose();
-      },
-    };
-  }
-
-  /**
-   * Switch coaches, now — the implementation behind `RikiShell.setCoachMode` and the tray row.
-   *
-   * A named function rather than a method body because two callers need it and one of them is
-   * registered before the shell object exists.
-   */
-  function setCoachMode(wanted: CoachMode): CoachMode {
-    const before = coachMode;
-    coachMode = resolveMode(wanted);
-    // Between matches there is no coaching root to swap, and that is not a failure: the mode is
-    // shell state and `openMatch` reads it. The tray reflects the answer either way.
-    match?.swap(coachMode);
-    // Only on a real change, and only the *resolved* mode — asking for `llm` with no key behind it
-    // persists `static`, because that is what the player will actually get next launch and a
-    // settings file that disagrees with the tray is worse than one that is merely conservative.
-    if (coachMode !== before) deps.onCoachModeChanged?.(coachMode);
-    return coachMode;
-  }
-
-  /**
-   * `setCoachMode`, and then the tray told what actually happened.
-   *
-   * Three callers need exactly this pair — the tray's own row, `RikiShell.setCoachMode`, and the
-   * inspector's `coach.mode` control — and the second half is the one that is easy to omit: the tray
-   * reflects the *resolved* mode, so a checkbox that ticked after asking for `llm` with no key
-   * behind it would be the product lying about its own state.
-   */
-  function applyCoachMode(wanted: CoachMode): CoachMode {
-    const next = setCoachMode(wanted);
-    trayController.setCoach(next, llmAvailable());
-    return next;
-  }
-
-  function openMatch(matchId: string): void {
-    closeMatch();
-
-    // The tape is built first and shared, because the two consumers depend on each other in a
-    // circle otherwise: `ContextAssembler` wants an `EventTapeReader`, and `EventEngine` wants the
-    // assembler's `CoachingMemoryReader`. Hoisting the one thing they both need breaks it.
-    //
-    // Under the LLM coach nothing fills it — the tape is `packages/events`' record of its own
-    // detections — so `recent:` renders empty and the narrator says nothing about what has been
-    // happening. That is a real gap in `llm` mode rather than a shrug, and it is
-    // llm-coach-architecture.md §14 row 3.
-    const tape = createEventTape();
-
-    const assembled = createContextAssembler({
-      matchId: matchId as MatchId,
-      world: toContextReader(state.world, { staleness }),
-      preamble: createPreambleAssembler({ reference: NULL_REFERENCE_DATA }),
-      tape: toEventTapeReader(tape),
-      durable: memoryStore,
-    });
-
-    // Decoration, not instrumentation: `observeContext` returns the assembler's own answers and the
-    // agent cannot tell the difference. Everything downstream is handed this one either way, so the
-    // player-turn path is covered as well as the coaching one — and so is whichever coach is
-    // running, since both are built from this `context`.
-    const context: RikiContext =
-      debug === null
-        ? assembled
-        : observeContext({
-            delegate: assembled,
-            clock: () => state.world.snapshot(worldClock.now()).clock,
-            onOpened: (turn) => {
-              debug.hub.recordTurnOpened(turn);
-              trace(
-                'coach',
-                `turn ${turn.turnId} opened — ${turn.cause}, ${String(turn.snapshotText.length)} chars of snapshot`,
-              );
-            },
-            onClosed: (turnId, outcome) => {
-              debug.hub.recordTurnClosed(turnId, outcome);
-            },
-          });
-
-    coachMode = resolveMode(coachMode);
-    let driver = buildDriver(coachMode, context, tape);
-    let agent = createCoachingAgent({
-      world: state.world,
-      context,
-      driver,
-      session,
-      clock: worldClock,
-      telemetry,
-    });
-
-    // dota2 §6.4's off switch, from settings. Applied before `start()` so a player who turned
-    // unprompted speech off never hears a first trigger slip through on launch. It is one of the
-    // two controls both coaches honour identically (`llm-coach-architecture.md` §4.3).
-    driver.setQuietMode(!unprompted);
-    let stopAgent = agent.start();
-    telemetry.coachMode(driver.mode);
-
-    /**
-     * Swap the coach without ending the match.
-     *
-     * **What survives:** the conversation ledger, the coaching memory, the preamble, the durable
-     * player memory and the session. All of them belong to the match rather than to the coach, and
-     * a mode change is not a new game.
-     *
-     * **What does not:** the deterministic coach's latches and cooldowns, and the LLM coach's record
-     * of what it said. Both are the *coach's* memory of its own behaviour, and neither translates —
-     * a latch on `enemy_missing:sf` means nothing to a model, and "I said this forty seconds ago"
-     * means nothing to a gate ladder. So the new coach starts fresh, which in practice means the
-     * first moments after a switch may repeat something the previous coach covered. That is the
-     * honest cost of switching mid-match and it is why the tray row exists for tuning rather than
-     * as a thing to flip during a fight.
-     */
-    function swap(next: CoachMode): void {
-      if (next === driver.mode) return;
-      stopAgent();
-      agent.dispose();
-
-      driver = buildDriver(next, context, tape);
-      agent = createCoachingAgent({
-        world: state.world,
-        context,
-        driver,
-        session,
-        clock: worldClock,
-        telemetry,
+      // Processing is the release: the gesture ended and there is audio to answer. Leaving a
+      // capture phase any other way — Esc, a fault, a device that went away — is a cancellation,
+      // and the snapshot is not rendered for one.
+      const reason = is === 'processing' ? 'release' : 'cancel';
+      trace('turn', `${reason} ${String(turnId)}`);
+      void agent.endPlayerTurn(turnId, reason).catch((error: unknown) => {
+        // A turn that cannot be handed over is a fault worth reporting and not worth crashing on:
+        // the chip is already in Processing, and the session's own fault path takes it from there.
+        telemetry.rendererFault(error instanceof Error ? error.message : String(error));
       });
-      driver.setQuietMode(!unprompted);
-      stopAgent = agent.start();
-      telemetry.coachMode(driver.mode);
-    }
+    }),
+  );
 
-    match = {
-      matchId: matchId as MatchId,
-      context,
-      tape,
-      get driver(): CoachDriver {
-        return driver;
-      },
-      get agent(): CoachingAgent {
-        return agent;
-      },
-      swap,
-      dispose(): void {
-        stopAgent();
-        agent.dispose();
-      },
-    };
+  // ---------------------------------------------------------------------------------------------
+  // The match, which is only the session
+  // ---------------------------------------------------------------------------------------------
 
-    // The Tier 1 preamble, then the session. Both are async and neither may block this function:
-    // `openMatch` runs on the lifecycle callback, and an await here would delay every later
-    // observation behind a network round trip.
-    //
-    // Not awaited also means the first coaching turn can be handed over before the session is
-    // open. That is the reason `main/voice/session.ts` queues directives until `voice.ready` —
-    // without it the first advice of a match would be the one that reliably disappeared.
-    void openSession(matchId as MatchId, context);
-  }
+  let matchId: MatchId | null = null;
 
   /**
-   * The preamble, assembled once and frozen (ADR-0011), and the Realtime session it configures.
+   * The session instructions, assembled once and frozen (ADR-0011), and the session they configure.
+   *
+   * **The draft comes off the event, not off `state.world`** — `prompt.ts`'s header says why, and it
+   * is the one thing here that is easy to get wrong twice: the state subsystem resets the world
+   * model before it announces `match_started`, so a listener that reads it on this edge reads
+   * nothing and gets no complaint.
    *
    * Failures are swallowed into telemetry deliberately. Every one of them — no API key, a refused
-   * mint, an empty draft — leaves a Riki that still detects, still gates, still assembles briefs
-   * and simply does not speak, which is a strictly better outcome than a match that does not start.
+   * mint — leaves a Riki that still observes the game and simply cannot answer, which is a strictly
+   * better outcome than a match that does not start.
+   *
+   * Not awaited by the lifecycle callback: `openMatch` runs on it, and an await there would delay
+   * every later observation behind a network round trip.
    */
-  async function openSession(matchId: MatchId, context: RikiContext): Promise<void> {
+  async function openSession(id: MatchId, heroes: readonly string[]): Promise<void> {
     try {
-      const memory = await memoryStore.load();
-      const now = worldClock.now();
-      const assembled = await context.openSession(
-        buildPreambleInput(matchId, state.world, memory, now),
-        (now + PREAMBLE_DEADLINE_MS) as MonoMs,
-      );
+      const instructions = buildSessionPrompt(heroes);
       // Still the right match? A quick restart can land here after `closeMatch`, and opening a
-      // session for a match that has ended would leave one running with nothing to say.
-      if (match?.matchId !== matchId) return;
-      await session.openMatch(assembled.preamble.text);
+      // session for a match that has ended would leave one running with nothing to answer.
+      if (matchId !== id) return;
+      trace('session', `opening for ${id}, ${String(instructions.length)} chars of instructions`);
+      await session.openMatch(instructions);
     } catch (error: unknown) {
       telemetry.sessionOpenFailed(error instanceof Error ? error.message : String(error));
     }
   }
 
   function closeMatch(): void {
-    if (match !== null) void session.closeMatch('match ended');
-    match?.dispose();
-    match = null;
+    if (matchId !== null) void session.closeMatch('match ended');
+    matchId = null;
   }
 
   disposers.push(
     state.onLifecycle((event: MatchLifecycleEvent) => {
       if (event.type === 'match_started') {
-        // Before `openMatch`, for the same reason the state subsystem resets the world before it
-        // announces: everything the inspector holds is keyed to the match that just ended, and the
-        // first tick of the new one must not land in the old one's buffers.
+        // Before the session opens, for the same reason the state subsystem resets the world before
+        // it announces: everything the inspector holds is keyed to the match that just ended, and
+        // the first turn of the new one must not land in the old one's buffers.
         debug?.hub.resetMatch();
-        openMatch(event.matchId);
-      }
-      if (event.type === 'match_ended') {
         closeMatch();
-        // Durable memory is batched — at match end and on a slow timer, never per observation
-        // (context-and-memory §6.4).
-        void memoryStore.flush();
+        matchId = event.matchId as MatchId;
+        void openSession(matchId, event.heroes);
       }
+      if (event.type === 'match_ended') closeMatch();
     }),
   );
 
@@ -1064,17 +637,6 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
   if (debug !== null) {
     const projectWorldState = projectWorld({ world: state.world, staleness });
-
-    /**
-     * The engine's counters, or null when there is no engine to ask.
-     *
-     * A hand-written guard because `CoachDriver` is an interface with a `mode` field rather than a
-     * discriminated union, so `mode === 'static'` narrows nothing on its own. Widening the port to
-     * a union to please this one call site would put `engine` back on the interface that
-     * `agent/driver.ts` deliberately keeps it off.
-     */
-    const staticCountersOf = (driver: CoachDriver | undefined): TriggerCounters | null =>
-      driver?.mode === 'static' ? (driver as StaticCoachDriver).engine.counters() : null;
 
     /** `BusStats`' two maps as the frame's arrays, read once so the three reads agree. */
     const busOf = (stats: BusStats): DebugSessionInput['bus'] => ({
@@ -1090,17 +652,12 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
         return {
           matchId: state.matchId,
           // Read separately, because the two disagree exactly when something is wrong: a match id
-          // with no coaching root means `match_started` reached the state subsystem and not the
-          // shell, which is silent everywhere else.
-          coachingRoot: match !== null,
+          // with no session means `match_started` reached the state subsystem and not the shell,
+          // which is silent everywhere else.
+          matchSession: matchId !== null,
           chipPhase: chip.phase.kind,
           chipVisible: overlay.window.isVisible(),
           muted: chip.muted,
-          // The driver's mode rather than the shell's `coachMode`: between matches there is no
-          // driver, and "which coach *would* run" is a different claim from "which one is running".
-          coachMode: match?.driver.mode ?? 'none',
-          // The value in force, which is the config's until the Controls panel moves it.
-          unprompted,
           healthLevel: health.level,
           healthSummary: health.summary,
           sources: health.sources.map((source) => ({
@@ -1116,29 +673,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
 
       world: projectWorldState,
 
-      /**
-       * Empty between matches *and* under the LLM coach, for two different right reasons.
-       *
-       * Between matches: the counters live on the engine and the engine lives for one match
-       * (ADR-0026). Under `llm`: `packages/events` is not running at all, so there is nothing to
-       * count — the two coaches' counter shapes share no fields, which is exactly why
-       * `agent/driver.ts` keeps `engine` off the port and puts it on `StaticCoachDriver`.
-       * `session.coachMode` in the same frame is what tells the two cases apart.
-       */
-      counters: () => {
-        const counters = staticCountersOf(match?.driver);
-        return counters === null
-          ? { detected: [], suppressed: [], spoken: 0 }
-          : projectCounters(counters);
-      },
-
-      // Empty is impossible here — `debugControls` is non-null whenever `debug` is — but the
-      // fallback keeps the frame's shape a fact rather than an invariant somebody has to hold.
-      controls: () => debugControls?.list() ?? [],
-
-      // Empty *is* possible here, and it is the ordinary answer in a packaged build and in every
-      // test that wires no library: the dropdown then says there is nothing to rehearse against.
-      mocks: () => debugRehearsal?.states() ?? [],
+      actions: () => debugActions?.list() ?? [],
     });
 
     // App lifetime, not match lifetime — the same reason the voice bridge is attached here. A
@@ -1146,6 +681,10 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     // rebuilt per match would miss it.
     disposers.push(
       session.onEvent((voice) => {
+        if (voice.kind === 'turn' && voice.event === 'responseEnded') {
+          debug.hub.recordTurnClosed(String(voice.turnId), 'spoke');
+          return;
+        }
         if (voice.kind !== 'transcript' || !voice.final) return;
         if (voice.role === 'agent') {
           debug.hub.recordAgentTranscript(String(voice.turnId), voice.text);
@@ -1182,13 +721,7 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       runtime.dispatch({ kind: 'mute', muted });
       trayController.setMuted(muted);
     }),
-    trayController.onAction((action) => {
-      if (action !== 'toggle-coach') return;
-      applyCoachMode(coachMode === 'llm' ? 'static' : 'llm');
-    }),
   );
-
-  trayController.setCoach(coachMode, llmAvailable());
 
   const shell: RikiShell = {
     state,
@@ -1196,16 +729,11 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
     overlay,
     trayController,
     session,
+    agent,
 
-    get match(): MatchRuntime | null {
-      return match;
+    get matchId(): MatchId | null {
+      return matchId;
     },
-
-    get coachMode(): CoachMode {
-      return coachMode;
-    },
-
-    setCoachMode: applyCoachMode,
 
     debug,
 
@@ -1238,7 +766,6 @@ export function createRikiShell(deps: ShellDeps): RikiShell {
       overlay.dispose();
       debug?.dispose();
       await state.stop();
-      await memoryStore.flush();
     },
 
     onQuitRequested(listener): Unsubscribe {

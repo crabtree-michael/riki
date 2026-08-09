@@ -36,13 +36,13 @@ export interface Clock {
 // Identity
 // -----------------------------------------------------------------------------------------------
 
-/** One agent turn. Budgets, memos, cancellation and ledger grouping are all scoped to it. */
+/** One agent turn. The snapshot is rendered for one, and carries its id. */
 export type TurnId = string & { readonly __brand: 'TurnId' };
 
-/** The session's id for one function call. Opaque, off the wire, and the join key for a command. */
+/** The session's id for one function call. Opaque, off the wire, and the join key for a tool call. */
 export type CallId = string & { readonly __brand: 'CallId' };
 
-/** One match. The ledger is keyed by it; durable memory deliberately is not (ADR-0013). */
+/** One match. */
 export type MatchId = string & { readonly __brand: 'MatchId' };
 
 export type HeroId = string & { readonly __brand: 'HeroId' };
@@ -50,9 +50,6 @@ export type ItemId = string & { readonly __brand: 'ItemId' };
 
 /** A named capture region. `CapturePort`'s vocabulary, owned by state-capture §4.3. */
 export type RegionId = string & { readonly __brand: 'RegionId' };
-
-/** An event type from `packages/events` (dota2 §6.4), named here without importing that package. */
-export type EventId = string & { readonly __brand: 'EventId' };
 
 export type Role = 'carry' | 'mid' | 'offlane' | 'soft_support' | 'hard_support' | 'unknown';
 

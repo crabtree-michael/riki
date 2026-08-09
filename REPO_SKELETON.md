@@ -210,9 +210,8 @@ to a file that only `tsc --build` creates. **If you add a package, copy this sha
 | Chat / kill feed from `console.log` | `packages/log-tail` | dota2 §2.3 |
 | Merging sources, staleness, confidence | `packages/world-model` | dota2 §4 |
 | The ~300-token snapshot the LLM sees | `packages/context` | dota2 §6.2 |
-| The coaching brief the LLM is given for one moment | `packages/context/src/coaching` | coaching §4–§5 |
-| What Riki coaches on, and when | `packages/events` | coaching-trigger, dota2 §6.4 |
-| Wiring events → context → realtime | `apps/desktop/src/main/agent` | coaching §9.3 |
+| The tools the model reaches the world through | `packages/world-model/src/tools` | conversational §4 |
+| Wiring world model → context → realtime | `apps/desktop/src/main/agent` | conversational §3 |
 | Realtime session, barge-in, truncation | `packages/realtime` | realtime §2, §4, §5 |
 | Mic level, earcons, ducking, resampling | `packages/audio` | ui-design §7, realtime §3 |
 | Screen capture, calibration, minimap CV | `crates/riki-*` | dota2 §2.2 |
@@ -244,7 +243,7 @@ House style is already set by the existing docs and should hold: state assumptio
 mark the ones that are load-bearing, record rejected alternatives so they are not re-proposed.
 
 **`docs/` is not the only place knowledge lives.** A document has to be opened to help
-anyone, and an agent dispatched into `packages/events` will not open this one. Skills —
+anyone, and an agent dispatched into `packages/context` will not open this one. Skills —
 `.claude/skills/`, §13 — carry the same knowledge into the task automatically. Everything in
 this section still holds; §13 covers the part that `docs/` structurally cannot.
 
@@ -393,8 +392,8 @@ Two separate things, often conflated:
 
 Reported per package, not gated at a blanket percentage. A uniform threshold pushes agents toward
 testing `apps/desktop` wiring, which is the least valuable code in the repo. Where a floor is
-useful is `packages/world-model`, `packages/context`, and `packages/events` — pure logic, cheap
-to test, and where a silent bug becomes wrong advice in a player's ear. Propose 85% there and
+useful is `packages/world-model` and `packages/context` — pure logic, cheap to test, and where a
+silent bug becomes wrong advice in a player's ear. Propose 85% there and
 report-only elsewhere.
 
 ---
@@ -677,8 +676,8 @@ infrastructure order that unblocks it, front-loaded so agents are productive imm
 | 2 | `packages/protocol` + `pnpm codegen` + contract test harness | Any cross-boundary work. **Landed for the sidecar boundary.** zod → JSON Schema → Rust is implemented in `scripts/codegen.mjs`, `crates/riki-ipc/src/generated/` is generated from it, and the Tier 3 corpus is `fixtures/protocol/` with a half in each language ([ADR-0029](docs/adr/0029-newline-delimited-json-over-stdio-with-a-hello-ready-handshake.md)). The **voice window's** main ↔ renderer bridge is now here too (`schemas/voice.ts`, `voice-codec.ts`, `fixtures/protocol/voice/`) — a process boundary but not a language one, so nothing generates from it. The **overlay's** main ↔ renderer messages are still in `apps/desktop/src/shared` and have not moved |
 | 3 | `packages/config` + `.env.example` + `.env` gitignored + API-key resolution (§7.1) | Every package that needs a setting, and all voice work. **Landed.** `env.ts` is the whole environment surface and everything else in the package is pure, so which layer wins is a Tier 1 test. `RIKI_OPENAI_API_KEY` deliberately has no CLI flag and no `settings.json` row — see §7.1 |
 | 4 | `packages/gsi` + `packages/world-model` + `fixtures/gsi/` + `FakeGsiSource` + `tools/gsi-replay` | The dota2 §11.1 milestone, and `pnpm dev:replay`. **Landed except `tools/gsi-replay`** — `packages/gsi`, `packages/log-tail` and `packages/world-model` carry behaviour and tests, `FakeGsiSource` and the fixture corpus exist, but the replay tool and `pnpm dev:replay` still need the composition root (§8 of the state-capture architecture), which belongs to step 6 |
-| 5 | `packages/context` + `fixtures/golden/` | Snapshot and coaching-brief format iteration. **Landed**, including `src/coaching/` and `fixtures/golden/coaching/`. The command surface this step originally included was deleted by ADR-0023 |
-| 5b | `packages/events` + `apps/desktop/src/main/agent/` | Whether Riki speaks at all, and the wiring of events → context → realtime. **Landed** against `coaching-trigger-architecture.md`, which had to be written first — it was cited by four documents and had never been committed. Tuning (its §16 step 3) is open |
+| 5 | `packages/context` + `fixtures/golden/` | Snapshot format iteration. **Landed**, and since pruned to the snapshot renderer and the hero reference data alone: the command surface it originally included went with ADR-0023, and Tier 1, the coaching brief, the ledger and the memory layer went with [ADR-0042](docs/adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) |
+| 5b | ~~`packages/events`~~ + `apps/desktop/src/main/agent/` | ~~Whether Riki speaks at all~~ — **deleted** (ADR-0042). `packages/events` and `packages/coach` are gone, and `main/agent/` is now the turn agent: a key press, a snapshot, a session turn. The tool surface that replaces them is waves 2–3 of `docs/design/conversational-migration-tickets.md` |
 | 6 | `apps/desktop` shell: main process, tray, hidden overlay window, hotkey, Playwright harness | All UI work. **Landed except the Playwright harness.** `src/main/index.ts` has `app.whenReady()`, the single-instance lock and the quit drain; `main/shell/` is the Electron-free composition root, `main/state/` is state-capture §8, and `main/sidecar/`, `main/tray/` and `main/trigger/` are the three surfaces. The coaching root now runs in a real Electron process — verified by launching it, POSTing `fixtures/gsi/laning-phase.jsonl` at the live listener on 53101, and watching a coaching turn come out. Two gaps remain, each recorded at its seam (**speech** was the third and landed with step 7): **no push-to-talk** (`globalShortcut` is key-down only, so tap-to-latch works and hold does not — `trigger/index.ts`); **no capture** (the protocol lands and the handshake is wired through `sidecar/protocol-codec.ts`; macOS can now capture (ADR-0033) but has never been run, so `vision.enabled` stays false pending hardware verification — ADR-0030, ADR-0033) |
 | 7 | `packages/realtime` + `FakeRealtimeTransport`, authenticating with the injected key from step 3 | Voice. **Landed.** The package itself was already implemented; what landed is the composition root either side of the preload bridge — `apps/desktop/src/renderer/voice/` hosts the microphone, the Web Audio graph and the peer connection (ADR-0010), `apps/desktop/src/main/voice/` mints the client secret and is the `CoachingSessionPort` (ADR-0015), and `main/index.ts` chooses it over `silent-session.ts` on whether a key was found. Verified by launching the app, replaying `fixtures/gsi/laning-phase.jsonl` and watching a match start reach a live `POST /v1/realtime/client_secrets`. **Not verified: a successful mint and the SDP exchange** — those need a real paid key, and §5.2 forbids a test that costs money |
 | 8 | `crates/` sidecar skeleton + protocol handshake + `FakeVisionSidecar` | The CV spike in dota2 §11.3. **Landed.** `riki-vision` speaks the protocol, handshakes, runs crop → hash → change-gate over recorded frames and emits `cv.detections` with confidence, provenance and a timestamp; `apps/desktop` decodes it. macOS captures through `ScreenCaptureKit` ([ADR-0033](docs/adr/0033-screencapturekit-is-the-shipping-backend.md)) — implemented in full and **compile-verified for `aarch64-apple-darwin` but never executed**, with the six things needing a Mac listed in that ADR's Consequences. Linux and Windows still report themselves unavailable — see [ADR-0030](docs/adr/0030-the-capture-seam-returns-cropped-regions-never-frames.md) for why, and `crates/riki-capture/src/platform.rs` for what each one needs. `FakeVisionSidecar` is `@riki/protocol/testing` and plugs in as a `ChildProcessPort`, so `RIKI_FAKE_VISION=1` (with `RIKI_VISION=on`) runs the whole app on it. Building it found that **the vision → world model → coaching edge had never executed anywhere** and did not work: the codec emitted the wire shape and fusion counted every CV observation `unparsed`. Fixed, with a `minimap.hero` payload so a sighting can cross the protocol at all, and `enemy_missing` now reaches a spoken turn in `apps/desktop/test/vision-coaching.test.ts` ([ADR-0035](docs/adr/0035-the-vision-leg-is-testable-because-a-fake-speaks-the-protocol.md)). Still absent: any real recogniser — no atlas, so the Rust side emits digests alone |
@@ -767,7 +766,7 @@ Claude Code loads a project skill automatically when the work matches its descri
 knowledge arrives unprompted.
 
 That difference is the entire justification for having both. Per A5, the agent who works on
-`packages/events` next week has no memory of this repository and did not read this file. The
+`packages/world-model` next week has no memory of this repository and did not read this file. The
 realistic failure is not that a design doc was wrong — it is that nobody opened it. Skills are
 how the repo pushes rather than waits.
 

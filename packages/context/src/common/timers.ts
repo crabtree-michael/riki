@@ -6,9 +6,11 @@
  * watch a deadline fire — `ManualTimers` in `../testing/` is what makes every deadline test run in
  * microseconds and never flake.
  *
- * The one consumer is Tier 1 preamble enrichment, whose 3-second deadline is a race rather than a
- * timeout (`../preamble/assemble.ts`). Nothing on the per-turn path has a deadline at all, which is
- * the point of docs/design/coaching-architecture.md §3.1.
+ * Nothing inside this package has a deadline any more — the one consumer was Tier 1 preamble
+ * enrichment, whose 3-second race ADR-0042 deleted along with the preamble. What is left is the
+ * *interface*, which the composition root and the inspector both take by injection so their timers
+ * are a test's to fire. It stays here rather than moving because it is the vocabulary those callers
+ * already import from this package, and `systemTimers` is four lines.
  */
 
 export interface Timers {

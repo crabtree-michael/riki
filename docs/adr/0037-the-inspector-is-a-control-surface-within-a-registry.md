@@ -1,6 +1,6 @@
 # ADR-0037: The inspector is a control surface, within a registry
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0042](0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09 — every row in the registry described a threshold, a weight or a gate in `packages/events`, and that package is gone. The registry mechanism went with its contents rather than being kept empty; the distinction it drew between a *setting* and an *action* survives in ADR-0039, which is now the inspector’s only write surface.
 **Date:** 2026-08-02
 
 **Amends:** [ADR-0032](0032-the-inspector-observes-by-decoration.md), whose Decision reads *"read-only

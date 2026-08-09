@@ -15,23 +15,21 @@
  * mid-game where CV facts have aged into hypotheses, and a tight budget where the ladder actually
  * fires. `omitted` is committed alongside the text, because what survives a tight budget is a
  * design decision and not an accident (§5.1).
+ *
+ * There used to be a fifth — the same mid-game world under the same budget with a `rune_soon`
+ * cause, whose whole purpose was to make the promotion rule a diff. ADR-0042 deleted the causes,
+ * so the ladder is fixed and the fixture had nothing left to say.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { GameClock, HeroId, MonoMs, TurnId } from '../common/types.js';
-import type { SnapshotContext, TapeEvent } from './types.js';
+import type { SnapshotContext } from './types.js';
 import { FakeWorldModel, observed } from '../testing/index.js';
 import { DEFAULT_PRIVACY } from '../render/privacy.js';
 import { createSnapshotRenderer } from './renderer.js';
 
 const NOW = 60_000 as MonoMs;
 const renderer = createSnapshotRenderer();
-
-const TAPE: readonly TapeEvent[] = [
-  { id: 'hero_died' as never, at: 850 as GameClock, text: 'tide died top' },
-  { id: 'item_bought' as never, at: 832 as GameClock, text: 'you got your 3rd item' },
-  { id: 'roshan_killed' as never, at: 802 as GameClock, text: 'rosh killed by us' },
-];
 
 function render(world: FakeWorldModel, overrides: Partial<SnapshotContext> = {}): string {
   const rendered = renderer.render(world.snapshot(NOW), {
@@ -40,8 +38,6 @@ function render(world: FakeWorldModel, overrides: Partial<SnapshotContext> = {})
     cause: { by: 'player', gesture: 'push_to_talk' },
     budget: { maxTokens: 400, spentTokens: 0 },
     privacy: DEFAULT_PRIVACY,
-    tape: TAPE,
-    elisionBase: null,
     ...overrides,
   });
 
@@ -205,20 +201,5 @@ describe('rendered snapshots', () => {
     await expect(
       render(midGame(), { budget: { maxTokens: 225, spentTokens: 0 } }),
     ).toMatchFileSnapshot('../../../../fixtures/golden/snapshot/mid-game-truncated.txt');
-  });
-
-  it('mid game, opened by a rune_soon trigger', async () => {
-    // The same world at the same budget, with one different cause. **The diff between this fixture
-    // and the previous one is the promotion rule** (§5.2): the turn exists because of the rune, so
-    // the `derived` line that explains it survives and `seen`/`unseen` go instead.
-    //
-    // `enemy_missing` would show nothing here, and that is worth knowing rather than working
-    // around: it promotes `seen`, which already sits at the top of the droppable group.
-    await expect(
-      render(midGame(), {
-        cause: { by: 'trigger', event: 'rune_soon' as never, salience: 0.7 },
-        budget: { maxTokens: 225, spentTokens: 0 },
-      }),
-    ).toMatchFileSnapshot('../../../../fixtures/golden/snapshot/mid-game-rune-soon.txt');
   });
 });

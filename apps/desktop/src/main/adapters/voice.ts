@@ -8,41 +8,47 @@
  * | `capture` opened/firstAudio/closed | `capture` | 1:1 |
  * | `speech` silence/resumed | `speech` | 1:1 |
  * | `turn` submitted | `turn` | Server VAD can end a turn with the key still held (ADR-0017) |
- * | `turn` responseStarted, machine Idle | **`unprompted` speechStarted** | §9.3 — the primary path |
- * | `turn` responseStarted, otherwise | `turn` | The answer to something the player asked |
- * | `turn` responseEnded | `turn` | |
+ * | `turn` responseStarted / responseEnded | `turn` | The answer to something the player asked |
  * | `fault` | `fault` | Identity: the two kind unions are spelled the same — see the case |
- * | `command` mute | `mute` | `quiet-mode` is **not** here — see below |
+ * | `command` mute | `mute` | |
+ * | `command` stop / cancel | `trigger` cancel | One producer for "stop talking" — see below |
+ * | `command` quiet-mode | — | Nothing left to switch off — see below |
  * | `level` | — | Rides its own channel to the presenter, never through the reducer (§6.1) |
  * | `transcript` | — | Captions are the presenter's, and default off (ui-design §9.3) |
  * | `cost` | — | Telemetry, not a state |
  *
- * **`quiet-mode` is deliberately absent.** It is the off switch for unprompted speech
- * (`coaching-architecture.md` §7.1) and it is handled by the composition root, which flips
- * `EventEngine.setQuietMode`. The chip's `muted` is a different thing — it suppresses *gestures*
- * too — and mapping one onto the other would mean saying "only when I ask" also stopped
- * push-to-talk working, which is the opposite of what the player asked for.
+ * Two rows moved with ADR-0042 and both are worth a sentence.
+ *
+ * **`responseStarted` while Idle used to be a different input.** It meant the chip appearing with
+ * no gesture behind it, which was how a coaching turn became visible. With no coaching turns a
+ * response with no phase behind it is not a state to render, so it takes the ordinary `turn` input
+ * and the machine ignores it from Idle.
+ *
+ * **`stop` and `cancel` now go through the machine rather than straight at the session.** The
+ * coaching agent used to call `session.abort()` for them from its own subscription, which meant the
+ * audio stopped and the chip did not. Routing them as a `cancel` trigger gives "stop talking" the
+ * single producer the Esc key and the overlay's cancel intent already share, and the abort still
+ * reaches the session — as the machine's own `voice` effect.
+ *
+ * **`quiet-mode` reaches nothing, deliberately.** "Only when I ask" was the off switch for
+ * unprompted speech, and it is now what Riki does unconditionally. The phrase stays in
+ * `packages/realtime`'s parser, where a player who says it is answered by the product's behaviour
+ * rather than by a setting.
  */
 
 import type { VoiceEvent } from '@riki/realtime';
 import type { Unsubscribe } from '../../shared/overlay.js';
 import type { VoiceCommandSink } from '../session/contracts.js';
 import type { MachineInput } from '../session/types.js';
-import type {
-  PhaseReader,
-  VoiceBridge,
-  VoiceCommandTarget,
-  VoiceEventSource,
-} from './contracts.js';
+import type { VoiceBridge, VoiceCommandTarget, VoiceEventSource } from './contracts.js';
 
 export interface VoiceBridgeDeps {
-  readonly phase: PhaseReader;
   /** Level frames bypass the reducer entirely; the presenter takes them straight. */
   readonly pushLevel?: (source: 'input' | 'output', value: number, at: number) => void;
   readonly onCost?: (usd: number, turns: number) => void;
 }
 
-export function createVoiceBridge(deps: VoiceBridgeDeps): VoiceBridge {
+export function createVoiceBridge(deps: VoiceBridgeDeps = {}): VoiceBridge {
   return {
     attach(source: VoiceEventSource, sink: (input: MachineInput) => void): Unsubscribe {
       return source.onEvent((event: VoiceEvent) => {
@@ -56,13 +62,6 @@ export function createVoiceBridge(deps: VoiceBridgeDeps): VoiceBridge {
             return;
 
           case 'turn':
-            if (event.event === 'responseStarted' && deps.phase.phase() === 'idle') {
-              // No gesture behind it. Skipping Armed and the earcon is §9.3, and the machine
-              // ignores `turn.responseStarted` while Idle precisely so this branch has to be
-              // taken deliberately rather than by accident.
-              sink({ kind: 'unprompted', event: 'speechStarted' });
-              return;
-            }
             sink({ kind: 'turn', event: event.event });
             return;
 
@@ -84,6 +83,11 @@ export function createVoiceBridge(deps: VoiceBridgeDeps): VoiceBridge {
 
           case 'command':
             if (event.command === 'mute') sink({ kind: 'mute', muted: true });
+            // The machine turns this into an `abort` effect, which the composition root sends at
+            // the session. See the header: one producer, and the chip agrees with the audio.
+            if (event.command === 'stop' || event.command === 'cancel') {
+              sink({ kind: 'trigger', event: { kind: 'cancel' } });
+            }
             return;
 
           case 'level':

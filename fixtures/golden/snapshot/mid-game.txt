@@ -7,7 +7,6 @@ seen: nevermore bot ~4s ago(0.91) · tidehunter top unseen >20s(0.86) · crystal
 unseen >20s: windranger, zuus
 buy diffusal2 in ~40s | rosh window 16:50 | rune 15:00 | nw lead us +3.1k
 map: t1 mid(them) down · t1 top(us)
-recent: [14:10] tide died top · [13:52] you got your 3rd item · [13:22] rosh killed by us
 
---- 281 tokens
+--- 247 tokens
 --- omitted: (none)

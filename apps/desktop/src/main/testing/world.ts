@@ -1,21 +1,19 @@
 /**
- * A world to detect against, without a game.
+ * A world to render against, without a game.
  *
  * `packages/world-model` ships builders for an `Observation` — the *input* to fusion — which is the
- * right tool for a fusion test and the wrong one here: this package reads the *output*, and going
- * through the reducer to arrange one fact would make every detector test a test of precedence as
- * well. So this builds a `WorldState` directly and snapshots it, using that package's own
- * `writeFact`, `createSnapshot`, staleness policy and derived registry — nothing here reimplements
- * a world, which is what keeps these tests honest when fusion changes.
+ * right tool for a fusion test and the wrong one here: main reads the *output*, and going through
+ * the reducer to arrange one fact would make every snapshot test a test of precedence as well. So
+ * this builds a `WorldState` directly and snapshots it, using that package's own `writeFact`,
+ * `createSnapshot`, staleness policy and derived registry — nothing here reimplements a world, which
+ * is what keeps these tests honest when fusion changes.
  *
- * Exported as `@riki/events/testing` so the composition root's tests can use the same builder,
- * because a fixture that drifts between two packages is a test that passes for the wrong reason.
+ * It lived in `@riki/events/testing` until ADR-0042 deleted that package. It moved here rather than
+ * into `packages/world-model/testing` because main is now its only consumer, and a fixture builder
+ * with one consumer belongs beside it.
  */
 
-import type { AdviceRecord, AdviceTopic, CoachingMemoryReader } from '@riki/context';
-import { topicKey } from '@riki/context';
 import type {
-  DetectorId,
   Fact,
   FieldPath,
   GameClock,
@@ -41,7 +39,7 @@ import {
   gsiFact,
   writeFact,
 } from '@riki/world-model';
-import type { GoldUntilItemOptions } from '@riki/world-model';
+import type { DetectorId, GoldUntilItemOptions } from '@riki/world-model';
 
 export interface PutOptions {
   /** How old the fact is, in **game** seconds — the basis every tactical field ages on. */
@@ -52,9 +50,9 @@ export interface PutOptions {
 
 export interface WorldOptions {
   readonly now?: number;
-  /** `null` is pre-horn, and it is a case worth reaching: several rules refuse without a clock. */
+  /** `null` is pre-horn, and it is a case worth reaching: the header renders differently for it. */
   readonly clock?: number | null;
-  /** What the player is saving for. Without it, `goldUntilItem` — and one detector — stay dark. */
+  /** What the player is saving for. Without it, `goldUntilItem` stays dark. */
   readonly goldTarget?: GoldUntilItemOptions['target'];
 }
 
@@ -63,9 +61,9 @@ export interface WorldBuilder {
   /** Advances the clock without touching a fact, so everything already in the world ages. */
   advance(seconds: number): WorldBuilder;
   snapshot(): WorldSnapshot;
-  /** The delta since the last `commit()`, for the intensity fold — the one thing that needs one. */
+  /** The delta since the last `commit()`. */
   commit(): WorldDelta;
-  /** A reader over this world, for the engine. `onVersion` fires on every `commit()`. */
+  /** A reader over this world. `onVersion` fires on every `commit()`. */
   reader(): WorldModelReader;
   readonly clock: GameClock | null;
   readonly now: MonoMs;
@@ -152,14 +150,14 @@ export function buildWorld(options: WorldOptions = {}): WorldBuilder {
   return builder;
 }
 
-/** A `Clock` for the engine, driven by hand. Nothing in a test should wait for a real millisecond. */
-export interface ManualClock {
+/** A clock driven by hand. Nothing in a test should wait for a real millisecond. */
+export interface ManualWorldClock {
   now(): MonoMs;
   set(ms: number): void;
   advance(ms: number): void;
 }
 
-export function manualClock(start = 0): ManualClock {
+export function manualClock(start = 0): ManualWorldClock {
   let value = asMonoMs(start);
   return {
     now: () => value,
@@ -169,46 +167,5 @@ export function manualClock(start = 0): ManualClock {
     advance: (ms: number) => {
       value = asMonoMs(value + ms);
     },
-  };
-}
-
-/**
- * A `CoachingMemoryReader` that is a `Map`, which is what makes every novelty-gate test Tier 1.
- *
- * `packages/context`'s real one is a projection over the ledger, and wiring that in would make a
- * gate test depend on `agent_said` entry shapes it has no opinion about. The one behaviour worth
- * copying is `recent`'s: it is scoped by **game** seconds measured back from the latest known
- * clock, not by a `now` the caller passes.
- */
-export function fakeCoachingMemory(
-  records: readonly AdviceRecord[] = [],
-  latestClock: GameClock | null = null,
-): CoachingMemoryReader {
-  const byKey = new Map(records.map((record) => [topicKey(record.topic), record]));
-
-  return {
-    recent(topic: AdviceTopic, within: number): AdviceRecord | undefined {
-      const record = byKey.get(topicKey(topic));
-      if (record === undefined) return undefined;
-      if (latestClock === null) return record;
-      return latestClock - record.lastAt <= within ? record : undefined;
-    },
-    lastSpokeAt: () => latestClock,
-    silentFor: (at: GameClock) => (latestClock === null ? 0 : Math.max(0, at - latestClock)),
-  };
-}
-
-/** One `AdviceRecord`, with the three fields a gate test actually varies. */
-export function adviceRecord(
-  topic: AdviceTopic,
-  overrides: Partial<Omit<AdviceRecord, 'topic'>> = {},
-): AdviceRecord {
-  const at = overrides.lastAt ?? asGameClock(0);
-  return {
-    topic,
-    firstAt: overrides.firstAt ?? at,
-    lastAt: at,
-    count: overrides.count ?? 1,
-    response: overrides.response ?? 'unknown',
   };
 }

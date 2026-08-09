@@ -48,25 +48,17 @@ const CALLS: Record<keyof ShellTelemetry, readonly unknown[]> = {
   transition: ['idle', 'armed', 1_000],
   visibilityLatency: [42],
   rendererFault: ['the overlay renderer crashed'],
-  coachingTurn: ['ult_ready', 0.8, true],
-  suppressed: ['kind_cooldown', 'rune_soon'],
-  emptyBrief: ['ult_ready'],
-  wouldSpeak: ['turn-1', 'trigger', 120],
+  playerTurn: ['turn-1', 280],
+  emptySnapshot: ['turn-1'],
+  snapshotOmitted: ['turn-1', ['map']],
+  wouldSpeak: ['turn-1', 120],
   sidecarStderr: ['thread panicked at capture.rs:88'],
   sidecarReady: ['pipewire', true],
   sidecarProblem: ['permission_denied', true, 'Grant Screen Recording'],
   sidecarProtocolMismatch: [3, 2],
   hotkeyUnavailable: ['Control+`', false],
   pushToTalkUnavailable: [],
-  debugOverride: ['trigger.speakThreshold', '0.05'],
   sessionOpenFailed: ['the Realtime API rejected the key'],
-  coachMode: ['llm'],
-  coachUnavailable: ['no API key'],
-  consulted: [12, 3],
-  spoke: ['gank_risk', 0.7, 84],
-  declined: ['nothing worth interrupting for'],
-  skipped: ['in_flight'],
-  modelFailed: ['429 from the model endpoint'],
 };
 
 const METHODS = Object.keys(CALLS) as (keyof ShellTelemetry)[];
@@ -156,14 +148,13 @@ describe('withDebugTelemetry', () => {
       worldReset: 'world',
       degraded: 'degradation',
       rendererFault: 'renderer',
-      emptyBrief: 'coach',
+      emptySnapshot: 'world',
+      sessionOpenFailed: 'renderer',
       sidecarStderr: 'sidecar',
       sidecarProblem: 'sidecar',
       sidecarProtocolMismatch: 'sidecar',
       hotkeyUnavailable: 'hotkey',
       pushToTalkUnavailable: 'hotkey',
-      coachUnavailable: 'coach',
-      modelFailed: 'coach',
     };
 
     for (const [method, origin] of Object.entries(expected)) {
@@ -179,28 +170,19 @@ describe('withDebugTelemetry', () => {
   });
 
   it('raises no problem for the members that are routine rather than faults', () => {
-    // Not "not mirrored" — `declined` and `skipped` *are* mirrored, as Triggers rows. What is
-    // asserted here is narrower and is the thing that matters: none of these reaches the Problems
-    // panel. Declining is the correct and overwhelmingly common outcome for either coach, and a
-    // panel that filled with routine silence would be a panel nobody reads the real faults out of.
-    //
-    // `suppressed` and `coachingTurn` are the deterministic coach's equivalents, and they are not
-    // mirrored at all: they fire on every version bump and the policy decorator already has both in
-    // far more detail — §"What is mirrored, and what is not".
+    // `playerTurn` and `snapshotOmitted` are the ones that matter here: they fire on every turn and
+    // the snapshot decorator already has both in far more detail, so a Problems panel that filled
+    // with them would be a panel nobody reads the real faults out of — §"What is mirrored, and what
+    // is not".
     const silent: (keyof ShellTelemetry)[] = [
       'sourceStarted',
       'matchStarted',
       'matchEnded',
       'transition',
       'visibilityLatency',
-      'coachingTurn',
-      'suppressed',
+      'playerTurn',
+      'snapshotOmitted',
       'wouldSpeak',
-      'coachMode',
-      'consulted',
-      'spoke',
-      'declined',
-      'skipped',
     ];
 
     for (const method of silent) {
@@ -223,34 +205,17 @@ describe('withDebugTelemetry', () => {
     expect(problems[0]?.message).toContain('pipewire');
   });
 
-  it('counts an empty brief as well as reporting it', () => {
-    // The one signal the gate ladder cannot show: the trigger was admitted and the brief came back
-    // empty, so the turn was dropped after the point every other panel stops watching.
+  it('reports an empty snapshot, which is the one thing a full Turns panel cannot show', () => {
+    // A turn row with a plausible-looking snapshot in it and a turn row with an empty one look the
+    // same at a glance, and the second means the model is about to answer a question about a game
+    // it cannot see.
     const { sink, hub } = wrapped();
-    invoke(sink, 'emptyBrief', ['ult_ready']);
-    invoke(sink, 'emptyBrief', ['rune_soon']);
+    invoke(sink, 'emptySnapshot', ['turn-1']);
 
-    expect(hub.frame(NOW).counters.emptyBriefs).toBe(2);
-    expect(problemsOf(hub)).toHaveLength(2);
-  });
-
-  it('routes the LLM coach\u2019s declines into the Triggers panel, not into Problems', () => {
-    const { sink, hub } = wrapped();
-    invoke(sink, 'declined', ['nothing worth interrupting for right now']);
-    invoke(sink, 'skipped', ['in_flight']);
-
-    const frame = hub.frame(NOW);
-    // Declining is the correct and overwhelmingly common outcome for either coach, so it belongs
-    // beside the deterministic coach's refusals rather than among the faults. Under `llm` this is
-    // the *only* account of a moment the coach passed on — there is no gate ladder to read.
-    expect(frame.ticks).toHaveLength(2);
-    expect(frame.ticks.map((each) => each.decision)).toEqual([
-      { speak: false, reason: 'nothing worth interrupting for right now', key: null },
-      // Kept distinct: the coach was not consulted at all, which is a different answer to "why was
-      // it quiet" from "it looked and decided not to".
-      { speak: false, reason: 'skipped: in_flight', key: null },
-    ]);
-    expect(problemsOf(hub)).toHaveLength(0);
+    const problems = problemsOf(hub);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.origin).toBe('world');
+    expect(problems[0]?.message).toContain('turn-1');
   });
 
   it('names the offending event in the messages that have one', () => {

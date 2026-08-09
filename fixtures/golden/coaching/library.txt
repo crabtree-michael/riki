@@ -1,9 +1,0 @@
-threat: hp 84% | mp 61% | enigma bot ~3s · lina mid ~7s (0.78)
-positions: seen enigma bot ~4s ago(0.91) | unseen >20s: undying, bane
-library: Enigma — Never group up without knowing where Enigma is. That is the whole of the counterplay. | Lina — Magic resistance and BKB blunt her almost entirely. She is one damage type. | 7.41e
-economy: gold 1840 (rel 320) | nw 7.2k | next diffusal2 in ~40s | buyback 1.6k
-cooldowns: you blink_strike UP, tricks_of_trade 4s, smoke_screen UP, invis UP
-windows: rune 15:00 | rosh 16:50 | stack 14:53 | night
-
---- 195 tokens
---- omitted: history, pace

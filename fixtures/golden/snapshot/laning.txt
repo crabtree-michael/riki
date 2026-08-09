@@ -5,7 +5,6 @@ items: wraith_band, tp(1) | slots 4 free
 enemies: nevermore lvl 6 alive · tidehunter lvl 5 alive
 seen: nevermore mid (0.94) · tidehunter off lane ~2.6s ago(0.88)
 buy diffusal in ~1m35 | rune 7:00 | nw lead them +800
-recent: [14:10] tide died top · [13:52] you got your 3rd item · [13:22] rosh killed by us
 
---- 191 tokens
+--- 157 tokens
 --- omitted: unseen, map

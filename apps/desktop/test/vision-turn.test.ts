@@ -5,18 +5,24 @@
  * is reachable from GSI alone. This file exists because one edge of the loop is not:
  * `enemies[].position` has exactly one source and it is computer vision (GSI cannot see an enemy,
  * and §8.2 fairness allows only what the minimap renders — state-capture-architecture.md §5.3). So
- * `enemy_missing`, the detector `dota2` §6.2 says matters most, could never fire in any test, on
- * any machine, in either language. It had never fired anywhere.
+ * *"where is their mid"*, the question `dota2` §6.2 says matters most, could never be answered in
+ * any test, on any machine, in either language.
  *
  * What makes it runnable here is `FakeVisionSidecar` standing in as the `ChildProcessPort`.
  * Everything above that seam is production code: `createSidecarSource` supervises it,
  * `createProtocolCodec` does the handshake and the two-clock arithmetic, the observation bus
  * carries the result, `packages/world-model` fuses it under the real confidence and precedence
- * gates, and `packages/events` decides whether Riki says anything. No Dota, no GPU, no Mac.
+ * gates, and `packages/context` renders it into the text a turn is answered from. No Dota, no GPU,
+ * no Mac.
  *
- * The negative control in the last block is the load-bearing half of the file: the same fixture,
- * the same shell, the vision source simply never cranked, and `enemy_missing` at zero. Without it
- * an assertion that it fired proves only that *something* fired.
+ * The negative control in the third block is the load-bearing half of the file: the same fixture,
+ * the same shell, the vision source simply never cranked, and no enemy position in the snapshot.
+ * Without it an assertion that one appeared proves only that *something* was rendered.
+ *
+ * It was `vision-coaching.test.ts` until ADR-0042. What it proved then was that a CV fact survived
+ * thirteen gates into an unprompted coaching turn; what it proves now is that the same fact reaches
+ * the model when the player asks. The seam under test is identical and the claim is the one that
+ * outlives the coach.
  */
 
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -39,7 +45,6 @@ import {
 import type { MonoMs, Observation, SourceHealth } from '@riki/world-model';
 
 import type { Millis } from '../src/shared/overlay.js';
-import type { CoachDriver, StaticCoachDriver } from '../src/main/agent/index.js';
 import { createFakeWindow, fakeWindowFactory } from '../src/main/testing/fakes.js';
 import type { Clock as UiClock } from '../src/main/session/contracts.js';
 import type { TimerId } from '../src/main/session/types.js';
@@ -203,7 +208,6 @@ function build(script: VisionScript, extra: ConfigLayer = {}): Harness {
       dataDir,
       gsiToken: 'test-token',
       layer: {
-        'privacy.unprompted': true,
         'vision.enabled': true,
         // The flag under test. No `vision.binaryPath` anywhere in this file — that is the point:
         // there is no binary, and there is no machine here that could run one.
@@ -274,17 +278,20 @@ async function replayGsi(
   return index;
 }
 
-/** The deterministic coach's counters, from behind the driver port. */
-function engineOf(shell: RikiShell): StaticCoachDriver['engine'] {
-  const driver: CoachDriver | undefined = shell.match?.driver;
-  if (driver?.mode !== 'static') {
-    throw new Error(`expected the static coach, got ${String(driver?.mode)}`);
-  }
-  return (driver as StaticCoachDriver).engine;
+/**
+ * One push-to-talk turn, and the text it was answered from.
+ *
+ * Through the agent rather than through the renderer, because what is under test is the chain from
+ * the sidecar to the model: the gesture's own wiring is `shell.test.ts`'s.
+ */
+async function askAndRead(harness: Harness): Promise<string> {
+  const turnId = harness.shell.agent.beginPlayerTurn('push');
+  await harness.shell.agent.endPlayerTurn(turnId, 'release');
+  return harness.session.turns.at(-1)?.snapshotText ?? '';
 }
 
 /**
- * Start, run the match up to the point a coaching root exists, then show the sidecar the map.
+ * Start, run the match up to the point a session exists, then show the sidecar the map.
  *
  * The order matters and is the order a real session has: the sidecar is spawned by `shell.start()`
  * and is already handshaken and capturing before the first POST arrives, but its facts are only
@@ -292,7 +299,7 @@ function engineOf(shell: RikiShell): StaticCoachDriver['engine'] {
  */
 async function upToFirstSighting(harness: Harness): Promise<number> {
   await harness.shell.start();
-  const index = await replayGsi(harness, 0, () => harness.shell.match !== null);
+  const index = await replayGsi(harness, 0, () => harness.shell.matchId !== null);
   harness.vision.drain();
   await Promise.resolve();
   return index;
@@ -369,41 +376,58 @@ describe('a minimap sighting, all the way into the world model', () => {
   });
 });
 
-describe('vision reaching the coaching trigger', () => {
-  it('fires enemy_missing once the sightings age out, and speaks about it', async () => {
+describe('vision reaching the model', () => {
+  it('puts the enemy team in the text a question is answered from, once vision has seen them', async () => {
     const harness = build(twoPasses());
     const index = await upToFirstSighting(harness);
 
-    // Nothing is missing yet — they were all on the minimap a moment ago.
-    expect(engineOf(harness.shell).counters().detected.enemy_missing).toBe(0);
-
-    // Now let the match run on. Nothing reports those heroes again, and `*.*.position` ages in
-    // *game* time, so the GSI clock advancing is what turns silence into a fact about the map.
+    // Nothing reports those heroes again, and `*.*.position` ages in *game* time — so the GSI clock
+    // advancing is what turns a sighting into a claim about where somebody *was*.
     await replayGsi(harness, index);
+    const text = await askAndRead(harness);
 
-    const counters = engineOf(harness.shell).counters();
-    expect(counters.detected.enemy_missing).toBeGreaterThan(0);
-
-    // And it survived the gate ladder into an actual turn. This is the assertion the loop has
-    // never been able to make: a fact that only computer vision could have produced, spoken.
-    const spoken = harness.session.turns.filter((turn) => turn.reason?.eventId === 'enemy_missing');
-    expect(spoken.length).toBeGreaterThan(0);
-    expect(spoken[0]?.turn.snapshotText).toContain('\n\n');
+    // The assertion the loop has never been able to make: a line in the ~300 tokens the model reads
+    // that **only** computer vision could have produced. `unseenFor` excludes a hero that was never
+    // observed at all — precisely so "we cannot see the map" does not become "they are all missing"
+    // — so this line existing at all means a CV fact went in and came out the far end.
+    expect(text).toContain('unseen >20s');
+    expect(text).toContain('npc_dota_hero_nevermore');
   });
 
-  it('does not fire it without the sidecar — the negative control', async () => {
-    // The same fixture and the same shell, with the crank never turned. `unseenEnemies` reports a
-    // null age for a hero never observed and `enemy_missing` excludes those deliberately, so
-    // "we cannot see the map" must not become five interruptions a minute.
+  it('says nothing about the enemy team without the sidecar — the negative control', async () => {
+    // The same fixture and the same shell, with the crank never turned. `unseen >20s` here would
+    // mean something other than vision had written a position, which is the failure the whole
+    // provenance layer exists to make impossible.
     const harness = build(twoPasses());
     await harness.shell.start();
     await replayGsi(harness, 0);
 
+    const text = await askAndRead(harness);
+
     expect(harness.vision.stats().spawns).toBe(1);
-    expect(engineOf(harness.shell).counters().detected.enemy_missing).toBe(0);
-    expect(
-      harness.session.turns.filter((turn) => turn.reason?.eventId === 'enemy_missing'),
-    ).toStrictEqual([]);
+    expect(text).not.toContain('unseen >20s');
+  });
+
+  it('does not yet name *where* an enemy was, and that gap is the adapter\u2019s', async () => {
+    // ⚠ Deliberately asserting an absence. `enemies.*.area` is one of the five paths
+    // `main/agent/world-view.ts` leaves unsatisfied — turning a `MapPosition` into `top`/`mid`/
+    // `rosh` needs a map-region table that belongs with the sidecar, which already speaks in
+    // regions. So the `seen:` line has no data and the world model holds a position the model never
+    // sees.
+    //
+    // Before ADR-0042 that gap was invisible here, because the trigger engine read positions
+    // straight off the world model rather than out of the snapshot. It is the *first* thing
+    // conversational-architecture.md §4's `enemy(hero?)` tool has to close, and this is where the
+    // day it does will show up as a failing test.
+    const harness = build(twoPasses());
+    await upToFirstSighting(harness);
+
+    const world = harness.shell.state.world.snapshot(harness.clock.now() as MonoMs);
+    const position = world.enemies().find((view) => String(view.hero) === 'npc_dota_hero_nevermore')
+      ?.state.position;
+    expect(position).toBeDefined();
+
+    expect(await askAndRead(harness)).not.toContain('seen:');
   });
 });
 
@@ -411,7 +435,7 @@ describe('the committed fixture, through the whole shell', () => {
   it('replays, reports its problem, and gets restarted after it panics', async () => {
     const harness = build(loadVisionFixture(VISION_FIXTURE));
     await harness.shell.start();
-    await replayGsi(harness, 0, () => harness.shell.match !== null);
+    await replayGsi(harness, 0, () => harness.shell.matchId !== null);
 
     harness.vision.drain();
     await Promise.resolve();

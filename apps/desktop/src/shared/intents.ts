@@ -10,7 +10,7 @@
  * fields survives the crossing.
  */
 
-import type { DebugControlValue, DebugIntent } from './debug.js';
+import type { DebugIntent } from './debug.js';
 import { DEBUG_LIMITS } from './debug.js';
 import type { OverlayIntent } from './overlay.js';
 
@@ -48,18 +48,21 @@ export function isOverlayIntent(payload: unknown): payload is OverlayIntent {
 }
 
 /**
- * The same allow-list discipline for the inspector, which has seven things to say.
+ * The same allow-list discipline for the inspector, which has four things to say.
  *
  * It is checked at both boundaries for the same reason the overlay's is, and it matters more here
  * than anywhere else in the app: the inspector window is *focusable*, loads a document with a
- * scrollbar in it, and since ADR-0037 two of its four intents change what the coach does.
+ * scrollbar in it, and one of its four intents makes something happen.
  *
- * **This function decides shape, not authority.** `control` is normalised to `{id, value}` with
- * both bounded, and that is all a boundary with no access to the registry can honestly check —
- * whether the id names a real control, and whether that control is locked, is main's question and
- * `DebugControlPort.apply` is where it is asked. Splitting it that way is deliberate: a copy of the
+ * **This function decides shape, not authority.** `action` is normalised to `{id}` with the id
+ * bounded, and that is all a boundary with no access to the registry can honestly check — whether
+ * the id names a real scenario, and whether that scenario is already running, is main's question
+ * and `DebugActionPort.run` is where it is asked. Splitting it that way is deliberate: a copy of the
  * registry here would be a second list to keep in step, and the weaker of the two checks would be
  * the one this file was trusted for.
+ *
+ * It used to have seven. ADR-0037's `control`/`reset-controls` and ADR-0038's `rehearse` are gone
+ * with the trigger engine and the coaches they named (ADR-0042).
  */
 export function parseDebugIntent(payload: unknown): DebugIntent | null {
   if (typeof payload !== 'object' || payload === null) return null;
@@ -74,33 +77,10 @@ export function parseDebugIntent(payload: unknown): DebugIntent | null {
         ? { kind: 'fault', message: candidate.message.slice(0, MAX_FAULT_MESSAGE) }
         : null;
 
-    case 'control': {
-      if (typeof candidate.id !== 'string' || candidate.id === '') return null;
-      const value = controlValue(candidate.value);
-      if (value === null) return null;
-      return { kind: 'control', id: candidate.id.slice(0, DEBUG_LIMITS.controlIdChars), value };
-    }
-
-    case 'reset-controls':
-      return { kind: 'reset-controls' };
-
-    case 'rehearse':
-      // Same split as `control`: a name and a bound are all a boundary with no library can check.
-      // Whether the id names a mock state that exists is main's question, and a `rehearse` naming
-      // one that does not becomes an `inspector` problem rather than a silence.
-      return typeof candidate.stateId === 'string' && candidate.stateId !== ''
-        ? { kind: 'rehearse', stateId: candidate.stateId.slice(0, DEBUG_LIMITS.mockIdChars) }
-        : null;
-
-    // ADR-0039. Shape only, exactly as `control` and `rehearse` above.
-    //
-    // A second verb beside `rehearse` rather than a merge of the two, because they carry different
-    // things: `rehearse` names a mock state and builds a scratch world around it, `action` names a
-    // row in a registry and takes no argument. Folding them would give one of the two a parameter it
-    // never uses, and the shapes are what this file exists to check.
+    // ADR-0039. Shape only — see the header.
     case 'action': {
       if (typeof candidate.id !== 'string' || candidate.id === '') return null;
-      return { kind: 'action', id: candidate.id.slice(0, DEBUG_LIMITS.controlIdChars) };
+      return { kind: 'action', id: candidate.id.slice(0, DEBUG_LIMITS.actionIdChars) };
     }
 
     case 'clear-trace':
@@ -109,18 +89,4 @@ export function parseDebugIntent(payload: unknown): DebugIntent | null {
     default:
       return null;
   }
-}
-
-/**
- * A control's value, or null for anything that is not one of the three shapes.
- *
- * `NaN` and the infinities are refused rather than clamped. They arrive from a stepper that
- * divided by something, they would reach a threshold comparison as a value that is neither above
- * nor below it, and the resulting silence would be indistinguishable from a working gate.
- */
-function controlValue(raw: unknown): DebugControlValue | null {
-  if (typeof raw === 'boolean') return raw;
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
-  if (typeof raw === 'string') return raw.slice(0, DEBUG_LIMITS.controlValueChars);
-  return null;
 }

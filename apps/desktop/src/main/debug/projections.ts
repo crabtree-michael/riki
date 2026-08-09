@@ -2,8 +2,8 @@
  * The world model, rendered for a human rather than for a model.
  *
  * `packages/context`'s snapshot renderer answers the same question for the LLM, and this is
- * deliberately **not** that: the snapshot is budgeted to ~300 tokens, elides what it decides is
- * uninteresting, and phrases everything. An inspector wants the opposite — every observed leaf, its
+ * deliberately **not** that: the snapshot is budgeted to ~300 tokens, drops what does not fit, and
+ * phrases everything. An inspector wants the opposite — every observed leaf, its
  * raw value, and the whole envelope around it. When the two disagree about what the world holds,
  * the answer is in the difference, so the second one has to be an independent read.
  *
@@ -22,7 +22,6 @@
  * sandboxed window. One `render` function, in main, where the types are.
  */
 
-import type { TriggerCounters } from '@riki/events';
 import type {
   DerivedId,
   FieldPath,
@@ -32,8 +31,7 @@ import type {
 } from '@riki/world-model';
 import { MAP_KEYS, META_KEYS, SELF_KEYS, fieldPath } from '@riki/world-model';
 
-import type { DebugCountersInput, DebugWorldInput } from './contracts.js';
-import { toCounts } from './hub.js';
+import type { DebugWorldInput } from './contracts.js';
 
 /** Long enough for an ability array, short enough that one row cannot fill the panel. */
 const MAX_VALUE_CHARS = 160;
@@ -155,26 +153,5 @@ export function projectWorld(deps: WorldProjectionDeps): (now: number) => DebugW
       enemies,
       derived,
     };
-  };
-}
-
-/**
- * `TriggerCounters` in the frame's flat form. Both halves are needed; §5.4 says why.
- *
- * Structurally typed rather than taking `TriggerCounters` itself: this walks `Object.entries` and
- * never reads a specific kind or reason, so requiring the exhaustive `Record<CoachEventKind, …>`
- * would only force every caller — and every test — to spell out eight and thirteen keys to exercise
- * a sort. `TriggerCounters` satisfies this, which is the part that has to keep working.
- */
-export function projectCounters(
-  counters: Pick<TriggerCounters, 'spoken'> & {
-    readonly detected: Readonly<Record<string, number>>;
-    readonly suppressed: Readonly<Record<string, number>>;
-  },
-): DebugCountersInput {
-  return {
-    detected: toCounts(Object.entries(counters.detected)),
-    suppressed: toCounts(Object.entries(counters.suppressed)),
-    spoken: counters.spoken,
   };
 }

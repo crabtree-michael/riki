@@ -7,10 +7,8 @@
   "references": [
     { "path": "apps/desktop" },
     { "path": "packages/audio" },
-    { "path": "packages/coach" },
     { "path": "packages/config" },
     { "path": "packages/context" },
-    { "path": "packages/events" },
     { "path": "packages/gsi" },
     { "path": "packages/log-tail" },
     { "path": "packages/protocol" },

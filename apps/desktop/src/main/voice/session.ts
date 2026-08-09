@@ -2,8 +2,8 @@
  * The composition root's voice half — voice-input-architecture.md §7.3, and the thing that
  * replaces `shell/silent-session.ts`.
  *
- * It is a `CoachingSessionPort`, so the coaching agent above it cannot tell the difference between
- * this and the stand-in. What it adds underneath is everything: `@riki/config` yields the key,
+ * It is a `VoiceSessionPort`, so the turn agent above it cannot tell the difference between this
+ * and the stand-in. What it adds underneath is everything: `@riki/config` yields the key,
  * `ClientSecretBroker` mints from it, the voice window is created and handed the secret plus the
  * session config, and `VoiceEvent`s come back the other way.
  *
@@ -21,11 +21,10 @@
  * `voice.ready` is a message with no listener and produces a session that never opens and never
  * errors. Directives queue until then, so the caller does not have to know.
  *
- * **A failure is a fault on the chip, never a rejected promise.** `speakUnprompted` and `endTurn`
- * resolve to "handed over", not to "finished speaking" — the agent closes the turn from the event
- * stream — so rejecting them would leave gate 4 (`agent_speaking`) armed forever and suppress
- * every later trigger. That is the one confusion `silent-session.ts` was written to avoid, and it
- * is just as easy to reintroduce here.
+ * **A failure is a fault on the chip, never a rejected promise.** `speakNow` and `endTurn` resolve
+ * to "handed over", not to "finished speaking" — the chip leaves Speaking on the event stream — so
+ * rejecting them would leave the overlay claiming Riki is talking forever. That is the one
+ * confusion `silent-session.ts` was written to avoid, and it is just as easy to reintroduce here.
  */
 
 import type { RikiConfig } from '@riki/config';
@@ -43,7 +42,7 @@ import type {
 import { createClientSecretBroker } from '@riki/realtime';
 import type { MonoMs } from '@riki/world-model';
 
-import type { CoachingSessionPort, SessionTurn, SpeakReason } from '../agent/index.js';
+import type { SessionTurn, VoiceSessionPort } from '../agent/index.js';
 import type { VoiceWindow, VoiceWindowFactory } from './contracts.js';
 
 /**
@@ -55,8 +54,8 @@ import type { VoiceWindow, VoiceWindowFactory } from './contracts.js';
 export type VoiceSessionState = 'idle' | 'connecting' | 'ready' | 'degraded' | 'unavailable';
 
 export interface VoiceSessionTelemetry {
-  /** What Riki *would* have said, as inputs. The rendered text is never logged (privacy §10). */
-  speaking(turnId: TurnId, reason: SpeakReason | null, chars: number): void;
+  /** What Riki was handed for a turn, as a size. The rendered text is never logged (privacy §10). */
+  speaking(turnId: TurnId, scenario: boolean, chars: number): void;
   fault(kind: VoiceFault['kind'], message: string): void;
   state(state: VoiceSessionState): void;
   /** Undecodable traffic on the bridge. Should be zero — both sides are one build. */
@@ -78,18 +77,17 @@ export interface VoiceSessionDeps {
   readonly telemetry?: VoiceSessionTelemetry;
 }
 
-export interface VoiceSession extends CoachingSessionPort {
+export interface VoiceSession extends VoiceSessionPort {
   readonly state: VoiceSessionState;
   /**
    * Open a Realtime session for this match.
    *
-   * Per match rather than per app: `SessionContext` is frozen at `match_started` (ADR-0011), the
-   * ledger and the coaching memory are per-match (ADR-0012, ADR-0013), and the API's own session
-   * cap is 60 minutes. It opens at match start rather than at the first key press because SDP
+   * Per match rather than per app: the instructions are frozen at `match_started` (ADR-0011) and
+   * the API's own session cap is 60 minutes. It opens at match start rather than at the first key press because SDP
    * negotiation is 300–500 ms that would otherwise land on the player's first utterance, and an
    * idle session costs nothing — billing is per token and no tokens flow while the gate is shut.
    */
-  openMatch(preambleText: string): Promise<void>;
+  openMatch(instructions: string): Promise<void>;
   closeMatch(reason: string): Promise<void>;
   /** Overlay §5.5: level frames cross while the chip can show bars, and not otherwise. */
   setLevelsEnabled(enabled: boolean): void;
@@ -223,7 +221,7 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
    * Everything that has to happen before the renderer can be told to open a session, in the order
    * a failure is most likely: no key, then a refused mint.
    */
-  async function open(preambleText: string): Promise<void> {
+  async function open(instructions: string): Promise<void> {
     if (broker === null) {
       // Not a fault on the chip. The app boots with voice disabled and says so (ADR-0006), and
       // this is the mode every test and every keyless machine runs in — raising a persistent
@@ -238,7 +236,7 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
     const sessionConfig = {
       model: deps.config.realtime.model,
       voice: deps.config.realtime.voice,
-      instructions: preambleText,
+      instructions,
       // ADR-0017. VAD stays on so server-side barge-in truncation keeps working, and the gesture
       // — never the model — decides when a response is created.
       turnDetection: {
@@ -295,8 +293,8 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
       return state;
     },
 
-    async openMatch(preambleText: string): Promise<void> {
-      await open(preambleText);
+    async openMatch(instructions: string): Promise<void> {
+      await open(instructions);
     },
 
     closeMatch(reason: string): Promise<void> {
@@ -315,11 +313,13 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
     // CoachingSessionPort
     // ---------------------------------------------------------------------------------------
 
-    speakUnprompted(turn: SessionTurn, reason: SpeakReason): Promise<void> {
-      telemetry?.speaking(turn.turnId, reason, turn.snapshotText.length);
-      send(voice.turnSpeak(turn.turnId, turn.snapshotText, reason.eventId, reason.salience));
-      // Resolves to "handed over", not to "finished speaking" — see the header. The agent closes
-      // the turn from `turn.responseEnded`, which is what disarms gate 4.
+    speakNow(turn: SessionTurn): Promise<void> {
+      telemetry?.speaking(turn.turnId, true, turn.snapshotText.length);
+      // The protocol's `eventId` and `salience` are `packages/events`' vocabulary and that package
+      // is gone (ADR-0042); the wire fields stay because `packages/protocol` is a coordination
+      // event, not this file's to change. They are filled with what is true: the inspector asked.
+      send(voice.turnSpeak(turn.turnId, turn.snapshotText, 'scenario.speak', 1));
+      // Resolves to "handed over", not to "finished speaking" — see the header.
       return Promise.resolve();
     },
 
@@ -331,7 +331,7 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
     },
 
     endTurn(turnId: TurnId, reason: TurnEndReason, turn: SessionTurn): Promise<void> {
-      if (reason !== 'cancel') telemetry?.speaking(turnId, null, turn.snapshotText.length);
+      if (reason !== 'cancel') telemetry?.speaking(turnId, false, turn.snapshotText.length);
       send(voice.turnEnd(turnId, reason, turn.snapshotText));
       return Promise.resolve();
     },

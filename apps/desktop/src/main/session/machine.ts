@@ -304,20 +304,6 @@ function apply(d: Draft, input: MachineInput, now: Millis): void {
       applyTurn(d, input.event, now);
       return;
 
-    case 'unprompted':
-      // Idle → Speaking with no gesture behind it (§9.3). No Armed, and no earcon: the voice
-      // starting is its own cue. Never while muted, and never on top of an active interaction.
-      //
-      // Under ADR-0023 this is the *primary* path rather than one of two, which is why §7.1's
-      // local `quiet-mode` parser matters more than it used to: it is the off switch, and it must
-      // work with the model down.
-      if (d.muted || d.phase.kind !== 'idle') return;
-      enter(d, { kind: 'speaking', unprompted: true }, now);
-      show(d);
-      levels(d, true, 'output');
-      project(d);
-      return;
-
     case 'fault':
       raiseFault(d, input.fault, now);
       return;
@@ -454,9 +440,14 @@ function applyTurn(
       return;
 
     case 'responseStarted':
+      // Idle is refused, and since ADR-0042 that refusal is the whole rule rather than half of it:
+      // there used to be a second branch in `adapters/voice.ts` turning `responseStarted` while
+      // Idle into an unprompted chip. With no coaching turns, a response arriving with no phase
+      // behind it means something created one that the gesture did not — and inventing a chip for
+      // it would have the overlay claim the player asked something they did not.
       if (d.phase.kind === 'idle' || d.phase.kind === 'speaking') return;
       d.reported = [];
-      enter(d, { kind: 'speaking', unprompted: false }, now);
+      enter(d, { kind: 'speaking' }, now);
       show(d);
       levels(d, true, 'output');
       project(d);

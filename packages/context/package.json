@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Snapshot renderer, agent tool surface, session preamble assembly, and the conversation ledger",
+  "description": "The rolling snapshot the model is handed per turn, and the hero reference data",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

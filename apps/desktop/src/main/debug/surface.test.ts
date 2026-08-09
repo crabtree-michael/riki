@@ -26,8 +26,6 @@ import type { Timers } from '@riki/context';
 import type { DebugCommand, DebugIntent } from '../../shared/debug.js';
 import { DEBUG_FRAME_INTERVAL_MS } from '../../shared/debug.js';
 import type { DebugWindow, DebugWindowFactory } from './contracts.js';
-import type { DebugControlPort } from './controls.js';
-import type { DebugRehearsalPort, RehearsalOutcome } from './rehearsal.js';
 import { createDebugComponent, createDebugSurface, nullDebugWindow } from './index.js';
 import { createDebugHub } from './hub.js';
 
@@ -300,252 +298,55 @@ describe('dispose', () => {
   });
 });
 
-describe('control intents (ADR-0037)', () => {
-  /** A port that records what it was asked and answers however the test wants. */
-  function fakePort(ok = true): DebugControlPort & {
-    readonly applied: { id: string; value: unknown }[];
-    resets: number;
-  } {
-    const applied: { id: string; value: unknown }[] = [];
-    return {
-      applied,
-      resets: 0,
-      list: () => [],
-      apply(id, value) {
-        applied.push({ id, value });
-        return ok ? { ok: true, reason: null } : { ok: false, reason: 'locked' };
-      },
-      reset(): void {
-        this.resets += 1;
-      },
-    };
-  }
-
-  it('forwards a change to the port and answers with a frame immediately', async () => {
-    const window = fakeWindow();
+describe('action intents (ADR-0039)', () => {
+  it('forwards a run to the port and answers with a frame immediately', async () => {
     const timers = manualTimers();
-    const controls = fakePort();
-    const hub = createDebugHub();
+    const window = fakeWindow();
+    const ran: string[] = [];
     const surface = createDebugSurface({
-      hub,
+      hub: createDebugHub(),
       windows: { create: () => window },
-      controls,
+      actions: {
+        list: () => [],
+        run: (id) => {
+          ran.push(id);
+          return { ok: true, reason: null };
+        },
+      },
       timers,
       now: () => 1_000,
     });
 
     await surface.open();
     const before = frames(window).length;
+    window.emitIntent({ kind: 'action', id: 'scenario.speak' });
 
-    window.emitIntent({ kind: 'control', id: 'trigger.speakThreshold', value: 0.05 });
+    expect(ran).toEqual(['scenario.speak']);
+    // Not waiting out the interval: a scenario takes seconds and the only immediate feedback is the
+    // row turning to `running`, so a click that changed nothing for 250 ms is one somebody repeats.
+    expect(frames(window)).toHaveLength(before + 1);
 
-    expect(controls.applied).toEqual([{ id: 'trigger.speakThreshold', value: 0.05 }]);
-    // Not on the next tick of the pump. A control whose value visibly lags the click by up to
-    // 250 ms reads as a control that did not work, and the first thing anybody does with one of
-    // those is click it again.
-    expect(frames(window).length).toBe(before + 1);
+    surface.dispose();
   });
 
-  it('forwards a reset', async () => {
+  it('says so when there is no action port at all', () => {
     const window = fakeWindow();
-    const timers = manualTimers();
-    const controls = fakePort();
+    const hub = createDebugHub();
     const surface = createDebugSurface({
-      hub: createDebugHub(),
-      windows: { create: () => window },
-      controls,
-      timers,
-      now: () => 1_000,
-    });
-
-    await surface.open();
-    window.emitIntent({ kind: 'reset-controls' });
-
-    expect(controls.resets).toBe(1);
-  });
-
-  it('records a refusal as an inspector problem rather than swallowing it', () => {
-    const window = fakeWindow();
-    const hub = createDebugHub();
-    createDebugSurface({
-      hub,
-      windows: { create: () => window },
-      controls: fakePort(false),
-      timers: manualTimers(),
-      now: () => 1_000,
-    });
-
-    window.emitIntent({ kind: 'control', id: 'gate.muted', value: false });
-
-    const problems = hub.frame(1_000).problems;
-    expect(problems).toHaveLength(1);
-    expect(problems[0]?.origin).toBe('inspector');
-    expect(problems[0]?.message).toContain('gate.muted');
-    expect(problems[0]?.message).toContain('locked');
-  });
-
-  it('says so when there is no control port at all', () => {
-    // A headless replay, or any surface built before this port existed. The panel is drawn from
-    // `DebugSources.controls`, so a window that could show controls but not move them has to
-    // report that somewhere rather than looking broken.
-    const window = fakeWindow();
-    const hub = createDebugHub();
-    createDebugSurface({
       hub,
       windows: { create: () => window },
       timers: manualTimers(),
       now: () => 1_000,
     });
 
-    window.emitIntent({ kind: 'control', id: 'trigger.speakThreshold', value: 0.05 });
+    window.emitIntent({ kind: 'action', id: 'scenario.match' });
 
-    expect(hub.frame(1_000).problems[0]?.message).toContain('no control port');
-  });
-});
+    // A button that quietly does nothing is the failure this window exists to make impossible.
+    const [problem] = hub.frame(1_000).problems;
+    expect(problem?.origin).toBe('inspector');
+    expect(problem?.message).toContain('no action port');
 
-describe('rehearse intents (ADR-0038)', () => {
-  /** A port that answers when the test lets it, so the non-blocking claim can be observed. */
-  function fakeRehearsal(): DebugRehearsalPort & {
-    readonly asked: string[];
-    settle(outcome?: RehearsalOutcome): Promise<void>;
-    reject(error: Error): Promise<void>;
-  } {
-    const asked: string[] = [];
-    let settlers: ((outcome: RehearsalOutcome) => void)[] = [];
-    let rejecters: ((error: Error) => void)[] = [];
-
-    return {
-      asked,
-      states: () => [],
-      run(stateId): Promise<RehearsalOutcome> {
-        asked.push(stateId);
-        return new Promise<RehearsalOutcome>((resolve, reject) => {
-          settlers.push(resolve);
-          rejecters.push(reject);
-        });
-      },
-      async settle(outcome = { ok: true, turnId: 'rehearsal_1', spoke: true }): Promise<void> {
-        const pending = settlers;
-        settlers = [];
-        rejecters = [];
-        for (const resolve of pending) resolve(outcome);
-        // Let the surface's `.then` run before the assertion that follows it.
-        await Promise.resolve();
-      },
-      async reject(error: Error): Promise<void> {
-        const pending = rejecters;
-        settlers = [];
-        rejecters = [];
-        for (const fail of pending) fail(error);
-        await Promise.resolve();
-        await Promise.resolve();
-      },
-    };
-  }
-
-  function surfaceWithRehearsal(window: FakeWindow, rehearsal: DebugRehearsalPort) {
-    const hub = createDebugHub();
-    return {
-      hub,
-      surface: createDebugSurface({
-        hub,
-        windows: { create: () => window },
-        rehearsal,
-        timers: manualTimers(),
-        now: () => 1_000,
-      }),
-    };
-  }
-
-  it('forwards the state id and sends a frame once the turn exists', async () => {
-    const window = fakeWindow();
-    const rehearsal = fakeRehearsal();
-    const { surface } = surfaceWithRehearsal(window, rehearsal);
-
-    await surface.open();
-    const before = frames(window).length;
-
-    window.emitIntent({ kind: 'rehearse', stateId: 'laning-phase' });
-    expect(rehearsal.asked).toEqual(['laning-phase']);
-
-    // Not on the click: under `llm` the answer is a model call taking seconds, and there is nothing
-    // to show until it lands.
-    expect(frames(window).length).toBe(before);
-
-    await rehearsal.settle();
-    expect(frames(window).length).toBe(before + 1);
-  });
-
-  it('does not block the pump while a rehearsal is in flight', async () => {
-    const window = fakeWindow();
-    const timers = manualTimers();
-    const rehearsal = fakeRehearsal();
-    const surface = createDebugSurface({
-      hub: createDebugHub(),
-      windows: { create: () => window },
-      rehearsal,
-      timers,
-      now: () => 1_000,
-    });
-
-    await surface.open();
-    window.emitIntent({ kind: 'rehearse', stateId: 'laning-phase' });
-
-    // The window must keep drawing while the thing it is showing progress for is running. An intent
-    // handler that awaited the run would freeze the inspector for the duration of a model call.
-    const before = frames(window).length;
-    timers.fire();
-    expect(frames(window).length).toBe(before + 1);
-
-    await rehearsal.settle();
-  });
-
-  it('records a broken port as a problem rather than an unhandled rejection', async () => {
-    const window = fakeWindow();
-    const rehearsal = fakeRehearsal();
-    const { hub, surface } = surfaceWithRehearsal(window, rehearsal);
-
-    await surface.open();
-    window.emitIntent({ kind: 'rehearse', stateId: 'laning-phase' });
-    await rehearsal.reject(new Error('the port itself is broken'));
-
-    // `run` is total and records its own failures, so this is only reachable if the port is broken.
-    // Swallowing it would leave a button that did nothing and said nothing.
-    const problems = hub.frame(1_000).problems;
-    expect(problems[0]?.origin).toBe('inspector');
-    expect(problems[0]?.message).toContain('the port itself is broken');
-  });
-
-  it('says so when there is no rehearsal port at all', () => {
-    // A packaged build with no `fixtures/` beside it, or any shell built before ADR-0038. A button
-    // that quietly does nothing is the failure this window exists to make impossible.
-    const window = fakeWindow();
-    const hub = createDebugHub();
-    createDebugSurface({
-      hub,
-      windows: { create: () => window },
-      timers: manualTimers(),
-      now: () => 1_000,
-    });
-
-    window.emitIntent({ kind: 'rehearse', stateId: 'laning-phase' });
-
-    expect(hub.frame(1_000).problems[0]?.message).toContain('no mock states');
-  });
-
-  it('exposes the port, so a rehearsal is drivable with no window', () => {
-    const rehearsal = fakeRehearsal();
-    const surface = createDebugSurface({
-      hub: createDebugHub(),
-      windows: { create: () => fakeWindow() },
-      rehearsal,
-      timers: manualTimers(),
-      now: () => 1_000,
-    });
-
-    // Everything this component does has to be reachable without Electron — that is what keeps the
-    // feature testable at Tier 1 and drivable from a headless replay.
-    expect(surface.rehearsal).toBe(rehearsal);
+    surface.dispose();
   });
 });
 

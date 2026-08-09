@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import type { FieldPath as ContextFieldPath } from '@riki/context';
 import type { FieldPath, HeroId, ItemState, MapPosition } from '@riki/world-model';
 import { createStalenessPolicy, fieldPath, heroField } from '@riki/world-model';
-import { buildWorld } from '@riki/events/testing';
+import { buildWorld } from '../testing/world.js';
 import { toContextReader, toContextSnapshot } from './world-view.js';
 
 const SELF_HEALTH: FieldPath = fieldPath('self', 'health');

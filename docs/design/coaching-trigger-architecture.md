@@ -1,5 +1,22 @@
 # Proactive Coaching — Detection, Salience and the Gates
 
+> ## ⚠ Superseded
+>
+> **Superseded by [`conversational-architecture.md`](conversational-architecture.md) /
+> [ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09.**
+> `packages/events` and everything this document specifies — the eight detectors, the salience
+> score, the thirteen gates, the intensity fold and the event tape — are **deleted**. Riki no longer
+> decides when to speak; it answers when spoken to.
+>
+> **It is kept, not archived, because two things in it are still load-bearing.** §4's staleness
+> reasoning — *"say 'was bottom thirty seconds ago', not 'is bottom'"* — is the one part of the
+> deleted machinery worth keeping verbatim, and it is where T8's system prompt comes from. And §5.4
+> is the record of *why* the ladder failed: on 2026-08-09, in 152 world-model ticks, Riki spoke once
+> and eighty-five candidates died at a single gate that had armed itself and could not release.
+> A document that only says what was built cannot say that.
+>
+> Read it as history. Nothing below describes code that exists.
+
 **Status:** Accepted under [ADR-0023](../adr/0023-coaching-replaces-command-execution.md), and
 **built** — `packages/events` and the composition root in `apps/desktop/src/main/agent/` are
 [`coaching-architecture.md`](coaching-architecture.md) §16 steps 6 and 7, and both have landed.

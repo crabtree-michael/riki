@@ -1,12 +1,9 @@
 /**
- * The three primitives every tier renders through.
+ * The three primitives a rendering of a game fact goes through.
  *
- * These exist because there are two renderers in this package — the Tier 2 snapshot and the
- * coaching brief — and the rules they must both obey are the same rules. Two implementations
- * written months apart would agree until the day one of them learned to say "probably", and doing
- * this afterwards means the two never re-converge. It is also why coaching-architecture.md §2.1
- * insists the brief's composer be written fresh against these rather than renamed out of the
- * deleted result renderer.
+ * They are separate from the renderer that uses them because two renderings written months apart
+ * agree until the day one of them learns to say "probably", and doing this afterwards means the two
+ * never re-converge.
  *
  * See docs/design/context-and-memory-architecture.md §5.1. Declarations only.
  */
@@ -31,8 +28,12 @@ export interface AgeFormatter {
 
 /**
  * The second of the two independent gates on chat text; the first is at the source
- * (state-capture §4.2). `get_recent_events` and the snapshot's `recent:` line are the two places
- * other players' words could otherwise reach a third-party API.
+ * (state-capture §4.2).
+ *
+ * It has no caller inside this package today — the snapshot's `recent:` line was the last one, and
+ * ADR-0042 deleted the event tape behind it. It is kept, and kept exported, because the rule it
+ * enforces (REPO_SKELETON.md §7.2) outlives any one renderer and the cost of re-deriving it later
+ * is a privacy regression rather than an inconvenience.
  */
 export interface PrivacyGate {
   allow(field: FieldClass, policy: PrivacyPolicy): boolean;

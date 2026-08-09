@@ -1,5 +1,22 @@
 # The LLM coach
 
+> ## ⚠ Superseded
+>
+> **Superseded by [`conversational-architecture.md`](conversational-architecture.md) /
+> [ADR-0042](../adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), 2026-08-09.**
+> `packages/coach`, the two driver adapters and the tray's Coach row are **deleted**, and
+> [ADR-0031](../adr/0031-the-llm-coach-is-an-alternative-not-a-stage.md) goes with them: there is one
+> model now, the Realtime session, and it answers questions rather than deciding whether to
+> interrupt.
+>
+> **It is kept, not archived, for the argument in §1 and the prompt in §5.** §1 is the clearest
+> statement anywhere of why two mechanisms were answering one question, which is the reasoning
+> ADR-0042 acts on. §5's prompt is where the staleness rules T8 needs are actually written down —
+> *"the overwhelmingly common correct answer is speak: false"* went, and everything it says about
+> reading a fact's age did not.
+>
+> Read it as history. Nothing below describes code that exists.
+
 **Status:** Built. `packages/coach`, `apps/desktop/src/main/agent/{driver,narrator}.ts`, and the
 tray's Coach row.
 **Scope:** A second coach that decides for itself whether Riki should speak and what to say, as an

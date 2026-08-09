@@ -1,14 +1,15 @@
 /**
- * The rendering primitives, shared by all three tiers.
+ * The rendering primitives.
  *
- * There are two renderers in this package — the Tier 2 snapshot and the Tier 3 result renderer —
- * and the rules they obey are the same rules: a stale fact renders with its age and confidence or
- * it does not render, below-threshold facts are dropped rather than hedged, and truncation is
- * priority-ordered and recorded. These are the three functions that make that true once.
+ * The rules they encode are the ones every rendering of a game fact must obey: a stale fact renders
+ * with its age and confidence or it does not render, below-threshold facts are dropped rather than
+ * hedged, and truncation is priority-ordered and recorded. These are the functions that make that
+ * true once.
  *
- * The implementations landed before either renderer needed a second one, and that ordering was
- * the point: two renderers written months apart agree until the day one of them learns to say
- * "probably". **The snapshot and the coaching brief both compose these; neither writes its own.**
+ * There is one renderer left in this package rather than three, and these still do not live inside
+ * it. The reason is the one that made them separate in the first place: two renderers written
+ * months apart agree until the day one of them learns to say "probably", and the tool layer
+ * (conversational-architecture.md §5) is the next thing that has to render an `Observed<T>`.
  *
  * See docs/design/context-and-memory-architecture.md §5.1.
  */

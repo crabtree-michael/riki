@@ -1,7 +1,7 @@
 /**
  * Every fault the shell already reports, mirrored into the inspector.
  *
- * `shell/telemetry.ts` names sixteen things the app can say and then, today, says none of them:
+ * `shell/telemetry.ts` names everything the app can say and then, today, says none of it:
  * `packages/telemetry` is still a skeleton, so `nullTelemetry()` is what everything is wired to and
  * a sidecar panic, a renderer fault or a source that gave up reaches exactly nowhere. Until that
  * package lands **this window is the only place any of it is visible**, which is a large part of
@@ -13,12 +13,11 @@
  *
  * ## What is mirrored, and what is not
  *
- * The fault-shaped members become `DebugProblem`s. `suppressed` and `coachingTurn` do **not**: they
- * fire on every version bump and the inspector already has both, in far more detail, from the
- * policy decorator — mirroring them here would be a second, coarser account of the same events for
- * the reader to reconcile. `emptyBrief` is mirrored as a counter because it is the one signal the
- * gate ladder genuinely cannot show: the trigger was admitted, and the *brief* is what came back
- * empty.
+ * The fault-shaped members become `DebugProblem`s. `playerTurn` does **not**: the snapshot decorator
+ * already reports every turn in far more detail, and mirroring it here would be a second, coarser
+ * account of the same event for the reader to reconcile. `emptySnapshot` *is* mirrored, because it
+ * is the one signal a Turns panel full of plausible rows cannot give: the player asked a question
+ * and the world model had nothing to answer it with.
  */
 
 import type { ShellTelemetry } from '../shell/telemetry.js';
@@ -86,81 +85,23 @@ export function withDebugTelemetry(deps: DebugTelemetryDeps): ShellTelemetry {
       problem('renderer', message);
     },
 
-    coachingTurn(eventId, salience, spoke): void {
-      delegate.coachingTurn(eventId, salience, spoke);
+    playerTurn(turnId, snapshotTokens): void {
+      delegate.playerTurn(turnId, snapshotTokens);
     },
 
-    suppressed(reason, eventId): void {
-      delegate.suppressed(reason, eventId);
+    emptySnapshot(turnId): void {
+      delegate.emptySnapshot(turnId);
+      // Before the horn this is ordinary; thirty minutes into a match it means GSI has gone quiet
+      // and the model is about to answer a question about a game it cannot see.
+      problem('world', `the snapshot rendered empty for ${turnId}`);
     },
 
-    emptyBrief(eventId): void {
-      delegate.emptyBrief(eventId);
-      hub.recordEmptyBrief();
-      // A rising count means `BRIEF_PLAN` is wrong for that event id, which is a real defect and
-      // reads as silence from every other vantage point.
-      problem('coach', `brief rendered empty for ${eventId} — the turn was admitted and dropped`);
+    snapshotOmitted(turnId, omitted): void {
+      delegate.snapshotOmitted?.(turnId, omitted);
     },
 
-    wouldSpeak(turnId, reason, chars): void {
-      delegate.wouldSpeak(turnId, reason, chars);
-    },
-
-    // ---------------------------------------------------------------------------------------------
-    // The LLM coach
-    // ---------------------------------------------------------------------------------------------
-    //
-    // This block is the inspector's answer to "does it work against both coaches". Under `llm`
-    // there are no detectors, no salience and no gate ladder, so the policy decorator sees nothing
-    // and `packages/coach`'s own telemetry is the entire account of what that coach decided. It
-    // already arrives here, because the shell hands the same sink to both — so covering the second
-    // coach needed no change to `packages/coach`, to `agent/driver.ts`, or to the shape of a frame.
-    //
-    // `declined` and `skipped` become Triggers rows; `coachUnavailable` and `modelFailed` become
-    // Problems. `consulted` and `spoke` are mirrored nowhere, for the same reason `suppressed` and
-    // `coachingTurn` are not: they fire on every consultation and the frame already carries the
-    // turn they produced.
-
-    coachMode(mode): void {
-      delegate.coachMode(mode);
-    },
-
-    coachUnavailable(reason): void {
-      delegate.coachUnavailable(reason);
-      // The failure REPO_SKELETON.md §7.1 describes as discovering it ten minutes into a game: the
-      // LLM coach was asked for, could not be built, and the app degraded to `static` in silence.
-      problem('coach', `the LLM coach could not be built: ${reason}`);
-    },
-
-    consulted(seq, signals): void {
-      delegate.consulted(seq, signals);
-    },
-
-    spoke(kind, weight, chars): void {
-      delegate.spoke(kind, weight, chars);
-    },
-
-    declined(reasoning): void {
-      delegate.declined(reasoning);
-      // The LLM coach's whole account of a moment it passed on, and the counterpart of a gate
-      // ladder. It goes in the Triggers panel rather than in Problems: declining is the correct and
-      // overwhelmingly common outcome for either coach, not a fault. Without this the panel is
-      // empty in `llm` mode and looks exactly like a coach that never ran.
-      hub.recordDecline(reasoning, deps.now(), null);
-    },
-
-    skipped(reason): void {
-      delegate.skipped(reason);
-      // Distinct from `declined`: the coach was not consulted at all, which is a different answer
-      // to "why was it quiet" and the same distinction `counters.ticks` draws for the other coach.
-      hub.recordDecline(`skipped: ${reason}`, deps.now(), null);
-    },
-
-    modelFailed(message): void {
-      delegate.modelFailed(message);
-      // A model call that failed is the LLM coach's equivalent of a sidecar panic: the coach goes
-      // quiet, and quiet is indistinguishable from working. The message, never the key (ADR-0022).
-      problem('coach', `the coach model failed: ${message}`);
+    wouldSpeak(turnId, chars): void {
+      delegate.wouldSpeak(turnId, chars);
     },
 
     sidecarStderr(line): void {
@@ -206,14 +147,9 @@ export function withDebugTelemetry(deps: DebugTelemetryDeps): ShellTelemetry {
 
     sessionOpenFailed(message: string): void {
       delegate.sessionOpenFailed(message);
-    },
-
-    debugOverride(id, value): void {
-      delegate.debugOverride(id, value);
-      // Not mirrored into Problems. An override is not a fault, and the frame already carries the
-      // whole override set on every control — with the header counting them, so an inspector
-      // session cannot be misread as stock behaviour. This arm exists so the record survives into a
-      // log the day `packages/telemetry` lands, which is the one place it is not already visible.
+      // A session that never opened is a Riki that watches the game and cannot answer, and the
+      // symptom is a key press that produces a chip and no voice.
+      problem('renderer', `the session could not be opened: ${message}`);
     },
   };
 }
