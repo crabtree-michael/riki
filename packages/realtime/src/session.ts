@@ -117,6 +117,23 @@ export interface SupervisorOptions {
   readonly reconnectBackoffMs: readonly number[];
 }
 
+/**
+ * ⚠ **Declared, and deliberately not implemented here.** Renewal lives in
+ * `apps/desktop/src/main/voice/session.ts` — ADR-0045.
+ *
+ * The reason is one line long: rotating a session needs a *fresh client secret*, minting needs the
+ * `ApiKey`, and the key is in main while this code runs in a renderer (ADR-0015). A supervisor here
+ * could only get one by asking main for it, and `CredentialPort.acquire()` in the voice window
+ * resolves a constant — the secret it was handed in the `voice.session.open` directive. Giving it a
+ * real implementation means a renderer→main *request* for a credential, which `schemas/voice.ts`
+ * does not have and which is a protocol coordination event.
+ *
+ * Main can do the whole thing with what already exists: mint, and send `voice.session.open` again.
+ * The renderer's handler already closes the live session before opening the new one, so rotation is
+ * a directive rather than a mechanism. What this file keeps is the *detection* half — the error
+ * code and the transport close, both above — which is the part that has to happen where the
+ * transport is.
+ */
 export interface SessionSupervisor {
   start(context: SessionContext, config: RealtimeSessionConfig): Promise<RealtimeSessionHandle>;
   readonly state: SupervisorState;
@@ -137,18 +154,41 @@ export interface SessionOptions {
   readonly commitGraceMs?: number;
 }
 
+/**
+ * The wire's error code, as a fault the layers above can act on.
+ *
+ * The ordering is the whole content of this function, and one row of it is load-bearing enough to
+ * be worth stating: **the expiry test runs before the auth test.** `session_expired` is what the
+ * API sends at the 60-minute cap (`SESSION_MAX_DURATION_MS`), and it is not an authentication
+ * problem — it is the ordinary end of a session's life, and the only correct response is to open
+ * another one. Classified as `auth` it would be persistent and non-retryable, which is exactly the
+ * shape that stops a renewal supervisor from renewing and puts a permanent error on the chip
+ * instead. Before ADR-0045 it did not match either test and fell through to `offline`, which was
+ * retryable but named the wrong thing and left the reader looking for a network problem.
+ *
+ * `retryable: true` on the expiry row is what main's renewal reads (`main/voice/session.ts`); the
+ * chip never sees it, because a renewal that succeeds swallows the fault.
+ */
 function faultFor(code: string, message: string): VoiceFault {
   if (code === 'beta-schema') {
     return { kind: 'session-lost', message, persistent: true, retryable: false };
   }
+  if (/expired|session_lost|connection/i.test(code)) {
+    return { kind: 'session-lost', message, persistent: false, retryable: true };
+  }
   if (/auth|api_key|invalid_api_key/i.test(code)) {
     return { kind: 'auth', message, persistent: true, retryable: false };
   }
-  if (/session_lost|connection/i.test(code)) {
-    return { kind: 'session-lost', message, persistent: false, retryable: true };
-  }
   return { kind: 'offline', message, persistent: false, retryable: true };
 }
+
+/**
+ * The message on the fault a transport close produces.
+ *
+ * A constant because two places read it: the session emits it, and `main/voice/session.ts` puts it
+ * in the inspector's trace as the reason a renewal started.
+ */
+export const TRANSPORT_CLOSED_MESSAGE = 'The Realtime transport closed while the session was open.';
 
 /**
  * Wires the pieces together and translates the wire vocabulary into `VoiceEvent`.
@@ -184,6 +224,10 @@ export async function createRealtimeSession(
   let currentItem: ItemId | null = null;
   let currentTurn = '' as TurnId;
   let speechStoppedWaiter: ((stopped: boolean) => void) | null = null;
+  /** Set by `close()`, so an orderly teardown does not look like a connection that failed. */
+  let closing = false;
+  /** One loss, one fault. See the `error` case and the `onStateChange` subscription below. */
+  let reportedLoss = false;
 
   /**
    * Resolves on `input_audio_buffer.speech_stopped`, or on the grace expiring.
@@ -321,6 +365,13 @@ export async function createRealtimeSession(
 
       case 'error': {
         const fault = faultFor(event.code, event.message);
+        // An expiry arrives as an error *and* as a closed transport, in either order. One loss is
+        // one fault: whichever gets here first reports it and the other stays quiet. Reporting
+        // both would have the supervisor above renew, finish, and immediately renew again.
+        if (fault.kind === 'session-lost' && fault.retryable) {
+          if (reportedLoss) return;
+          reportedLoss = true;
+        }
         deps.telemetry.fault(fault.kind);
         emit({ kind: 'fault', fault });
         return;
@@ -352,6 +403,31 @@ export async function createRealtimeSession(
     },
   );
 
+  /**
+   * The other half of expiry detection, and the half that has no event behind it.
+   *
+   * At the 60-minute cap the API sends `session_expired` **and** drops the connection, and the two
+   * are not redundant: on WebRTC the data channel can go first, in which case the error never
+   * arrives and the only evidence is a transport that stopped. Observed exactly that way on
+   * 2026-08-09 — the error was in the log, then the channel closed, then ICE disconnected, and
+   * nothing reconnected because nothing was listening for any of it.
+   *
+   * Armed only once `connect` has resolved. A close during negotiation is `connect`'s own rejection
+   * and is already the caller's to handle; emitting a fault for it too would report one failure
+   * twice.
+   *
+   * `closing` is what keeps an orderly `close()` — a match ending, a renewal tearing the old
+   * session down — from looking like a failure. Without it, every renewal would raise the fault
+   * that triggers a renewal.
+   */
+  const unsubscribeState = deps.transport.onStateChange((state) => {
+    if (state !== 'closed' || closing || reportedLoss) return;
+    reportedLoss = true;
+    const fault = faultFor('connection', TRANSPORT_CLOSED_MESSAGE);
+    deps.telemetry.fault(fault.kind);
+    emit({ kind: 'fault', fault });
+  });
+
   // Configure before anything else is sent: a session that receives audio before its format is
   // set interprets it with the default, which is the beta-schema failure by another route.
   const update = buildSessionUpdate({
@@ -382,6 +458,10 @@ export async function createRealtimeSession(
     },
 
     async close(reason) {
+      // Before anything else: `transport.close()` below drives the state to `closed`, and an
+      // orderly close must not be reported as a session that was lost.
+      closing = true;
+      unsubscribeState();
       unsubscribeTransport();
       transcripts.reset();
       window.noteSessionLost();

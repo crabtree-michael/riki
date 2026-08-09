@@ -210,6 +210,45 @@ Main mints an ephemeral client secret (`POST /v1/realtime/client_secrets`) and p
 across the bridge — ADR-0015. If you find yourself wanting `RIKI_OPENAI_API_KEY` in renderer code,
 this is the thing you are missing.
 
+**2026-08-09 — a port can be implemented on both sides and subscribed by nobody, and it reads as
+working.** `PeerConnectionLike.onConnectionStateChange` was in the interface, implemented in
+`renderer/voice/peer.ts` against a real `connectionstatechange` listener, and **called from nowhere**.
+So `createWebRtcTransport` could only reach `closed` from its own `close()` and from a refused SDP
+POST: a peer connection that died mid-match left the transport reporting `open` forever while every
+layer above kept sending client events into a channel that was gone. That is half of why the
+60-minute expiry on 2026-08-09 went unnoticed — the other half is that nothing was listening for
+`transport.onStateChange` in `createRealtimeSession` either.
+
+*Why:* two well-written adapters and an interface that names the thing look exactly like a wired
+feature. Before you trust a state signal here, grep for its *subscriber*, not for its declaration.
+The same check is worth running on `DataChannelLike` (which still has no `onClose` at all) and on
+anything else on that seam.
+
+**2026-08-09 — the session expiry must be classified before the auth check, and `session_expired` is
+not `session_lost`.** `faultFor`'s regexes are tried in order, and the expiry code contains neither
+`session_lost` nor `connection`, so it used to fall through to `offline` — retryable, but named after
+a network problem, which is where anyone reading the log looks first. Matching it as `auth` is worse:
+persistent and non-retryable is exactly the shape that stops the renewal supervisor renewing and puts
+a permanent error on a chip that has nothing wrong with it. It is `session-lost`, retryable, matched
+before auth (ADR-0045).
+
+**2026-08-09 — `SessionSupervisor` in `session.ts` is declared and will stay unimplemented; renewal
+is in `apps/desktop/src/main/voice/session.ts`.** If you go looking for rotation where the interface
+is, this is the missing line: a new session needs a fresh client secret, minting needs the `ApiKey`,
+and the key is in main (ADR-0015) — the voice window's `CredentialPort.acquire()` resolves the
+constant it was handed and has nothing to mint with. Main renews by minting and sending
+`voice.session.open` again; the renderer's handler already closes the live session before opening the
+new one, so rotation needed no new message and no protocol change. Moving it down means adding a
+renderer→main *credential request* to `schemas/voice.ts`, which is a coordination event.
+
+**2026-08-09 — an expiry arrives twice, and an orderly close looks identical to it.** The API sends
+`session_expired` *and* drops the connection, in either order, so anything that reacts to a lost
+session needs to collapse them — two reactions means renewing a session that was only lost once. And
+the mirror of that: `transport.close()` and `peer.close()` both drive the state to `closed`, so
+without a "we asked for this" flag every renewal raises the fault that triggers a renewal. Both
+guards are in `createRealtimeSession`; `FakeRealtimeTransport.expireSession(order)` reproduces the
+pair either way round.
+
 ## See also
 
 `docs/design/voice-input-architecture.md` — the architecture for this area: capture, the session,

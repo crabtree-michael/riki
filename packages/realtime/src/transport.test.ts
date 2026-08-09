@@ -41,6 +41,7 @@ function peer(autoOpen = true) {
   let channelName = '';
   /** Fired by the test to mean the DTLS/SCTP handshake finished — see `openChannel` below. */
   let channelOpen: (() => void) | null = null;
+  let connectionState: ((state: string) => void) | null = null;
 
   const channel: DataChannelLike = {
     send: (payload) => channelSends.push(payload),
@@ -83,7 +84,12 @@ function peer(autoOpen = true) {
     },
     addTrack: () => order.push('addTrack'),
     onTrack: (): Unsubscribe => () => undefined,
-    onConnectionStateChange: (): Unsubscribe => () => undefined,
+    onConnectionStateChange: (listener): Unsubscribe => {
+      connectionState = listener;
+      return () => {
+        connectionState = null;
+      };
+    },
     close: () => order.push('peer.close'),
   };
 
@@ -94,6 +100,9 @@ function peer(autoOpen = true) {
     channelName: () => channelName,
     deliver: (payload: string) => channelMessage?.(payload),
     openChannel: () => channelOpen?.(),
+    /** `RTCPeerConnection.connectionState`, as the browser adapter forwards it. */
+    setConnectionState: (state: string) => connectionState?.(state),
+    isWatchingConnection: () => connectionState !== null,
   };
 }
 
@@ -159,6 +168,53 @@ describe('WebRTC negotiation', () => {
     openChannel();
     await connecting;
     expect(states).toContain('open');
+  });
+
+  /**
+   * The subscription that was missing on 2026-08-09 (ADR-0045).
+   *
+   * `PeerConnectionLike.onConnectionStateChange` and `peer.ts`'s adapter for it both existed and
+   * nothing called either. So when the session hit the 60-minute cap and the peer connection died,
+   * this transport stayed `open` forever — `closed` was reachable only from `close()` and from a
+   * refused SDP POST — and every layer above kept sending into a channel that was gone.
+   */
+  it('reports closed when the peer connection fails', async () => {
+    const { transport, setConnectionState } = harness();
+    await transport.connect(SECRET, MEDIA);
+    const states: string[] = [];
+    transport.onStateChange((state) => states.push(state));
+
+    setConnectionState('failed');
+    expect(states).toEqual(['closed']);
+  });
+
+  /**
+   * `disconnected` is recoverable: ICE reports it after a few missed consent checks and returns to
+   * `connected` once the network settles. Renewing a working session on a two-second Wi-Fi blip
+   * would cost the conversation for nothing, and if it does not recover ICE gives up on its own and
+   * arrives as `failed`.
+   */
+  it('does not report closed for a transient ICE disconnect', async () => {
+    const { transport, setConnectionState } = harness();
+    await transport.connect(SECRET, MEDIA);
+    const states: string[] = [];
+    transport.onStateChange((state) => states.push(state));
+
+    setConnectionState('disconnected');
+    setConnectionState('connected');
+    expect(states).toEqual([]);
+  });
+
+  it('stops watching the peer before closing it, so our own teardown is not an unsolicited close', async () => {
+    // `peer.close()` fires `connectionstatechange` with `closed`. Left subscribed, every orderly
+    // close — a match ending, a renewal replacing the session — would look like a session lost,
+    // and renewal would be a loop rather than a repair.
+    const { transport, isWatchingConnection } = harness();
+    await transport.connect(SECRET, MEDIA);
+    expect(isWatchingConnection()).toBe(true);
+
+    await transport.close('match ended');
+    expect(isWatchingConnection()).toBe(false);
   });
 
   it('names the channel oai-events, which is fixed by the API', async () => {

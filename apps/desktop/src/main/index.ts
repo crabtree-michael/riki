@@ -140,6 +140,9 @@ function buildShell(): RikiShell {
           entryPath: paths.voiceEntry,
         }),
         clock: { now: () => clock.now() as never },
+        // What renewal wakes up on (ADR-0045). Without it the 60-minute cap is only ever handled
+        // after the fact, and a failed reopen has nothing to retry with — see `VoiceSessionDeps`.
+        timers: systemTimers,
         safetyIdentifier: loadOrCreateInstallId(dataDir),
         // Node 22's global. Narrowed to `FetchLike` by the port, so `packages/realtime` still
         // names no vendor and is still testable with a stub.
@@ -267,6 +270,19 @@ function createVoiceTrace(now: () => number): {
       },
       state: (next) => {
         record('session', `session state → ${next}`);
+      },
+      /**
+       * A renewal, in the Trace panel rather than in Problems (ADR-0045).
+       *
+       * It belongs in the trace because it is *progress* — the session reaching the end of its
+       * 60-minute life and being replaced — and the player is meant never to notice it. Only
+       * `gaveUp` is also a problem, and by then the player has been told too.
+       */
+      renewal: (phase, reason, detail) => {
+        record('session', `renewal ${phase} (${reason}): ${detail}`);
+        if (phase === 'gaveUp') {
+          hub?.recordProblem('renderer', `voice renewal gave up: ${detail}`, now());
+        }
       },
       bridgeProblem: (detail) => {
         record('fault', `voice bridge: ${detail}`);

@@ -36,6 +36,16 @@ export interface FakeRealtimeTransport extends RealtimeTransport {
   injectFault(fault: VoiceFault): void;
   dropConnection(during: 'response' | 'idle'): void;
   expireCredential(): void;
+  /**
+   * The 60-minute cap, exactly as it arrived on 2026-08-09 at 15:43:36: the error first, then the
+   * transport gone.
+   *
+   * Both halves, because both happen and either one alone is a session nobody notices has ended —
+   * the error can be lost with the channel that would have carried it, and a channel that closes
+   * quietly says nothing about why. `order` exists so a test can assert the two coalesce into one
+   * renewal whichever way round they land.
+   */
+  expireSession(order?: 'error-first' | 'close-first'): void;
 
   onSend(listener: (event: ClientEvent) => void): Unsubscribe;
 }
@@ -125,6 +135,20 @@ export function createFakeRealtimeTransport(): FakeRealtimeTransport {
 
     expireCredential() {
       credentialValid = false;
+    },
+
+    expireSession(order = 'error-first') {
+      // The API's own words, kept verbatim: a test that asserts on a paraphrase asserts on nothing.
+      const error = (): void => {
+        emit({
+          type: 'error',
+          code: 'session_expired',
+          message: 'Your session hit the maximum duration of 60 minutes.',
+        });
+      };
+      if (order === 'error-first') error();
+      setState('closed');
+      if (order === 'close-first') error();
     },
 
     onSend(listener) {

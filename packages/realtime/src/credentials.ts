@@ -66,9 +66,47 @@ export class ApiKey {
 
 export interface ClientSecret {
   readonly value: string;
+  /**
+   * When the *secret* stops being usable — seconds to a minute out (`DEFAULT_TTL_MS`).
+   *
+   * ⚠ This is not when the session ends. The secret authenticates one SDP exchange and is never
+   * used again; the session it opens then lives for up to `SESSION_MAX_DURATION_MS`. Reading this
+   * field as a session deadline gives you a renewal every sixty seconds, and reading
+   * `SESSION_MAX_DURATION_MS` as a secret TTL gives you an SDP exchange refused with a stale
+   * credential. They are an hour apart and both are called "expiry" by the API.
+   */
   readonly expiresAt: MonoMs;
   readonly sessionId: SessionId;
 }
+
+/**
+ * The API's hard cap on one Realtime session, from the moment it is minted (realtime §1).
+ *
+ * Observed live on 2026-08-09 at 15:43:36, which is the reason renewal exists at all:
+ *
+ * ```text
+ * session_expired — "Your session hit the maximum duration of 60 minutes."
+ * ```
+ *
+ * The data channel closed, ICE disconnected, and nothing reconnected. A Dota match plus draft plus
+ * post-game routinely passes an hour, so this is an ordinary event in an ordinary match rather than
+ * an edge case — see ADR-0045.
+ */
+export const SESSION_MAX_DURATION_MS = 60 * 60 * 1_000;
+
+/**
+ * How early to renew.
+ *
+ * Ten minutes is not caution about clock skew — the mint is stamped with our own monotonic clock
+ * and the cap is generous. It is the width of the window in which a renewal may *fail and be
+ * retried*: a refused mint backs off, and a renewal that has burned its attempts against a flaky
+ * network still has minutes of working session left to try again inside. Renewing at 59 minutes
+ * would make the first failure terminal.
+ */
+export const SESSION_RENEW_MARGIN_MS = 10 * 60 * 1_000;
+
+/** 50 minutes. Deliberately derived, so the margin above cannot drift from the cap. */
+export const DEFAULT_RENEW_AFTER_MS = SESSION_MAX_DURATION_MS - SESSION_RENEW_MARGIN_MS;
 
 /** Narrow on purpose: this package must be testable with a stub and no network. */
 export type FetchLike = (url: string, init: RequestInitLike) => Promise<ResponseLike>;

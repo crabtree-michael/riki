@@ -25,10 +25,44 @@
  * to "handed over", not to "finished speaking" — the chip leaves Speaking on the event stream — so
  * rejecting them would leave the overlay claiming Riki is talking forever. That is the one
  * confusion `silent-session.ts` was written to avoid, and it is just as easy to reintroduce here.
+ *
+ * ## Renewal — ADR-0045
+ *
+ * The Realtime API closes a session at 60 minutes. A Dota match plus draft plus post-game passes
+ * that regularly, and on 2026-08-09 it did: `session_expired`, the data channel closed, ICE
+ * disconnected, and nothing reconnected for the rest of the match.
+ *
+ * Renewal is here rather than in `packages/realtime` for one reason: a new session needs a new
+ * client secret, minting needs the `ApiKey`, and the key is in this process and stays here
+ * (ADR-0015). The renderer's `CredentialPort` resolves the constant it was handed. So main mints
+ * and sends `voice.session.open` again, and the voice window's handler — which already closes the
+ * live session before opening a new one — does the rest. There is no new message and no new
+ * mechanism.
+ *
+ * Three properties this file owes:
+ *
+ * 1. **Before the cap, not after it.** A timer at `DEFAULT_RENEW_AFTER_MS` (50 minutes) renews
+ *    while the old session still works. The reactive path is the backstop for a session that dies
+ *    early, not the plan.
+ * 2. **One renewal per loss.** The expiry arrives as an error *and* as a dead transport, in either
+ *    order. Both map to the same retryable `session-lost` fault, and the second one to arrive finds
+ *    a renewal already running.
+ * 3. **The player is not told.** A fault that starts a renewal is swallowed rather than emitted —
+ *    it reaches the inspector as a renewal, not the chip as an error. The player hears about it
+ *    exactly once, and only if renewal has genuinely run out of attempts.
+ *
+ * **What carries across the boundary: the instructions, and nothing else.** They are re-sent
+ * byte-identically, which keeps the persona the same and the cached prefix warm. The conversation
+ * does not carry — the API's conversation dies with the session and ADR-0042 deleted the ledger
+ * that ADR-0012 built to rehydrate from. That is survivable *because* of ADR-0042: Riki answers
+ * questions from a snapshot rendered fresh on every turn, so a cold session answers the next
+ * question exactly as well as a warm one. What is genuinely lost is the thread — a follow-up
+ * ("what about him?") asked across the boundary has nothing to resolve against — and an in-flight
+ * turn, which ends in silence. ADR-0045 argues why carrying a transcript tail was not worth it.
  */
 
 import type { RikiConfig } from '@riki/config';
-import type { TurnId } from '@riki/context';
+import type { Timers, TurnId } from '@riki/context';
 import type { VoiceDirective, VoiceUpdate } from '@riki/protocol';
 import { voice } from '@riki/protocol';
 import type {
@@ -39,7 +73,7 @@ import type {
   VoiceEvent,
   VoiceFault,
 } from '@riki/realtime';
-import { createClientSecretBroker } from '@riki/realtime';
+import { createClientSecretBroker, DEFAULT_RENEW_AFTER_MS } from '@riki/realtime';
 import type { MonoMs } from '@riki/world-model';
 
 import type { SessionTurn, VoiceSessionPort } from '../agent/index.js';
@@ -53,6 +87,12 @@ import type { VoiceWindow, VoiceWindowFactory } from './contracts.js';
  */
 export type VoiceSessionState = 'idle' | 'connecting' | 'ready' | 'degraded' | 'unavailable';
 
+/**
+ * Why a session is being replaced. `age` is the scheduled renewal before the 60-minute cap; `lost`
+ * is the reactive one, after the session died — of the cap, or of anything else.
+ */
+export type RenewalReason = 'age' | 'lost';
+
 export interface VoiceSessionTelemetry {
   /** What Riki was handed for a turn, as a size. The rendered text is never logged (privacy §10). */
   speaking(turnId: TurnId, scenario: boolean, chars: number): void;
@@ -60,6 +100,23 @@ export interface VoiceSessionTelemetry {
   state(state: VoiceSessionState): void;
   /** Undecodable traffic on the bridge. Should be zero — both sides are one build. */
   bridgeProblem(detail: string): void;
+  /**
+   * A renewal, at each of its four moments (ADR-0045).
+   *
+   * Separate from `fault` on purpose, and the distinction is the point of the signal: a renewal is
+   * the ordinary end of a session's life and the player is meant never to notice it, so it must not
+   * land in the inspector's Problems panel next to things that are genuinely broken. It still has
+   * to be *visible*, because the failure this replaces was invisible — a session that expired and a
+   * session that was working looked identical from outside until someone pressed the key.
+   *
+   * `gaveUp` is the one that is also a problem: renewal has run out of attempts and the player has
+   * now been told.
+   */
+  renewal(
+    phase: 'started' | 'opened' | 'retrying' | 'gaveUp',
+    reason: RenewalReason,
+    detail: string,
+  ): void;
 }
 
 export interface VoiceSessionDeps {
@@ -75,7 +132,46 @@ export interface VoiceSessionDeps {
   /** `globalThis.fetch`. Injected so minting is testable with no network. */
   readonly fetch: Parameters<typeof createClientSecretBroker>[0]['fetch'];
   readonly telemetry?: VoiceSessionTelemetry;
+  /**
+   * How renewal wakes up (ADR-0045). `systemTimers` in the app, `ManualTimers` in a test.
+   *
+   * **Optional, and absent is a real mode with a real cost:** with no timers there is no scheduled
+   * renewal and no retry backoff, so the session runs until it expires and is then replaced
+   * reactively, once. That is the correct behaviour for the tests that predate renewal and for any
+   * caller that has no clock to offer — a renewal that reacts is much better than none — but it is
+   * not the product path, and `main/index.ts` passes `systemTimers`.
+   */
+  readonly timers?: Timers;
+  /** Overridable so a test does not wait 50 minutes. Defaults to `DEFAULT_RENEW_AFTER_MS`. */
+  readonly renewal?: RenewalOptions;
 }
+
+export interface RenewalOptions {
+  readonly renewAfterMs?: number;
+  /**
+   * Between attempts. Length is the attempt budget: run off the end and renewal gives up, tells the
+   * player once, and leaves the chip degraded.
+   *
+   * Every entry must exceed `MIN_MINT_INTERVAL_MS` — `ClientSecretBroker` refuses more than one
+   * mint a second and that refusal is itself a retryable fault, so a faster backoff would spend
+   * attempts arguing with our own rate limiter instead of with the network.
+   */
+  readonly backoffMs?: readonly number[];
+  /**
+   * How long to wait for the renderer to say `ready` before treating the reopen as failed.
+   *
+   * A directive sent into a wedged renderer produces no error of any kind, which is the shape of
+   * failure this whole area keeps rediscovering. Comfortably past the WebRTC transport's own
+   * 10-second connect timeout, so a slow negotiation is not mistaken for a dead one.
+   */
+  readonly readyTimeoutMs?: number;
+}
+
+const DEFAULT_RENEWAL: Required<RenewalOptions> = {
+  renewAfterMs: DEFAULT_RENEW_AFTER_MS,
+  backoffMs: [2_000, 5_000, 15_000, 30_000],
+  readyTimeoutMs: 20_000,
+};
 
 export interface VoiceSession extends VoiceSessionPort {
   readonly state: VoiceSessionState;
@@ -116,6 +212,24 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
   let queued: VoiceDirective[] = [];
   let state: VoiceSessionState = 'idle';
   let disposed = false;
+
+  const renewal = { ...DEFAULT_RENEWAL, ...deps.renewal };
+
+  /**
+   * The instructions of the open match, and the whole of what carries across a renewal.
+   *
+   * Non-null means "a match is open, and renewing it is meaningful". `closeMatch` clears it, which
+   * is what stops a timer that has already been armed from reopening a match that ended.
+   */
+  let openInstructions: string | null = null;
+  /** A renewal is in flight; a second trigger must join it rather than start another. */
+  let renewing = false;
+  /** Consecutive failed attempts. Reset by the renderer reaching `ready`, and only by that. */
+  let renewAttempt = 0;
+  /** Carried across the retries so every line the inspector shows names the original trigger. */
+  let renewReason: RenewalReason | null = null;
+  /** Cancels whichever renewal deadline is pending — the scheduled one, a backoff, or the wait. */
+  let cancelRenewTimer: (() => void) | null = null;
 
   const apiKey: ApiKey | null = deps.config.openai.apiKey;
 
@@ -178,13 +292,40 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
           });
           return;
         }
-        if (event.kind === 'fault') telemetry?.fault(event.fault.kind, event.fault.message);
+        if (event.kind === 'fault') {
+          // The expiry, and everything that looks like it. Swallowed rather than emitted: the
+          // player is not told about a session that is being replaced under them, and the second
+          // signal of the same loss finds a renewal already running and is swallowed too
+          // (ADR-0045). It is still visible — as a renewal in the inspector, not as a problem.
+          if (isRenewable(event.fault)) {
+            void renew('lost', event.fault.message);
+            return;
+          }
+          telemetry?.fault(event.fault.kind, event.fault.message);
+        }
         emit(event as VoiceEvent);
         return;
       }
 
       case 'voice.session.state':
         setState(update.state);
+        if (update.state !== 'ready') return;
+        // The only evidence a session actually exists, and therefore the only thing that closes a
+        // renewal and the only thing that resets the attempt budget. Arming the next deadline from
+        // here rather than from the send is deliberate — see `armScheduledRenewal`.
+        cancelRenewTimer?.();
+        cancelRenewTimer = null;
+        if (renewing) {
+          renewing = false;
+          telemetry?.renewal(
+            'opened',
+            renewReason ?? 'lost',
+            `a new session is open after ${String(renewAttempt + 1)} attempt(s)`,
+          );
+          renewReason = null;
+        }
+        renewAttempt = 0;
+        armScheduledRenewal();
         return;
 
       case 'voice.window.applied':
@@ -217,21 +358,26 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
     return created;
   }
 
-  /**
-   * Everything that has to happen before the renderer can be told to open a session, in the order
-   * a failure is most likely: no key, then a refused mint.
-   */
-  async function open(instructions: string): Promise<void> {
-    if (broker === null) {
-      // Not a fault on the chip. The app boots with voice disabled and says so (ADR-0006), and
-      // this is the mode every test and every keyless machine runs in — raising a persistent
-      // `auth` fault here would put a permanent error on an overlay that is working as designed.
-      setState('unavailable');
-      return;
-    }
+  /** Why a mint or a send did not produce an open session. `null` means it did. */
+  interface OpenFailure {
+    readonly kind: VoiceFault['kind'];
+    readonly message: string;
+    readonly retryable: boolean;
+  }
 
-    if (ensureWindow() === null) return;
-    setState('connecting');
+  /**
+   * Mint, and send the directive. The half that is identical for a first open and for a renewal.
+   *
+   * `instructions` is re-sent **byte-identically** on renewal, which is not a detail: it is the
+   * cached prefix, and a prefix that differs by a character is a cold cache and a full-price
+   * session (realtime §10). It is also why nothing derived from the current match state may be
+   * folded in here.
+   *
+   * Returns the failure rather than reporting it, because the two callers disagree about what a
+   * failure means: a first open puts it on the chip, a renewal backs off and tries again.
+   */
+  async function sendOpen(instructions: string): Promise<OpenFailure | null> {
+    if (broker === null) return { kind: 'auth', message: 'no API key', retryable: false };
 
     const sessionConfig = {
       model: deps.config.realtime.model,
@@ -255,13 +401,11 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
       secret = await broker.mint(sessionConfig);
     } catch (error: unknown) {
       const fault = error as Partial<VoiceFault>;
-      setState(fault.retryable === true ? 'degraded' : 'unavailable');
-      raise(
-        fault.kind ?? 'auth',
-        error instanceof Error ? error.message : String(error),
-        fault.retryable ?? false,
-      );
-      return;
+      return {
+        kind: fault.kind ?? 'auth',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: fault.retryable ?? false,
+      };
     }
 
     send(
@@ -286,6 +430,170 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
         budgetUsd: deps.config.realtime.budgetUsd,
       }),
     );
+    return null;
+  }
+
+  /**
+   * Everything that has to happen before the renderer can be told to open a session, in the order
+   * a failure is most likely: no key, then a refused mint.
+   */
+  async function open(instructions: string): Promise<void> {
+    if (broker === null) {
+      // Not a fault on the chip. The app boots with voice disabled and says so (ADR-0006), and
+      // this is the mode every test and every keyless machine runs in — raising a persistent
+      // `auth` fault here would put a permanent error on an overlay that is working as designed.
+      setState('unavailable');
+      return;
+    }
+
+    if (ensureWindow() === null) return;
+    // A new match supersedes whatever was open, including a renewal armed against it: nothing
+    // below this line should be able to reopen the *previous* match's instructions.
+    stopRenewal();
+    setState('connecting');
+
+    const failure = await sendOpen(instructions);
+    if (failure === null) {
+      // Set on the send, not on `ready`: a session the renderer is still negotiating is one that
+      // can already die, and it is renewable the moment it can die.
+      openInstructions = instructions;
+      return;
+    }
+
+    setState(failure.retryable ? 'degraded' : 'unavailable');
+    raise(failure.kind, failure.message, failure.retryable);
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Renewal — ADR-0045. See the header for why it lives in main rather than in @riki/realtime.
+  // ---------------------------------------------------------------------------------------
+
+  /** Forget any armed deadline and any renewal in flight. Used by close, dispose and reopen. */
+  function stopRenewal(): void {
+    cancelRenewTimer?.();
+    cancelRenewTimer = null;
+    openInstructions = null;
+    renewing = false;
+    renewAttempt = 0;
+    renewReason = null;
+  }
+
+  /**
+   * The scheduled renewal — the path that is meant to run, and the reason the reactive one is
+   * almost never reached.
+   *
+   * Armed from `ready` rather than from the send, because `ready` is the closest thing we have to
+   * the moment the API started counting: the cap runs from session creation, and the mint, the SDP
+   * exchange and the DTLS handshake all sit between the directive and that. Arming from the send
+   * would put the renewal a few hundred milliseconds *later* than intended, into the margin rather
+   * than before it.
+   */
+  function armScheduledRenewal(): void {
+    cancelRenewTimer?.();
+    cancelRenewTimer = null;
+    const timers = deps.timers;
+    if (timers === undefined || openInstructions === null || disposed) return;
+    cancelRenewTimer = timers.after(renewal.renewAfterMs, () => {
+      cancelRenewTimer = null;
+      void renew('age', `${String(Math.round(renewal.renewAfterMs / 60_000))} minutes old`);
+    });
+  }
+
+  /**
+   * Is this fault the end of a session rather than something to show the player?
+   *
+   * `session-lost` + `retryable` is exactly the set `faultFor` in `@riki/realtime` produces for the
+   * 60-minute expiry and for a transport that closed under us, and exactly not the set it produces
+   * for a beta-shaped `session.update` (persistent, not retryable — renewing would reopen into the
+   * same misconfiguration forever) or for a denied microphone.
+   */
+  function isRenewable(fault: VoiceFault): boolean {
+    return (
+      fault.kind === 'session-lost' &&
+      fault.retryable &&
+      openInstructions !== null &&
+      broker !== null &&
+      !disposed
+    );
+  }
+
+  /**
+   * Start a renewal, or join the one already running.
+   *
+   * The join is the whole of property 2 in the header: an expiry arrives as `session_expired` *and*
+   * as a dead transport, so this is called twice for one loss and must produce one new session.
+   */
+  async function renew(reason: RenewalReason, detail: string): Promise<void> {
+    if (renewing || openInstructions === null || broker === null || disposed) return;
+    renewing = true;
+    renewAttempt = 0;
+    renewReason = reason;
+    telemetry?.renewal('started', reason, detail);
+    await attemptRenewal(openInstructions);
+  }
+
+  async function attemptRenewal(instructions: string): Promise<void> {
+    const reason = renewReason ?? 'lost';
+    cancelRenewTimer?.();
+    cancelRenewTimer = null;
+    if (disposed) return;
+    setState('connecting');
+
+    const failure = await sendOpen(instructions);
+    if (failure !== null) {
+      backOff(instructions, failure.message, failure.retryable);
+      return;
+    }
+
+    const timers = deps.timers;
+    if (timers === undefined) {
+      // Nothing to wait with. "Sent" is as far as we can honestly claim to have got, and saying so
+      // is better than reporting an `opened` this code has no evidence for.
+      renewing = false;
+      telemetry?.renewal('opened', reason, 'directive sent; no timers, so `ready` was not awaited');
+      return;
+    }
+
+    // The directive is out. It is not a renewal until the renderer says `ready`: a directive sent
+    // into a wedged voice window produces no error of any kind, and a renewal that silently never
+    // completes is indistinguishable from the expiry it was supposed to repair.
+    cancelRenewTimer = timers.after(renewal.readyTimeoutMs, () => {
+      cancelRenewTimer = null;
+      backOff(
+        instructions,
+        `the voice window did not report ready within ${String(renewal.readyTimeoutMs)} ms`,
+        true,
+      );
+    });
+  }
+
+  /** Retry after the next backoff, or run out of attempts and tell the player — once. */
+  function backOff(instructions: string, detail: string, retryable: boolean): void {
+    const reason = renewReason ?? 'lost';
+    const delayMs = renewal.backoffMs[renewAttempt];
+    renewAttempt += 1;
+    const timers = deps.timers;
+
+    if (!retryable || delayMs === undefined || timers === undefined || disposed) {
+      renewing = false;
+      renewReason = null;
+      telemetry?.renewal('gaveUp', reason, detail);
+      setState(retryable ? 'degraded' : 'unavailable');
+      // The one place the player is told, and the reason every earlier fault was swallowed: they
+      // hear about a lost session when it is actually lost, not once per attempt to get it back.
+      raise('session-lost', `Riki could not reopen its voice session: ${detail}`, retryable);
+      return;
+    }
+
+    telemetry?.renewal(
+      'retrying',
+      reason,
+      `${detail} — attempt ${String(renewAttempt + 1)} in ${String(delayMs)} ms`,
+    );
+    cancelRenewTimer = timers.after(delayMs, () => {
+      cancelRenewTimer = null;
+      void attemptRenewal(instructions);
+    });
   }
 
   return {
@@ -298,6 +606,9 @@ export function createVoiceSession(deps: VoiceSessionDeps): VoiceSession {
     },
 
     closeMatch(reason: string): Promise<void> {
+      // First: a renewal armed against the match that just ended would reopen a session nobody is
+      // in, and — worse — would do it minutes later, with the closed match's instructions.
+      stopRenewal();
       // The window stays; only the session inside it closes. Destroying and recreating a renderer
       // between matches would put a cold Chromium start on the first utterance of the next one.
       send(voice.sessionClose(reason));

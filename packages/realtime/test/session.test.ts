@@ -486,6 +486,75 @@ describe('faults and self-interruption', () => {
   });
 });
 
+/**
+ * The 60-minute cap — ADR-0045.
+ *
+ * Observed live on 2026-08-09 at 15:43:36: `session_expired`, then the data channel closed, then
+ * ICE disconnected, and nothing reconnected for the rest of the match. Renewal itself is main's
+ * (`apps/desktop/src/main/voice/session.ts` — it needs the `ApiKey` to mint, and that is in the
+ * other process); what this package owes is **detection**, and the property that makes renewal
+ * possible at all is that the expiry is classified as retryable rather than fatal.
+ */
+describe('the session expiring', () => {
+  const faultsOf = (harness: Awaited<ReturnType<typeof session>>) =>
+    harness.events.filter((event) => event.kind === 'fault');
+
+  it('classifies session_expired as a retryable session-lost, not as auth and not as offline', async () => {
+    // The row this asserts is ordering in `faultFor`: the expiry test runs before the auth test.
+    // As `auth` it would be persistent and non-retryable, which is exactly the shape that stops
+    // main renewing and puts a permanent error on a chip that has nothing wrong with it.
+    const harness = await session();
+    harness.transport.emit({
+      type: 'error',
+      code: 'session_expired',
+      message: 'Your session hit the maximum duration of 60 minutes.',
+    });
+
+    expect(faultsOf(harness)).toMatchObject([
+      {
+        fault: {
+          kind: 'session-lost',
+          persistent: false,
+          retryable: true,
+          message: 'Your session hit the maximum duration of 60 minutes.',
+        },
+      },
+    ]);
+  });
+
+  it('reports a transport that closed under it, which is the half with no event behind it', async () => {
+    // On WebRTC the channel can go before the error does, in which case `session_expired` never
+    // arrives and a transport that stopped is the only evidence. Before this, `onStateChange` had
+    // no subscriber here at all and a dead peer connection was completely silent.
+    const harness = await session();
+    harness.transport.dropConnection('idle');
+
+    expect(faultsOf(harness)).toMatchObject([{ fault: { kind: 'session-lost', retryable: true } }]);
+  });
+
+  it.each(['error-first', 'close-first'] as const)(
+    'reports one fault for one loss, %s',
+    async (order) => {
+      // Both signals fire for a single expiry. Two faults would have main renew, finish, and
+      // immediately renew again — a second reopen for a session that was never lost.
+      const harness = await session();
+      harness.transport.expireSession(order);
+
+      expect(faultsOf(harness)).toHaveLength(1);
+      expect(harness.telemetry.fault).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('says nothing when we are the ones closing', async () => {
+    // Every renewal tears the old session down on purpose. If an orderly close raised the fault
+    // that triggers a renewal, renewal would be a loop rather than a repair.
+    const harness = await session();
+    await harness.session.close('match ended');
+
+    expect(faultsOf(harness)).toEqual([]);
+  });
+});
+
 describe('cost and window', () => {
   it('records reported usage and reports it to the window executor', async () => {
     const harness = await session();

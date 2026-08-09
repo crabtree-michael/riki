@@ -162,6 +162,26 @@ it by breaking the implementation on purpose and watching the test fail. Two min
 and a string replace is the whole technique, and it is the only thing that distinguishes a test that
 guards behaviour from one that merely runs it.
 
+**2026-08-09 — two mechanisms that agree can hide the fact that only one of them works.** Session
+renewal (ADR-0045) collapses a duplicated expiry signal twice: `packages/realtime`'s session reports
+one fault per loss, and main's supervisor joins a renewal already running. The end-to-end test drove
+a real expiry through both and passed — and **still passed with main's guard deleted**, because the
+first mechanism meant main only ever saw one fault. The second guard was decoration until a test
+pushed two faults straight across the bridge, past the first one.
+
+*Why:* redundancy is worth having and is exactly the shape mutation testing catches nothing in. When
+you write a belt-and-braces guard, ask which test would fail if you removed *this* one — and if the
+answer is "the other mechanism covers it", the test you have is for the other mechanism. Delete each
+guard in turn and run the suite; it is thirty seconds per guard.
+
+**2026-08-09 — `await Promise.resolve()` does not settle anything that crosses a seam.** A renewal is
+main's mint (a promise), then a directive, then the renderer's own open, which is several awaits
+deep. A fixed count of microtask ticks gets partway and then passes assertions about a step that has
+not happened — including `expect(...).toHaveLength(2)` on directives, while the object those
+directives were supposed to build did not exist yet. `await new Promise((r) => setTimeout(r, 0))` in
+a short loop is the flush that works. `transport.test.ts` had already documented this for the SDP
+round trip; it is a general fact about anything with a fake `fetch` in the middle.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

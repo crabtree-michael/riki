@@ -152,6 +152,7 @@ export function createWebRtcTransport(deps: WebRtcTransportDeps): RealtimeTransp
 
   let peer: PeerConnectionLike | null = null;
   let channel: DataChannelLike | null = null;
+  let stopWatchingPeer: Unsubscribe | null = null;
 
   const setState = (next: TransportState): void => {
     for (const listener of stateListeners) listener(next);
@@ -182,6 +183,24 @@ export function createWebRtcTransport(deps: WebRtcTransportDeps): RealtimeTransp
       peer = connection;
       connection.onTrack(media.onRemoteTrack);
       connection.addTrack(media.outbound);
+
+      /**
+       * The subscription that was missing on 2026-08-09.
+       *
+       * `PeerConnectionLike.onConnectionStateChange` and its browser adapter both existed; nothing
+       * called them. So when the session hit the 60-minute cap and the peer connection died, this
+       * transport's own state stayed `open` forever — `setState('closed')` was reachable only from
+       * `close()` and from a refused SDP POST. Everything above kept sending client events into a
+       * channel that was gone, and the only symptom was that Riki stopped answering.
+       *
+       * `failed` and `closed` only. `disconnected` is *recoverable* — ICE reports it on a few lost
+       * consent checks and returns to `connected` when the network settles — and renewing a working
+       * session on a two-second Wi-Fi blip costs the conversation for no reason. If it does not
+       * recover, ICE gives up on its own and arrives here as `failed`.
+       */
+      stopWatchingPeer = connection.onConnectionStateChange((state) => {
+        if (state === 'failed' || state === 'closed') setState('closed');
+      });
 
       // The channel must be created *before* the offer, or it is not in the SDP and the server
       // has nothing to answer with. And the name is fixed by the API — `dataChannelName` is a
@@ -231,6 +250,10 @@ export function createWebRtcTransport(deps: WebRtcTransportDeps): RealtimeTransp
 
     close() {
       setState('closing');
+      // Before `peer.close()`, which fires `connectionstatechange` with `closed` — an orderly
+      // teardown must not also arrive as an unsolicited close.
+      stopWatchingPeer?.();
+      stopWatchingPeer = null;
       channel?.close();
       peer?.close();
       channel = null;

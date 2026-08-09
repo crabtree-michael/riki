@@ -492,6 +492,21 @@ the main reason rotation is worth building rather than accepting a hard stop at 
 reconnect path is not optional and this makes it exercised on every long match instead of only
 when the network fails.
 
+> **⚠ Built, and in the other process — [ADR-0045](../adr/0045-a-session-is-renewed-from-main-and-the-conversation-does-not-carry.md).**
+> The paragraphs above are right about *when* and wrong about *where*, and about what carries.
+>
+> `SessionSupervisor` here stays a declaration: rotating needs a fresh client secret, minting needs
+> the `ApiKey`, and ADR-0015 keeps the key in main — the voice window's `CredentialPort.acquire()`
+> resolves the constant it was handed. Renewal is `apps/desktop/src/main/voice/session.ts`, which
+> mints and sends `voice.session.open` again; the renderer's handler already closes the live session
+> before opening a new one, so no message and no mechanism had to be added. What this package keeps
+> is *detection*: the `session_expired` code, a transport that closed without being asked to, and
+> one fault per loss when both arrive.
+>
+> `ContextAssembler.rehydrate()` no longer exists — ADR-0042 deleted the ledger it summarised. **The
+> instructions carry across and the conversation does not**, which is survivable precisely because
+> Riki now answers from a snapshot rendered fresh on each turn rather than starting turns of its own.
+
 ### 5.8 Cost
 
 Research §10 puts cost accounting in this package so the lever stays visible, and §11.1 warns that
