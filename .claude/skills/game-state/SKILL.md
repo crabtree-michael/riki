@@ -234,6 +234,35 @@ builds a *view* and computes nothing until a rule id is asked for — so the rec
 that way rather than the store growing an accessor. *Why:* the obvious move is to add a getter to
 `store.ts`, and the second writer into that file is how a single-writer invariant stops being one.
 
+**2026-08-09 — `packages/world-model` has a dependency now, and it is `@riki/protocol`.** Until T3
+the package had none at all. `src/tools/` projects a `WorldState` onto the shapes in
+`schemas/tools.ts`, so it imports them — which needs **three** edits, not one: `dependencies` in
+`package.json`, a `references` entry in `tsconfig.json` (without it `tsc --build` reports TS6307,
+which reads like a missing file), and `pnpm install`. Lint allows it: the `boundaries` rules forbid
+world-model importing `realtime`, `gsi`, `log-tail` and `context`, and protocol is none of those.
+
+The consequence that is easy to miss: world-model's `dist` now pulls **zod** at run time, where
+before it pulled nothing. That is the ADR-0025 trap the `workspace` skill describes, so run the
+four-second check rather than trusting `tsc` —
+`cd apps/desktop && node -e "import('@riki/world-model')"`. It passes today (102 exports). *Why:*
+`tsc` and Vitest both read source through the `riki-source` condition, so a broken `default`
+condition is invisible to the entire gate.
+
+**2026-08-09 — the delta ring already holds five minutes of building losses, and T2 said it did
+not.** ADR-0042's T2 declared `buildings.recently_lost` expecting it to be permanently unknown —
+"needs history nothing keeps". `WorldState.history` is a `RingHistory<WorldDelta>`, every
+`FieldChange` carries the `before` and `after` **facts**, and `map.buildings` is one of the paths it
+tracks. So a loss is exactly a health that was positive in `before` and is not in `after`, and
+`history.since(clock - 300)` hands you the window. `tools/buildings.ts` does this.
+
+Two things generalise. `state.history` is a **mutable ring shared by structural sharing** — a state
+returned by `writeFact` has the same ring object as its predecessor — so a test builds history with
+`after.history.push(createDeltaComputer().compute(before, after), clock, now)` and no store. And
+before writing a field off as unanswerable, check the ring: it is the one part of the model that is
+not a snapshot, and it is easy to forget the model remembers anything at all. *Why:* the field is a
+bare array inside `BuildingsReport` with no `unknown` branch to retreat to, so a hardcoded `[]`
+would have been the claim "nothing has fallen", made every time, out loud.
+
 ## See also
 
 `docs/design/dota2-state-capture-design.md` §2 (sources), §4 (the model), §8.2 (fairness),

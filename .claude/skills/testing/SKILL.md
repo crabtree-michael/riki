@@ -182,6 +182,23 @@ directives were supposed to build did not exist yet. `await new Promise((r) => s
 a short loop is the flush that works. `transport.test.ts` had already documented this for the SDP
 round trip; it is a general fact about anything with a fake `fetch` in the middle.
 
+**2026-08-09 — a hand-written expected shape in a test can agree with a wrong implementation; infer
+it from the schema instead.** `tools.test.ts` first typed each result as
+`Record<string, ToolFact<unknown>>` and cast fields at every assertion. That compiles against a
+projection with a misspelled key, a missing field or a wrong nesting — the cast simply says "trust
+me". Typing the helper as `parse<T>(schema: { parse(v: unknown): T }, …): Exclude<T, UnknownFact>`
+makes zod's own inferred type flow into every assertion, so the *test* stops compiling when the
+projection drifts. It also deleted twenty `!` assertions, which is how you can tell the types got
+real rather than merely stricter — `@typescript-eslint/no-unnecessary-type-assertion` flags them all
+at once.
+
+Two notes. A generic used only in a return position trips
+`@typescript-eslint/no-unnecessary-type-parameters`, and that rule is pointing at exactly this
+mistake: a type parameter the caller supplies is a cast wearing a hat. And a runtime `schema.parse`
+in the test is still worth keeping alongside — it is the only thing that catches a value that has
+the right *type* and violates a `.min(0)` or a regex. *Why:* for a boundary validated at run time,
+"the test passes" and "the model would have accepted this" are different claims.
+
 ## See also
 
 `REPO_SKELETON.md` §5 (testing), §5.4 (the specific tests the specs already asked for).

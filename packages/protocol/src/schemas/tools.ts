@@ -596,6 +596,18 @@ export type ToolAnswer = {
 
 export type MyStateReport = z.infer<typeof MyStateReport>;
 export type EnemyReport = z.infer<typeof EnemyReport>;
+/**
+ * The nested reports carry types as well as schemas, for the same reason the top-level ones do:
+ * `packages/world-model` projects a `WorldState` onto these shapes (ADR-0042 T3), and a projection
+ * that names the type it is building is checked by the compiler rather than only by the parse at
+ * the boundary. A mismatch caught here is a type error; the same mismatch caught there is a tool
+ * call that fails mid-sentence.
+ */
+export type BuildingsReport = z.infer<typeof BuildingsReport>;
+export type RoshanReport = z.infer<typeof RoshanReport>;
+export type RuneReport = z.infer<typeof RuneReport>;
+export type AbilityReport = z.infer<typeof AbilityReport>;
+export type ItemReport = z.infer<typeof ItemReport>;
 export type EnemiesReport = z.infer<typeof EnemiesReport>;
 export type ObjectivesReport = z.infer<typeof ObjectivesReport>;
 export type EconomyReport = z.infer<typeof EconomyReport>;

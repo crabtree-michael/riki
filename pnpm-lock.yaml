@@ -125,7 +125,11 @@ importers:
 
   packages/telemetry: {}
 
-  packages/world-model: {}
+  packages/world-model:
+    dependencies:
+      '@riki/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   tools/atlas-build: {}
 

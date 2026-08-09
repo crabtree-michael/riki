@@ -149,6 +149,7 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0043](adr/0043-an-unknown-is-a-shape-not-a-null.md) | An unknown is a shape, not a null | Accepted — the tool surface is zod in `packages/protocol`, a fact crosses to the model as one of two strict shapes, and the manifest's JSON Schema is generated from it. Completes ADR-0018's migration |
 | [0044](adr/0044-a-match-recording-is-a-fixture.md) | A match recording is a fixture, and the world model writes it | Accepted — every line is a valid `GsiFixtureLine`; keyframes carry `body: {}`; unbuffered `writeSync`, and one named file in `packages/world-model` does I/O |
 | [0045](adr/0045-a-session-is-renewed-from-main-and-the-conversation-does-not-carry.md) | A session is renewed from main, and the conversation does not carry across | Accepted — detection in `packages/realtime` (expiry code, dead transport, one fault per loss), renewal in main by re-sending `voice.session.open` with byte-identical instructions. Discharges the renewal path ADR-0042 records as owed |
+| [0046](adr/0046-a-no-argument-enemy-call-answers-for-everyone.md) | A no-argument `enemy()` answers for everyone | Accepted — five summaries rather than a clarifying question, because a refusal is a pause in a spoken sentence; measured at 3.0 kB worst case and 37 B in the early match. Settles conversational-architecture §11 q1 |
 
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
