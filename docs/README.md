@@ -25,6 +25,14 @@ Docs are split by kind, because "design doc" was covering four different things:
   architecture that implements it: the fact envelope, the source interface, the fusion reducer and
   its policies, and the read interface `context` and `events` consume. **Built**, except the
   composition root — start at §13, which records where the code differs from §3–§7.
+- [**conversational-architecture.md**](design/conversational-architecture.md) — **the current
+  direction.** Riki answers when spoken to and reaches the world through five narrow tools, every
+  answer carrying its age and confidence; the match is recorded to disk and becomes both the agent's
+  memory and a test fixture. Deletes the trigger engine and the coach.
+  [ADR-0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md), with the
+  execution plan in
+  [conversational-migration-tickets.md](design/conversational-migration-tickets.md). **Designed, not
+  built** — the three documents below describe what is built today and is being replaced.
 - [**coaching-architecture.md**](design/coaching-architecture.md) — how Riki decides a moment is
   worth speaking about and what the model is shown for it: the coaching brief, `BRIEF_PLAN`, where
   voice intents and the overlay route, and the revised budgets. It is also the record of what was
@@ -130,6 +138,8 @@ Numbered, one page each, and the first place to look before re-opening a questio
 | [0038](adr/0038-a-rehearsal-is-a-turn-against-a-world-nobody-is-playing.md) | A rehearsal is a coach turn against a world nobody is playing | Accepted — extends ADR-0037 to one action; a scratch coaching root, and no session is reachable from it |
 | [0039](adr/0039-a-scenario-drives-the-real-chain-and-the-trace-shows-where-it-stopped.md) | A scenario drives the real chain, and the trace shows where it stopped | Accepted — ordered trace of the coaching chain, two scenario rows, and the voice telemetry made real; amends ADR-0038 on whether a debug window may make Riki speak |
 
+| [0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) | Riki answers questions instead of deciding when to speak | Accepted — deletes `packages/events` and `packages/coach`; five narrow tools over the world model, every answer a `Fact`, the match recorded to disk. Reverses ADR-0023 and closes open question 18 |
+
 New decisions use [the template](adr/0000-template.md). If you made a design decision, it is an
 ADR — not a comment in the code.
 
@@ -179,7 +189,7 @@ bottom of three separate documents where nobody found them. Full statements in
 | 15  | Is `input_audio_buffer.commit` honoured on WebRTC with VAD on? If yes, every turn gets up to 400 ms faster ([voice-input §5.4](design/voice-input-architecture.md)) | Before the release→speaking budget is tuned                |
 | 16  | Does `turn_detection: 'none'` really disable server-side barge-in truncation? [ADR-0017](adr/0017-server-vad-on-with-response-creation-ours.md) assumes yes from the shape of the API, not from a documented statement | Before that ADR is treated as settled                      |
 | 17  | Is Riki's TTS intelligible over **un-ducked** Dota audio, and does output-side compression fix it? [ADR-0020](adr/0020-ducking-is-a-no-op-by-default.md) removes ducking on the primary platform, which makes ui-design §7.2's "the player will just stop using the feature" unmitigated. A listening test, not a spike | Before voice ships to anyone outside the team |
-| 18  | Does a ~150-token focused coaching brief carry as much useful signal as a tool call did? The core bet of [ADR-0023](adr/0023-coaching-replaces-command-execution.md); if it is false, either the brief grows or some pull mechanism comes back ([coaching §12](design/coaching-architecture.md)) | Before the coaching brief's budget is load-bearing |
+| 18  | ~~Does a ~150-token focused coaching brief carry as much useful signal as a tool call did?~~ **Closed** by [ADR-0042](adr/0042-riki-answers-questions-instead-of-deciding-when-to-speak.md) — it was false, and the pull mechanism came back. The brief is deleted along with the trigger engine that chose its topic | — |
 | 19  | Is proactive coaching at the default thresholds welcome rather than irritating? dota2 §6.4 calls unprompted speech the feature most likely to make Riki annoying enough to uninstall, and [ADR-0023](adr/0023-coaching-replaces-command-execution.md) makes it the primary path. Needs a person playing a real match, not a fixture | Before coaching ships to anyone outside the team |
 | 20  | Are the salience coefficients right? Every number in `packages/events/src/config.ts` is a starting point with no measurement behind it; the ordering they encode is the claim and the gaps between them are guesses ([coaching-trigger §4.5, §12](design/coaching-trigger-architecture.md)) | Before anyone concludes the trigger policy is wrong rather than untuned |
 | 21  | Does `packages/world-model` grow `derived.threats`, `derived.pace*` and a position-to-map-region table? Without them the `threat`, `pace`, `seen` and `map` renderings are omitted rather than wrong — the composition root refuses to compute them because the result would carry no provenance ([coaching-trigger §9.2, §15](design/coaching-trigger-architecture.md)) | Before the brief's content is judged against open question 18 |
